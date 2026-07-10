@@ -11,7 +11,7 @@ namespace Parabox
 
         static AudioSource src;
         static bool muted;
-        static AudioClip move, push, blocked, ding, win;
+        static AudioClip move, push, blocked, ding, win, hover, click;
 
         public static bool Muted => muted;
 
@@ -32,6 +32,8 @@ namespace Parabox
             blocked = Tone(110f, 0.10f, 0.15f);
             ding = Arp(new[] { 660f, 988f }, 0.09f, 0.20f);
             win = Arp(new[] { 523f, 659f, 784f, 1047f }, 0.11f, 0.22f);
+            hover = Tone(880f, 0.025f, 0.05f);  // soft UI tick on hover
+            click = Tone(560f, 0.05f, 0.11f);   // soft UI click
         }
 
         public static void ToggleMute()
@@ -45,6 +47,8 @@ namespace Parabox
         public static void Blocked() => Play(blocked);
         public static void Ding() => Play(ding);
         public static void Win() => Play(win);
+        public static void Hover() => Play(hover);
+        public static void Click() => Play(click);
 
         static void Play(AudioClip c)
         {

@@ -1,9 +1,12 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace Parabox
 {
-    // Scales a UI element on hover / press for tactile buttons.
+    // Scales a UI element on hover / press for tactile buttons, with subtle sound feedback.
+    // Sound + hover state are suppressed when the element is a non-interactable Selectable
+    // (e.g. a locked level card), so locked items feel inert.
     public class UIHoverScale : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {
@@ -13,13 +16,36 @@ namespace Parabox
         Vector3 baseScale = Vector3.one;
         float target = 1f;
         bool inside;
+        Selectable selectable;
 
-        void Awake() { baseScale = transform.localScale; }
-        void OnEnable() { target = 1f; transform.localScale = baseScale; }
+        void Awake()
+        {
+            baseScale = transform.localScale;
+            selectable = GetComponent<Selectable>();
+        }
 
-        public void OnPointerEnter(PointerEventData e) { inside = true; target = hover; }
+        // Start slightly small so the Update lerp grows it in — a subtle entrance pop.
+        void OnEnable() { target = 1f; transform.localScale = baseScale * 0.85f; }
+
+        bool Active => selectable == null || selectable.interactable;
+
+        public void OnPointerEnter(PointerEventData e)
+        {
+            inside = true;
+            if (!Active) return;
+            target = hover;
+            Sfx.Hover();
+        }
+
         public void OnPointerExit(PointerEventData e) { inside = false; target = 1f; }
-        public void OnPointerDown(PointerEventData e) { target = press; }
+
+        public void OnPointerDown(PointerEventData e)
+        {
+            if (!Active) return;
+            target = press;
+            Sfx.Click();
+        }
+
         public void OnPointerUp(PointerEventData e) { target = inside ? hover : 1f; }
 
         void Update()

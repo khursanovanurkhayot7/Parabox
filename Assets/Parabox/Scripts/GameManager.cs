@@ -6,6 +6,21 @@ using UnityEngine.UI;
 
 namespace Parabox
 {
+    // A per-difficulty-tier visual skin for the level. Gameplay is unchanged — only colors.
+    [System.Serializable]
+    public class LevelTheme
+    {
+        public Color[] roomColors;  // floor colors indexed by room id (main room = 0)
+        public Color wall;
+        public Color box;
+        public Color player;
+        public Color grid;
+        public float floorVignette;  // 0..1 inner-shadow depth on the floor
+        public float pieceGlow;      // 0..1 neon glow halo behind boxes / player
+        public Sprite floorTex;      // tileable surface pattern (grass / water / cracked rock)
+        public Color floorTexTint;   // tint + alpha for the pattern overlay
+    }
+
     public class GameManager : MonoBehaviour
     {
         [Header("Levels (prefabs, in order)")]
@@ -25,11 +40,16 @@ namespace Parabox
         [Header("Room colors (index = room id)")]
         public Color[] roomColors;
 
+        [Header("Per-tier level themes (index = level / 10)")]
+        public LevelTheme[] levelThemes;
+
         [Header("Effect colors / sprites")]
         public Color boxColor = Color.white;
         public Color playerColor = Color.white;
         public Sprite pieceSprite;
         public Sprite ringSprite;
+        public Sprite glowSprite;
+        public Sprite vignetteSprite;
 
         [Header("Scene references")]
         public CameraFollow cameraFollow;
@@ -41,7 +61,23 @@ namespace Parabox
         public Button nextButton;
         public Button menuButton;
 
+        [Header("Timer")]
+        public RectTransform timerRoot;
+        public CanvasGroup timerCanvas;
+        public Image timerFill;          // radial ring that depletes
+        public Text timerLabel;
+        public Color[] timerAccents;     // ring colour per difficulty tier
+        public GameObject timeUpPanel;
+        public Button retryButton;
+        public Button backToLevelsButton;
+
+        [Header("On-screen controls")]
+        public Button upButton, downButton, leftButton, rightButton;
+        public Button undoButton, restartButton, muteButton, hudMenuButton;
+        public GameObject muteOnIcon, muteOffIcon;   // toggled to show current audio state
+
         const string LevelKey = "Parabox.Level";
+        const string OpenLevelsKey = "Parabox.OpenLevels";
         static string BestKey(int level) => "Parabox.Best." + level;
         const float InteriorFit = 0.72f; // interior room size relative to its box cell
 
@@ -60,6 +96,21 @@ namespace Parabox
         bool won;
         Vector2Int lastHeld;
         float nextRepeat;
+        float timeLeft;
+        float timeLimit;
+        bool timedUp;
+        float timerIntro;
+        float tickBump;
+        int lastSecond = -1;
+        Color timerAccentCur = new Color(1f, 0.62f, 0.37f, 1f);
+        const float IntroDur = 0.5f;
+        static readonly Color TimerWarn = new Color(0.96f, 0.36f, 0.34f, 1f);
+        Color wallColor = new Color(0.078f, 0.102f, 0.157f, 1f);
+        Color gridColor = new Color(0f, 0f, 0f, 0.12f);
+        float floorVignette;
+        float pieceGlow;
+        Sprite floorTex;
+        Color floorTexTint = Color.clear;
 
         void Start()
         {
@@ -68,6 +119,7 @@ namespace Parabox
             Fx.Ring = ringSprite;
 
             levelIndex = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
+            ApplyLevelTheme(levelIndex / 10);   // Beginner / Intermediate / Advanced skin
             model = LevelParser.Parse(levelPrefabs[levelIndex]);
             BuildView();
             SyncViews(true);
@@ -75,10 +127,68 @@ namespace Parabox
             winPanel.SetActive(false);
             nextButton.onClick.AddListener(NextLevel);
             menuButton.onClick.AddListener(GoToMenu);
+
+            // per-level countdown: Level 1 -> 16s, Level 2 -> 17s, ... Level 30 -> 45s
+            timeLimit = 16f + levelIndex;
+            timeLeft = timeLimit;
+            timedUp = false;
+            timerIntro = 0f;
+            tickBump = 0f;
+            lastSecond = -1;
+            int tier = Mathf.Clamp(levelIndex / 10, 0,
+                (timerAccents != null && timerAccents.Length > 0) ? timerAccents.Length - 1 : 0);
+            timerAccentCur = (timerAccents != null && timerAccents.Length > 0)
+                ? timerAccents[tier] : new Color(1f, 0.62f, 0.37f, 1f);
+            if (timeUpPanel != null) timeUpPanel.SetActive(false);
+            if (retryButton != null) retryButton.onClick.AddListener(Restart);
+            if (backToLevelsButton != null) backToLevelsButton.onClick.AddListener(ReturnToLevels);
+            WireOnScreenControls();
+            AnimateTimer();
+        }
+
+        // On-screen buttons drive the exact same logic as the keyboard (touch / click support).
+        void WireOnScreenControls()
+        {
+            if (upButton != null)      upButton.onClick.AddListener(() => UiMove(Vector2Int.up));
+            if (downButton != null)    downButton.onClick.AddListener(() => UiMove(Vector2Int.down));
+            if (leftButton != null)    leftButton.onClick.AddListener(() => UiMove(Vector2Int.left));
+            if (rightButton != null)   rightButton.onClick.AddListener(() => UiMove(Vector2Int.right));
+            if (undoButton != null)    undoButton.onClick.AddListener(UiUndo);
+            if (restartButton != null) restartButton.onClick.AddListener(Restart);
+            if (muteButton != null)    muteButton.onClick.AddListener(UiMute);
+            if (hudMenuButton != null) hudMenuButton.onClick.AddListener(GoToMenu);
+            UpdateMuteIcon();
+        }
+
+        public void UiMove(Vector2Int dir)
+        {
+            if (won || timedUp) return;
+            DoMove(dir);
+        }
+
+        public void UiUndo()
+        {
+            if (won || timedUp) return;
+            if (model.Undo()) { SyncViews(false); UpdateHud(); }
+        }
+
+        public void UiMute()
+        {
+            Sfx.ToggleMute();
+            UpdateMuteIcon();
+        }
+
+        void UpdateMuteIcon()
+        {
+            if (muteOnIcon != null) muteOnIcon.SetActive(!Sfx.Muted);
+            if (muteOffIcon != null) muteOffIcon.SetActive(Sfx.Muted);
         }
 
         void Update()
         {
+            TickTimer();
+            AnimateTimer();
+
             var kb = Keyboard.current;
             if (kb == null) return;
 
@@ -88,7 +198,13 @@ namespace Parabox
                 return;
             }
 
-            if (kb.mKey.wasPressedThisFrame) Sfx.ToggleMute();
+            if (kb.mKey.wasPressedThisFrame) { Sfx.ToggleMute(); UpdateMuteIcon(); }
+
+            if (timedUp)
+            {
+                if (kb.rKey.wasPressedThisFrame) Restart();
+                return;
+            }
 
             if (won)
             {
@@ -236,6 +352,30 @@ namespace Parabox
                 if (view == null) view = go.AddComponent<EntityView>();
                 views[e] = view;
 
+                // Skin the piece (box / player) to the tier theme + neon glow + rim outline.
+                if (e.isPlayer)
+                {
+                    var body = go.transform.Find("Body");
+                    if (body)
+                    {
+                        var bsr = body.GetComponent<SpriteRenderer>();
+                        bsr.color = playerColor;
+                        AddGlow(go, playerColor, bsr.sortingOrder - 1, 1.7f);
+                    }
+                    AddRim(go, "Body", playerColor, 0.9f);
+                }
+                else if (e.interiorRoomId < 0)
+                {
+                    var fill = go.transform.Find("Sprite");
+                    if (fill)
+                    {
+                        var fsr = fill.GetComponent<SpriteRenderer>();
+                        fsr.color = boxColor;
+                        AddGlow(go, boxColor, fsr.sortingOrder - 1, 1.7f);
+                    }
+                    AddRim(go, "Sprite", boxColor, 0.95f);
+                }
+
                 // A meta-box carries its interior room as a scaled-down child so the
                 // nesting and the recursive zoom happen automatically. Its frame color
                 // matches the room it contains (like the real game).
@@ -273,13 +413,39 @@ namespace Parabox
             fsr.color = floorC;
             fsr.sortingOrder = OrderFloorBase;
 
+            // per-tier floor surface pattern (grass / water / cracked rock), tiled over the floor
+            if (floorTex != null && floorTexTint.a > 0f)
+            {
+                var texGO = new GameObject("FloorTex");
+                texGO.transform.SetParent(root, false);
+                var tsr = texGO.AddComponent<SpriteRenderer>();
+                tsr.sprite = floorTex;
+                tsr.drawMode = SpriteDrawMode.Tiled;
+                tsr.size = new Vector2(room.width, room.height);
+                tsr.color = floorTexTint;
+                tsr.sortingOrder = OrderFloorBase;
+            }
+
             // Hairline grid drawn over the floor — thin lines on the cell boundaries.
             var grid = Instantiate(gridPrefab, root);
             grid.transform.localPosition = Vector3.zero;
             var gsr = grid.GetComponent<SpriteRenderer>();
             gsr.drawMode = SpriteDrawMode.Tiled;
             gsr.size = new Vector2(room.width, room.height);
+            gsr.color = gridColor;
             gsr.sortingOrder = OrderFloorCell;
+
+            // Soft inner-shadow vignette over the floor for premium depth (per tier).
+            if (vignetteSprite != null && floorVignette > 0f)
+            {
+                var vg = new GameObject("FloorVignette");
+                vg.transform.SetParent(root, false);
+                vg.transform.localScale = new Vector3(room.width, room.height, 1f);
+                var vsr = vg.AddComponent<SpriteRenderer>();
+                vsr.sprite = vignetteSprite;
+                vsr.color = new Color(0f, 0f, 0f, floorVignette);
+                vsr.sortingOrder = OrderFloorCell;
+            }
 
             // Solid wall blocks.
             for (int x = 0; x < room.width; x++)
@@ -289,6 +455,8 @@ namespace Parabox
                         var w = Instantiate(wallPrefab, root);
                         w.transform.localPosition = Cell(room, new Vector2Int(x, y));
                         SetOrder(w, OrderWall);
+                        foreach (var sr in w.GetComponentsInChildren<SpriteRenderer>(true)) sr.color = wallColor;
+                        AddRim(w, "Sprite", wallColor, 0.95f); // beveled edge so walls read on dark tiers
                     }
 
             // Border frame around the room edge.
@@ -305,12 +473,14 @@ namespace Parabox
                 var go = Instantiate(boxGoalPrefab, root);
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
+                foreach (var sr in go.GetComponentsInChildren<SpriteRenderer>(true)) sr.color = boxColor;
             }
             foreach (var g in room.playerGoals)
             {
                 var go = Instantiate(playerGoalPrefab, root);
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
+                foreach (var sr in go.GetComponentsInChildren<SpriteRenderer>(true)) sr.color = playerColor;
             }
         }
 
@@ -343,6 +513,52 @@ namespace Parabox
 
         static Color Lighten(Color c, float t) => Color.Lerp(c, Color.white, t);
         static Color Darken(Color c, float t) => Color.Lerp(c, Color.black, t);
+
+        // Swaps the level palette to the current difficulty tier (gameplay unaffected).
+        void ApplyLevelTheme(int tier)
+        {
+            if (levelThemes == null || levelThemes.Length == 0) return;
+            var th = levelThemes[Mathf.Clamp(tier, 0, levelThemes.Length - 1)];
+            if (th.roomColors != null && th.roomColors.Length > 0) roomColors = th.roomColors;
+            boxColor = th.box;
+            playerColor = th.player;
+            wallColor = th.wall;
+            gridColor = th.grid;
+            floorVignette = th.floorVignette;
+            pieceGlow = th.pieceGlow;
+            floorTex = th.floorTex;
+            floorTexTint = th.floorTexTint;
+        }
+
+        // A lightened rim outline around a piece's fill sprite — a premium, layered look.
+        void AddRim(GameObject piece, string fillChild, Color fillColor, float scale)
+        {
+            if (ringSprite == null) return;
+            var target = piece.transform.Find(fillChild);
+            if (target == null) return;
+            var tsr = target.GetComponent<SpriteRenderer>();
+            if (tsr == null) return;
+            var rim = new GameObject("Rim");
+            rim.transform.SetParent(piece.transform, false);
+            rim.transform.localScale = Vector3.one * scale;
+            var rsr = rim.AddComponent<SpriteRenderer>();
+            rsr.sprite = ringSprite;
+            rsr.color = Lighten(fillColor, 0.45f);
+            rsr.sortingOrder = tsr.sortingOrder + 1;
+        }
+
+        // A soft neon glow halo behind a piece (premium depth); intensity is per-tier.
+        void AddGlow(GameObject piece, Color color, int order, float scale)
+        {
+            if (glowSprite == null || pieceGlow <= 0f) return;
+            var g = new GameObject("Glow");
+            g.transform.SetParent(piece.transform, false);
+            g.transform.localScale = Vector3.one * scale;
+            var sr = g.AddComponent<SpriteRenderer>();
+            sr.sprite = glowSprite;
+            sr.color = new Color(color.r, color.g, color.b, pieceGlow);
+            sr.sortingOrder = order;
+        }
 
         // -------------------------------------------------- HUD / flow
         void UpdateHud()
@@ -403,6 +619,74 @@ namespace Parabox
             int next = (levelIndex + 1) % levelPrefabs.Length;
             PlayerPrefs.SetInt(LevelKey, next);
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        }
+
+        // -------------------------------------------------- timer
+        void TickTimer()
+        {
+            if (timedUp || won) return;
+            timeLeft -= Time.deltaTime;
+            if (timeLeft <= 0f)
+            {
+                timeLeft = 0f;
+                TimeUp();
+            }
+        }
+
+        // All timer visuals in one place: intro fade + scale-in, a per-second "tick" pop,
+        // the depleting radial ring, and a smooth (non-flashing) warm-up + gentle pulse
+        // over the final 5 seconds.
+        void AnimateTimer()
+        {
+            timerIntro = Mathf.Min(timerIntro + Time.unscaledDeltaTime, IntroDur);
+            float introT = Mathf.Clamp01(timerIntro / IntroDur);
+            if (timerCanvas != null) timerCanvas.alpha = introT;
+            float introScale = Mathf.Lerp(0.55f, 1f, EaseOutBack(introT));
+
+            int secs = Mathf.CeilToInt(Mathf.Max(0f, timeLeft));
+            if (secs != lastSecond)
+            {
+                if (lastSecond >= 0 && !won && !timedUp) tickBump = 1f; // pop on each new second
+                lastSecond = secs;
+                if (timerLabel != null) timerLabel.text = secs.ToString();
+            }
+            tickBump = Mathf.MoveTowards(tickBump, 0f, Time.unscaledDeltaTime * 4f);
+            if (timerLabel != null) timerLabel.transform.localScale = Vector3.one * (1f + tickBump * 0.16f);
+
+            bool danger = timeLeft <= 5f && !won && !timedUp;
+            if (timerFill != null)
+            {
+                timerFill.fillAmount = timeLimit > 0f ? Mathf.Clamp01(timeLeft / timeLimit) : 0f;
+                float danger01 = danger ? Mathf.Clamp01((5f - timeLeft) / 5f) : 0f;
+                timerFill.color = Color.Lerp(timerAccentCur, TimerWarn, danger01);
+            }
+
+            float pulse = danger
+                ? 1f + Mathf.Sin(Time.unscaledTime * 4.2f) * 0.05f    // slow, smooth — never a flash
+                : 1f + Mathf.Sin(Time.unscaledTime * 2.0f) * 0.012f;  // barely-there breathing
+            if (timedUp) pulse = 1f;
+            if (timerRoot != null) timerRoot.localScale = Vector3.one * introScale * pulse;
+        }
+
+        static float EaseOutBack(float x)
+        {
+            const float c1 = 1.70158f, c3 = 2.70158f;
+            return 1f + c3 * Mathf.Pow(x - 1f, 3f) + c1 * Mathf.Pow(x - 1f, 2f);
+        }
+
+        void TimeUp()
+        {
+            if (timedUp) return;
+            timedUp = true;
+            if (timeUpPanel != null) timeUpPanel.SetActive(true);
+            Sfx.Blocked();
+        }
+
+        void ReturnToLevels()
+        {
+            PlayerPrefs.SetInt(OpenLevelsKey, 1);
+            PlayerPrefs.Save();
+            SceneManager.LoadScene("MainMenu");
         }
 
         void Restart()
