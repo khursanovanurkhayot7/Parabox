@@ -6,5 +6,7 @@ namespace Parabox
     {
         public int x;
         public int y;
+        public bool isEcho;             // the shadow diver that copies the player's every move
+        public bool isMirror;           // the diver that moves the OPPOSITE way to the player
     }
 }

@@ -17,7 +17,7 @@ namespace Parabox
         public Color[] glowAColors;  // primary nebula glow, per tier
         public Color[] glowBColors;  // secondary nebula glow, per tier
         public Color[] rayColors;    // god-ray tint, per tier
-        [Range(0f, 1f)] public float vignetteAlpha = 0.45f;
+        [Range(0f, 1f)] public float vignetteAlpha = 0f;
 
         const string LevelKey = "Parabox.Level";
         const int PerTier = 10;
@@ -31,7 +31,7 @@ namespace Parabox
             Apply(tier);
         }
 
-        void Apply(int tier)
+        public void Apply(int tier)
         {
             // when a real background photo is present, keep the procedural glows/rays subtle so the art shows
             bool photo = bgPhoto != null && bgPhoto.sprite != null;
@@ -42,7 +42,13 @@ namespace Parabox
             if (glow2 != null && glowBColors != null && tier < glowBColors.Length) glow2.color = Fade(glowBColors[tier], atmos);
             if (rays != null && rayColors != null && tier < rayColors.Length)
                 foreach (var r in rays) if (r != null) r.color = Fade(rayColors[tier], photo ? 0.6f : 1f);
-            if (vignette != null) vignette.color = new Color(0f, 0f, 0f, vignetteAlpha);
+            // The vignette sprite reads as a second room-sized border once the camera zooms into a
+            // board. Disable it outright; the solid backdrop is cleaner and keeps the grid dominant.
+            if (vignette != null)
+            {
+                vignette.color = Color.clear;
+                vignette.enabled = false;
+            }
         }
 
         static Color Fade(Color c, float m) => new Color(c.r, c.g, c.b, c.a * m);

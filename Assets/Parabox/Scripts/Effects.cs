@@ -10,6 +10,31 @@ namespace Parabox
     {
         public static Sprite Piece;   // small rounded sprite for particles
         public static Sprite Ring;    // rounded outline for the ripple
+        public static Sprite Glow;    // soft glow for the premium win celebration
+
+        // Premium level-complete celebration from the board centre: shockwave + glow burst + streaks + flash.
+        public static void Celebrate(Camera cam, Color[] palette) => CelebrateAt(cam, palette, null);
+
+        // Same, but anchored to a real world point.
+        //
+        // Celebrate() put the burst at the CAMERA, which is not where the board is: CameraFollow
+        // reserves 16% of the view at the top and 20% at the bottom for the HUD, so the camera sits
+        // off-centre from the room by design. The shockwave therefore radiated from one point while
+        // BoardWinFx's pulse radiated from another — two explosions with different origins, which
+        // is exactly what reads as "strange" even when you can't name it.
+        public static void CelebrateAt(Camera cam, Color[] palette, Vector3? worldPos)
+        {
+            if (Glow == null || cam == null) return;
+            var go = new GameObject("WinFx");
+            Vector3 at = worldPos ?? new Vector3(cam.transform.position.x, cam.transform.position.y, 0f);
+            go.transform.position = new Vector3(at.x, at.y, 0f);
+            var fx = go.AddComponent<WinFx>();
+            fx.glow = Glow;
+            fx.ring = Ring;
+            fx.palette = palette;
+            fx.sizeScale = Mathf.Clamp(cam.orthographicSize / 4f, 0.7f, 1.7f);
+            fx.order = 250;
+        }
 
         // A burst of pieces flying outward from a point (in a room's local space,
         // so it scales correctly inside nested boxes).
