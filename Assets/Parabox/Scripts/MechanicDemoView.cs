@@ -71,6 +71,7 @@ namespace Parabox
             ResetDemo(id);
             if (group != null) group.alpha = 1f;
             yield return Wait(0.35f);
+            yield return PlayPuzzleApproach(id);
 
             switch (id)
             {
@@ -334,8 +335,8 @@ namespace Parabox
 
         // Every lesson uses a small authored board silhouette. These are presentation layouts, not
         // campaign puzzles: they contain no ParaboxLevel, cannot award progress, and never read the
-        // current level or its solution. The wall variants keep thirty-six lessons from looking like
-        // the same row of boxes while preserving a clear, uncluttered demonstration lane.
+        // current level or its solution. The asymmetric wall banks turn the old straight diagram
+        // into a readable mini-puzzle while leaving the mechanic's demonstration lane unobstructed.
         void ConfigureMiniBoard(MechanicCatalog.Id id)
         {
             if (!IsGameplayStylePrebuilt) return;
@@ -376,26 +377,63 @@ namespace Parabox
                 || id == MechanicCatalog.Id.ChamberChain;
             if (recursive)
             {
-                SetWall(-3, 1);
-                SetWall(3, -1);
+                // A staggered chamber mouth: the diver turns into the room instead of travelling
+                // down the same horizontal strip used by ordinary mechanic cards.
+                SetWall(-3, 0); SetWall(-3, 1); SetWall(-2, 1);
+                SetWall(2, -1); SetWall(3, -1);
                 return;
             }
 
-            switch (((int)id) & 3)
+            if (id == MechanicCatalog.Id.Mirror || id == MechanicCatalog.Id.Echo)
             {
-                case 0:
-                    SetWall(-3, 1); SetWall(3, -1);
-                    break;
-                case 1:
-                    SetWall(-3, -1); SetWall(3, 1);
-                    break;
-                case 2:
-                    SetWall(-3, -1); SetWall(-3, 1); SetWall(3, 1);
-                    break;
-                default:
-                    SetWall(-3, 1); SetWall(3, -1); SetWall(3, 1);
-                    break;
+                // Two clear parallel lanes make opposite/copy movement readable at a glance.
+                SetWall(-3, 0); SetWall(0, 0); SetWall(3, 0);
+                SetWall(0, 1); SetWall(0, -1);
+                return;
             }
+
+            if (id == MechanicCatalog.Id.Boulder)
+            {
+                // Keep the three-cell run-up visible while closing the tempting upper shortcut.
+                SetWall(-3, 1); SetWall(-2, 1); SetWall(-1, 1);
+                SetWall(2, -1); SetWall(3, -1);
+                return;
+            }
+
+            // Shared S-bend used to approach the mechanic. Each family receives one additional
+            // brace, so its example board and route silhouette do not look copied from the last.
+            SetWall(-3, 0); SetWall(-3, 1); SetWall(-2, 1);
+            SetWall(2, -1); SetWall(3, -1);
+            switch (((int)id) % 5)
+            {
+                case 0: SetWall(3, 1); break;
+                case 1: SetWall(-1, -1); break;
+                case 2: SetWall(1, 1); break;
+                case 3: SetWall(3, 0); break;
+                default: SetWall(1, -1); break;
+            }
+        }
+
+        // Most demonstrations begin with two genuine grid moves around the left wall bank. The
+        // mechanic then resolves from the familiar (-2,0) staging cell used by the authored action
+        // below. Mechanics whose rule itself depends on a special two-lane or run-up formation keep
+        // their bespoke opening and never snap through this shared route.
+        IEnumerator PlayPuzzleApproach(MechanicCatalog.Id id)
+        {
+            if (id == MechanicCatalog.Id.Mirror
+                || id == MechanicCatalog.Id.Echo
+                || id == MechanicCatalog.Id.Magnet
+                || id == MechanicCatalog.Id.Sand
+                || id == MechanicCatalog.Id.Boulder
+                || id == MechanicCatalog.Id.Deflector)
+                yield break;
+
+            Vector2 start = P(-3, -1);
+            Vector2 corner = P(-2, -1);
+            Vector2 staging = P(-2, 0);
+            player.anchoredPosition = start;
+            yield return Move(player, start, corner, 0.26f);
+            yield return Move(player, corner, staging, 0.26f);
         }
 
         void SetWall(int x, int y)
