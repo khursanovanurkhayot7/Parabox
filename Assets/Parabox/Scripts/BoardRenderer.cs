@@ -2171,9 +2171,11 @@ namespace Parabox
             return parentRoom.InBounds(adjacent) && !parentRoom.wall[adjacent.x, adjacent.y];
         }
 
-        // A boundary may expose two or more neighbouring cells. Treating each cell as a separate
-        // bridge made their gradient sprites overlap into visible dark bands. Collapse every
-        // contiguous opening into one flat span so the room reads as a single moulded surface.
+        // A boundary may expose several neighbouring cells. Stretching the shell bridge across
+        // the whole run makes a miniature recursive room grow long bars that look like dozens of
+        // separate exits. Represent each contiguous run with one compact threshold instead. The
+        // model still owns the exact passable cells; this is only the shell's readable doorway
+        // marker, and it remains centred on the authored opening.
         static void CreateHorizontalDoorwayRuns(Transform parent, BoardAssets a, PRoom room,
                                                 float roomScale, Color floorColor, bool top,
                                                 float localY, float depth)
@@ -2187,9 +2189,9 @@ namespace Parabox
                 if (open || runStart < 0) continue;
 
                 int runEnd = x - 1;
-                float centreCell = (runStart + runEnd) * 0.5f;
-                float localX = (centreCell - (room.width - 1) * 0.5f) * roomScale;
-                float span = (runEnd - runStart + 1) * roomScale + 0.012f;
+                int doorwayCell = (runStart + runEnd) / 2;
+                float localX = (doorwayCell - (room.width - 1) * 0.5f) * roomScale;
+                float span = roomScale + 0.012f;
                 string edge = top ? "Top" : "Bottom";
                 CreateDoorway(parent, a.floorPrefab, a.cellSprite, floorColor,
                     $"{edge}_{runStart}_{runEnd}", new Vector2(localX, localY), span, depth);
@@ -2210,9 +2212,9 @@ namespace Parabox
                 if (open || runStart < 0) continue;
 
                 int runEnd = y - 1;
-                float centreCell = (runStart + runEnd) * 0.5f;
-                float localY = (centreCell - (room.height - 1) * 0.5f) * roomScale;
-                float span = (runEnd - runStart + 1) * roomScale + 0.012f;
+                int doorwayCell = (runStart + runEnd) / 2;
+                float localY = (doorwayCell - (room.height - 1) * 0.5f) * roomScale;
+                float span = roomScale + 0.012f;
                 string edge = right ? "Right" : "Left";
                 CreateDoorway(parent, a.floorPrefab, a.cellSprite, floorColor,
                     $"{edge}_{runStart}_{runEnd}", new Vector2(localX, localY), depth, span);
