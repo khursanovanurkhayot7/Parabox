@@ -564,6 +564,8 @@ namespace Parabox.EditorTools
                 CampaignProgression.Profile progression = CampaignProgression.ForLevel(index);
                 List<MechanicCatalog.Id> detectedIntroductions =
                     MechanicCatalog.IntroductionsAt(campaignPrefabs, index);
+                List<MechanicCatalog.Id> tutorialLessons =
+                    MechanicCatalog.TutorialsAt(campaignPrefabs, index);
                 bool introducesDetectedRule = detectedIntroductions.Count > 0;
                 if (progression.introducesMechanic != introducesDetectedRule)
                     Failure(report, ref failures, index,
@@ -574,6 +576,18 @@ namespace Parabox.EditorTools
                     && string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(detectedIntroductions)))
                     Failure(report, ref failures, index,
                         "first mechanic appearance has no reusable tutorial lesson");
+                foreach (MechanicCatalog.Id introduced in detectedIntroductions)
+                    if (!tutorialLessons.Contains(introduced))
+                        Failure(report, ref failures, index,
+                            $"new mechanic {introduced} is missing from its tutorial mini-board schedule");
+                if (MechanicCatalog.IsChapterTutorialCheckpoint(index)
+                    && tutorialLessons.Count == 0)
+                    Failure(report, ref failures, index,
+                        "chapter opener has no NEW MECHANIC mini-board");
+                if (tutorialLessons.Count > 0
+                    && string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(tutorialLessons)))
+                    Failure(report, ref failures, index,
+                        "tutorial schedule contains a mechanic without an explanation");
 
                 foreach (MechanicCatalog.Id mechanic in MechanicCatalog.MechanicsIn(prefab, index))
                 {

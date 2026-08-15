@@ -4,8 +4,9 @@ namespace Parabox
     // Unity asset and cannot be missed by an already-open Editor's incremental importer.
     static class TutorialVideoVersion
     {
-        // V5 replaces the abstract rule diagram with spoiler-free, prebuilt gameplay mini-boards.
-        // Players who saw the earlier card should receive the corrected visual lesson once.
-        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V5.Seen.";
+        // V6 guarantees a gameplay mini-board at every chapter opener while retaining lessons for
+        // mechanics introduced between openers. Players receive this corrected schedule once even
+        // if an older presentation was already marked as seen.
+        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V6.Seen.";
     }
 }

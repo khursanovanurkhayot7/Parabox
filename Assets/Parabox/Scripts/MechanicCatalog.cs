@@ -174,6 +174,30 @@ namespace Parabox
             return introduced;
         }
 
+        // The campaign still teaches every rule at its first real appearance. In addition, each
+        // ten-level chapter opens with one short gameplay-style refresher so a returning player is
+        // never dropped into a new world without a readable demonstration. These are presentation
+        // mini-boards only; they do not load or replay the campaign level.
+        public static List<Id> TutorialsAt(GameObject[] prefabs, int levelIndex)
+        {
+            var lessons = new List<Id>();
+            switch (levelIndex)
+            {
+                case 0:  Add(lessons, Id.Navigation); break;   // Level 1
+                case 10: Add(lessons, Id.Mirror); break;       // Level 11
+                case 20: Add(lessons, Id.Echo); break;         // Level 21
+                case 30: Add(lessons, Id.CrackedFloor); break; // Level 31
+                case 40: Add(lessons, Id.NestedBoard); break;  // Level 41
+            }
+
+            foreach (Id introduced in IntroductionsAt(prefabs, levelIndex))
+                Add(lessons, introduced);
+            return lessons;
+        }
+
+        public static bool IsChapterTutorialCheckpoint(int levelIndex)
+            => levelIndex >= 0 && levelIndex < 50 && levelIndex % 10 == 0;
+
         public static string Signature(IReadOnlyList<Id> ids)
         {
             if (ids == null || ids.Count == 0) return string.Empty;

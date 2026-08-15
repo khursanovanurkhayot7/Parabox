@@ -1827,19 +1827,20 @@ namespace Parabox
         const int RTW = 1280, RTH = 720;        // 16:9 — matches the panel so the board isn't distorted
         float RTAspect => RTW / (float)RTH;
 
-        List<MechanicCatalog.Id> CurrentMechanicIntroductions()
-            => MechanicCatalog.IntroductionsAt(levelPrefabs, levelIndex);
+        List<MechanicCatalog.Id> CurrentTutorialMechanics()
+            => MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
 
-        // A tutorial belongs to the first appearance of a rule, not to a chapter number and not to
-        // a puzzle solution. The stored signature makes each lesson play once while allowing a
-        // changed curriculum or video format to introduce itself again.
+        // Every first-time rule receives a tutorial, and Levels 1/11/21/31/41 always open with a
+        // compact chapter lesson. The stored signature makes each mini-board play once while a
+        // changed curriculum or video format can introduce itself again. No puzzle solution is
+        // read by this path.
         bool WillTutorial()
         {
             if (tutorialFx == null || tutorialFx.mechanicDemo == null) return false;
-            List<MechanicCatalog.Id> introductions = CurrentMechanicIntroductions();
-            if (introductions.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(introductions)))
+            List<MechanicCatalog.Id> lessons = CurrentTutorialMechanics();
+            if (lessons.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(lessons)))
                 return false;
-            string signature = MechanicCatalog.Signature(introductions);
+            string signature = MechanicCatalog.Signature(lessons);
             return PlayerPrefs.GetString(MechanicBriefingKey(levelIndex), string.Empty) != signature;
         }
 
@@ -1847,7 +1848,7 @@ namespace Parabox
         {
             if (WillTutorial())
             {
-                mechanicBriefingSignature = MechanicCatalog.Signature(CurrentMechanicIntroductions());
+                mechanicBriefingSignature = MechanicCatalog.Signature(CurrentTutorialMechanics());
                 _cine = StartCoroutine(TutorialCinematic());
             }
         }
@@ -1904,7 +1905,7 @@ namespace Parabox
             tutorialFx.PanelIn(tutorialFromMainPlay ? 0.8f : 0.5f);
             yield return WaitU(tutorialFromMainPlay ? 0.9f : 0.6f);
 
-            List<MechanicCatalog.Id> introductions = CurrentMechanicIntroductions();
+            List<MechanicCatalog.Id> introductions = CurrentTutorialMechanics();
             if (introductions.Count == 0)
                 introductions.Add(MechanicCatalog.Id.Navigation);
 
