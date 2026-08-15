@@ -16,6 +16,10 @@ namespace Parabox
         public Button levelsButton;
         public Button quitButton;
 
+        [Header("Approved main-menu presentation")]
+        [Tooltip("Uses the approved full-screen artwork instead of drawing the live board inside the title.")]
+        public bool useStaticHomeArtwork = true;
+
         [Header("Live board — the O IS the real next level, in world space")]
         public RectTransform boardInner;   // the O's inner rect: the on-screen anchor the world board is framed into
         public RectTransform oSlot;        // the whole O (ring + inner) — scaled for the entrance
@@ -64,43 +68,93 @@ namespace Parabox
         [Tooltip("When ON, every level is playable regardless of progress (no locks). Turn OFF to ship with gated progression.")]
         public bool unlockAllForTesting = true;
 
+        // Temporary playtest switch. Keep this in code instead of relying on a serialized Inspector
+        // value: older copies of MainMenu.unity may still contain `false`, and OnEnable is also run
+        // again whenever the player returns from gameplay. Set this back to false for the release
+        // build so normal sequential progression is restored without touching saved progress.
+        const bool UnlockAllLevelsForCurrentTestingBuild = true;
+
         public const int PerCategory = 10;
 
         const string LevelKey = "Parabox.Level";
+        public const string MainPlayTutorialKey = "Parabox.Tutorial.FromMainPlay";
         const int NewGameLevel = 0;
+        const int CampaignLevelCount = 50;
         static string BestKey(int level) => "Parabox.Best." + level;
 
-        // A new application session always begins from Level 1. This deliberately preserves
-        // scores/unlocks, so the level-select map can still be used to revisit unlocked levels.
-        // Clearing the one-shot transition flags also prevents a previous interrupted session
-        // from reopening the map or resuming a later-level camera transition on launch.
+        // An arcade launch is a new player's run. Progress remains available while scenes change
+        // inside that run, but stopping/reopening the game must never inherit the previous player's
+        // unlocked route, best moves or score. Level 1 is the only initially available level.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        static void ResetFreshLaunchLevel()
+        static void BeginFreshCampaignSession()
         {
+            // Domain/scene reloads can happen inside one paid Luxodd session. Clearing campaign
+            // data here made session recovery indistinguishable from Restart. The Luxodd token is
+            // now the authority for detecting a genuinely new session; only transient UI flags
+            // are safe to clear at process startup.
+            PlayerPrefs.DeleteKey("Parabox.Seamless");
+            PlayerPrefs.DeleteKey("Parabox.SeamlessOut");
+            PlayerPrefs.DeleteKey("Parabox.FlyIn");
+            PlayerPrefs.DeleteKey("Parabox.FinalRun");
+            PlayerPrefs.Save();
+        }
+
+        // Public so the Luxodd shell hand-off can clear the finished player's run even when the
+        // browser keeps this WebGL instance alive for the next cabinet player.
+        public static void ResetCampaignSessionProgress()
+        {
+            for (int i = 0; i < CampaignLevelCount; i++)
+            {
+                PlayerPrefs.DeleteKey(GameManager.SessionClearKey(i));
+                PlayerPrefs.DeleteKey(BestKey(i));
+                PlayerPrefs.DeleteKey(GameManager.MechanicBriefingKey(i));
+            }
+            ScoreSystem.Reset(CampaignLevelCount);
             PlayerPrefs.SetInt(LevelKey, NewGameLevel);
+            PlayerPrefs.DeleteKey("Parabox.Completed");
             PlayerPrefs.DeleteKey("Parabox.Seamless");
             PlayerPrefs.DeleteKey("Parabox.SeamlessOut");
             PlayerPrefs.DeleteKey("Parabox.OpenLevels");
             PlayerPrefs.DeleteKey("Parabox.JustBeat");
             PlayerPrefs.DeleteKey("Parabox.FlyIn");
             PlayerPrefs.DeleteKey("Parabox.FinalRun");
+            PlayerPrefs.DeleteKey("Parabox.OutLevel");
+            PlayerPrefs.DeleteKey("Parabox.FinalMoves");
             PlayerPrefs.Save();
         }
 
         int screen;   // 0 = home, 1 = the level board
         bool transitioning;
 
-        // Main-menu auto start. One countdown follows the player from the title to the level map;
-        // at zero it always launches level 1, regardless of saved progress.
-        const float MenuAutoStartSeconds = 45f;
+        // One hard auto-start countdown is shared by the title and level-select map. Navigation
+        // never restarts it, and expiry always begins a fresh run from Level 1.
+        const float MenuAutoStartSeconds = 30f;
         float _autoStartRemaining = MenuAutoStartSeconds;
-        RectTransform _autoStartRoot;
-        RectTransform _autoStartBar;
-        Text _autoStartLabel;
-        Color _autoStartAccent;
+        [SerializeField, HideInInspector] RectTransform _autoStartRoot;
+        Vector2 _autoStartBasePosition;
+        [SerializeField, HideInInspector] Text _autoStartLabel;
+        [SerializeField, HideInInspector] Outline _autoStartOutline;
+        [SerializeField, HideInInspector] Color _autoStartAccent;
+        static readonly Color AutoStartWarning = new Color(0.96f, 0.25f, 0.22f, 1f);
         int _autoStartShown = -1;
         int _autoStartLayoutScreen = -1;
         bool _autoStartTriggered;
+        bool _menuTimeoutReady;
+        bool _autoStartWaitingForArm;
+        int _autoStartArmVersion;
+        long _autoStartDeadlineTimestamp;
+
+        // The new five-panel map uses a clean artwork layer plus real Unity UI nodes. Keeping the
+        // stateful parts native makes the completed fill, current ring, numbers and badges crisp and
+        // correctly clipped at every resolution.
+        Material _approvedMapProgressMaterial;
+        Material _approvedLockedBlurMaterial;
+        bool _approvedNativeMap;
+        [SerializeField, HideInInspector]
+        GameObject[] _approvedCompletedBadges = new GameObject[CampaignLevelCount];
+        readonly float[] _approvedMapCompleted = new float[CampaignLevelCount];
+        readonly float[] _approvedMapStates = new float[CampaignLevelCount];
+        readonly float[] _approvedMapPathLit = new float[CampaignLevelCount];
 
         // live world-space board (rendered exactly like the game)
         LevelModel _model;
@@ -110,23 +164,99 @@ namespace Parabox
         int _startLevel;
         SpriteRenderer _boardGlow;
         float _glowBaseScale;
-        RectTransform _logoEmblem;
+
+        void Awake()
+        {
+            // The approved title is rendered by a world-space SpriteRenderer, while PLAY,
+            // LEVEL SELECT and the progression map are driven by this screen-space Canvas.
+            // If the Canvas is accidentally saved at zero scale the title still looks perfect,
+            // but every UI hit target collapses to zero pixels and the map appears impossible
+            // to open. Keep the authored Canvas at a valid scale in both old and new scenes.
+            Canvas canvas = GetComponentInParent<Canvas>();
+            if (canvas != null && canvas.transform.localScale == Vector3.zero)
+                canvas.transform.localScale = Vector3.one;
+        }
 
         void OnEnable()
         {
+            // During the current difficulty playtest all 50 map nodes must remain selectable on
+            // every menu visit. The normal completion visuals still use Beaten(), so unlocking a
+            // level for testing does not falsely mark it as completed.
+            unlockAllForTesting = UnlockAllLevelsForCurrentTestingBuild;
+            // With fast Enter Play Mode this component can survive between runs. Display 30
+            // immediately, then arm the real deadline on the first visible frame so editor reload
+            // and scene activation time can never make the counter appear to start at 26.
+            if (_menuTimeoutReady)
+            {
+                _autoStartWaitingForArm = true;
+                _autoStartRemaining = MenuAutoStartSeconds;
+                _autoStartShown = -1;
+                _autoStartTriggered = false;
+                if (_autoStartRoot != null) _autoStartRoot.gameObject.SetActive(true);
+                PaintAutoStartTimer(30);
+                int armVersion = ++_autoStartArmVersion;
+                StartCoroutine(ArmMenuTimeoutOnVisibleFrame(armVersion));
+            }
+            if (mapCam != null)
+            {
+                Transform retiredMarker = mapCam.Find("ApprovedCurrentLevelMarker");
+                if (retiredMarker != null) Destroy(retiredMarker.gameObject);
+            }
             LuxoddGameService.ProgressLoaded += OnLuxoddProgressLoaded;
+            HideChapterGates();
+            HideFinalLevelDecoration();
+        }
+
+        void HideFinalLevelDecoration()
+        {
+            if (mapCam == null) return;
+            Transform[] descendants = mapCam.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < descendants.Length; i++)
+            {
+                string objectName = descendants[i].name;
+                if (objectName == "FinalAura" || objectName == "FinalRing"
+                    || objectName == "FinalLabel")
+                    descendants[i].gameObject.SetActive(false);
+            }
         }
 
         void OnDisable()
         {
+            _autoStartArmVersion++;
+            _autoStartWaitingForArm = false;
             LuxoddGameService.ProgressLoaded -= OnLuxoddProgressLoaded;
+        }
+
+        void OnDestroy()
+        {
+            if (_approvedMapProgressMaterial != null) Destroy(_approvedMapProgressMaterial);
+            if (_approvedLockedBlurMaterial != null) Destroy(_approvedLockedBlurMaterial);
         }
 
         void Start()
         {
             Sfx.Init();
             HideMusicCredit();
-            BuildLogoEmblem();
+
+            // The approved menu/map artwork already contains the visible button faces. Unity
+            // Buttons sit over those faces as transparent hit targets. A CanvasGroup at EXACTLY
+            // zero alpha can be culled by Unity 6's GraphicRaycaster, which leaves a beautiful
+            // button that cannot receive a click. Keep the hit target imperceptibly non-zero and
+            // repair older baked scenes at runtime as well as newly baked ones.
+            EnsureArtworkHitTarget(playButton);
+            EnsureArtworkHitTarget(levelsButton);
+            EnsureArtworkHitTarget(levelBoardBackButton);
+            // The BACK face is painted into the full-screen map artwork. Keep its transparent
+            // Unity hotspot above every decorative map layer so pointer clicks cannot be swallowed
+            // by a later rebake or progress effect.
+            if (levelBoardBackButton != null)
+            {
+                levelBoardBackButton.transform.SetAsLastSibling();
+                levelBoardBackButton.gameObject.SetActive(true);
+            }
+            if (levelButtons != null)
+                for (int i = 0; i < levelButtons.Length; i++)
+                    EnsureArtworkHitTarget(levelButtons[i]);
 
             playButton.onClick.AddListener(BeginStart);
             if (quitButton != null) quitButton.onClick.AddListener(Quit);
@@ -139,10 +269,17 @@ namespace Parabox
                 if (levelButtons[i] != null) levelButtons[i].onClick.AddListener(() => TryStart(index));
             }
 
+            BuildApprovedMapProgressLights();
             RefreshStates();
             RefreshGates();
             BuildLiveBoard();   // render the real next level in world space (the O) + set the backdrop tier
-            BuildAutoStartTimer();
+            ShowWorldBoard(true);
+            if (_autoStartRoot == null || _autoStartLabel == null || _autoStartOutline == null)
+                Debug.LogError("[Parabox] Menu timer UI is not prebuilt. Run Tools/Parabox/Generate Prebuilt UI (Run This) before Play or Build.");
+            // Arm the clock only after the expensive first-frame board/menu setup. Otherwise that
+            // loading time is included in Unity's first delta and can consume most of the 30s.
+            _menuTimeoutReady = true;
+            BeginMenuTimeoutSession();
 
             // arriving out of the finale: catch the board mid-move and carry it out to the logo
             if (PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1)
@@ -175,13 +312,50 @@ namespace Parabox
                     // event than a level, and gets the bigger sequence
                     int ch = beat / PerCategory;
                     bool isLast = beat == levelButtons.Length - 1;
+                    bool campaignComplete = isLast && AllLevelsBeaten();
                     bool opensChapter = !isLast && (beat % PerCategory) == PerCategory - 1
                                         && ch + 1 < Mathf.Max(1, Mathf.CeilToInt(levelButtons.Length / (float)PerCategory));
-                    if (isLast) StartCoroutine(PlayGameComplete());
+                    if (campaignComplete) StartCoroutine(PlayGameComplete());
                     else if (opensChapter) StartCoroutine(PlayChapterUnlock(ch));
                     else StartCoroutine(PlayProgress(beat));
                 }
             }
+        }
+
+        static void EnsureArtworkHitTarget(Button button)
+        {
+            if (button == null) return;
+            button.gameObject.SetActive(true);
+            button.interactable = true;
+
+            CanvasGroup group = button.GetComponent<CanvasGroup>();
+            if (group == null)
+            {
+                Debug.LogError("[Parabox] CanvasGroup is not prebuilt on " + button.name + ". Run the Prebuilt UI generator.");
+                return;
+            }
+            if (group.alpha <= 0f) group.alpha = 0.001f;
+            group.interactable = true;
+            group.blocksRaycasts = true;
+
+            // Older scenes use a small child named Face as Button.targetGraphic. The approved
+            // artwork buttons are considerably larger, so clicking their outer area never reached
+            // the Button. A root Image exactly follows the Button RectTransform and makes the
+            // complete visible artwork area clickable without adding any visible runtime UI.
+            Image hitTarget = button.GetComponent<Image>();
+            if (hitTarget == null)
+            {
+                Debug.LogError("[Parabox] Image hit target is not prebuilt on " + button.name + ". Run the Prebuilt UI generator.");
+                return;
+            }
+            hitTarget.sprite = null;
+            hitTarget.color = Color.white;
+            hitTarget.raycastTarget = true;
+            button.targetGraphic = hitTarget;
+
+            Graphic[] graphics = button.GetComponentsInChildren<Graphic>(true);
+            for (int i = 0; i < graphics.Length; i++)
+                if (graphics[i] != null) graphics[i].raycastTarget = graphics[i] == hitTarget;
         }
 
         // Hide the old track credit even when Unity has retained an older in-memory copy of
@@ -195,40 +369,6 @@ namespace Parabox
                 if (label == null || label.gameObject.name != "Credit2") continue;
                 label.gameObject.SetActive(false);
             }
-        }
-
-        // A separate high-contrast emblem gives the game a recognizable mark at icon size while
-        // preserving the animated PARAB[board]X wordmark. It is created from Resources so older
-        // scene copies and regenerated scenes receive the logo without an Inspector migration.
-        void BuildLogoEmblem()
-        {
-            if (homeGroup == null || _logoEmblem != null) return;
-            Sprite emblem = Resources.Load<Sprite>("Logo/ParaboxLogoEmblem");
-            if (emblem == null)
-            {
-                Debug.LogWarning("Parabox logo emblem could not be loaded from Resources/Logo.");
-                return;
-            }
-
-            var go = new GameObject("ParaboxLogoEmblem", typeof(RectTransform),
-                typeof(CanvasRenderer), typeof(Image));
-            _logoEmblem = (RectTransform)go.transform;
-            _logoEmblem.SetParent(homeGroup.transform, false);
-            _logoEmblem.anchorMin = _logoEmblem.anchorMax = new Vector2(0.5f, 0.5f);
-            _logoEmblem.pivot = new Vector2(0.5f, 0.5f);
-            _logoEmblem.anchoredPosition = new Vector2(-720f, 205f);
-            _logoEmblem.sizeDelta = new Vector2(180f, 180f);
-
-            var image = go.GetComponent<Image>();
-            image.sprite = emblem;
-            image.preserveAspect = true;
-            image.raycastTarget = false;
-            image.color = Color.white;
-
-            var shadow = go.AddComponent<Shadow>();
-            shadow.effectColor = new Color(0f, 0.02f, 0.08f, 0.82f);
-            shadow.effectDistance = new Vector2(0f, -8f);
-            _logoEmblem.SetAsLastSibling();
         }
 
         // The O arrives: the whole slot scales up with an overshoot while the ring spins into place.
@@ -264,15 +404,14 @@ namespace Parabox
             if (EventSystem.current != null)
             {
                 var selected = EventSystem.current.currentSelectedGameObject;
-                if (selected == null || (screen == 1 && !IsLevelBoardSelection(selected)))
+                if (!IsCurrentScreenSelection(selected))
                     ReselectCurrentScreen();
             }
-
-            TickAutoStartTimer();
 
             if (HandleArcadeMenuInput()) return;
 
             var kb = Keyboard.current;
+            TickAutoStartTimer();
             if (kb == null || transitioning) return;
             if (kb.mKey.wasPressedThisFrame) Sfx.ToggleMute();
             if (kb.deleteKey.wasPressedThisFrame) ResetProgress();
@@ -280,7 +419,37 @@ namespace Parabox
             {
                 if (screen == 1) CloseLevelBoard();
                 else OpenLevelBoard();   // home: Esc opens the level board (the "Menu" prompt)
+                return;
             }
+
+            Vector2Int keyboardDirection = ReadMenuDirectionDown(kb);
+            if (keyboardDirection != Vector2Int.zero)
+            {
+                MoveSelection(keyboardDirection);
+                return;
+            }
+
+            if (kb.enterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)
+            {
+                if (!TryInvokeCurrentSelection())
+                {
+                    ReselectCurrentScreen();
+                    TryInvokeCurrentSelection();
+                }
+            }
+        }
+
+        static Vector2Int ReadMenuDirectionDown(Keyboard keyboard)
+        {
+            if (keyboard.wKey.wasPressedThisFrame || keyboard.upArrowKey.wasPressedThisFrame)
+                return Vector2Int.up;
+            if (keyboard.sKey.wasPressedThisFrame || keyboard.downArrowKey.wasPressedThisFrame)
+                return Vector2Int.down;
+            if (keyboard.aKey.wasPressedThisFrame || keyboard.leftArrowKey.wasPressedThisFrame)
+                return Vector2Int.left;
+            if (keyboard.dKey.wasPressedThisFrame || keyboard.rightArrowKey.wasPressedThisFrame)
+                return Vector2Int.right;
+            return Vector2Int.zero;
         }
 
         void OnLuxoddProgressLoaded()
@@ -290,7 +459,8 @@ namespace Parabox
             RefreshGates();
             // Cloud progress may unlock later levels, but the title-screen game entry remains a
             // new run from Level 1. Explicit level-map selections are handled separately.
-            int desiredLevel = NewGameLevel;
+            int desiredLevel = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel),
+                0, levelButtons.Length - 1);
             // Keep the title's live-board preview aligned with the Level-1 start destination.
             if (!transitioning && _boardRoot != null && desiredLevel != _startLevel)
             {
@@ -322,37 +492,57 @@ namespace Parabox
 
             if (arcade.MuteDown)
             {
+                // Luxodd buttons bypass Unity's EventSystem, so play the same prebuilt press used
+                // by pointer/keyboard UI before muting the audio source.
+                Sfx.Click();
                 Sfx.ToggleMute();
                 return true;
             }
             if (arcade.BackDown)
             {
+                Sfx.Click();
                 if (screen == 1) CloseLevelBoard();
+                else Quit();
                 return true;
             }
             if (arcade.LevelsDown)
             {
+                Sfx.Click();
                 if (screen == 0) OpenLevelBoard();
                 else CloseLevelBoard();
                 return true;
             }
-            if (arcade.MovePulse && arcade.Direction != Vector2Int.zero)
+            if (arcade.NavigationPulse && arcade.Direction != Vector2Int.zero)
             {
                 MoveSelection(arcade.Direction);
                 return true;
             }
             if (arcade.ConfirmDown)
             {
-                var selected = EventSystem.current != null
-                    ? EventSystem.current.currentSelectedGameObject : null;
-                var button = selected != null ? selected.GetComponent<Button>() : null;
-                if (button != null && button.interactable && button.gameObject.activeInHierarchy)
-                    button.onClick.Invoke();
-                else
+                // A screen transition can leave the EventSystem focused on a hidden button for
+                // one frame. Previously the first cabinet press only repaired that focus, making
+                // the player press Black twice. Repair it and submit the newly selected button on
+                // the SAME press so cabinet input always feels immediate.
+                if (!TryInvokeCurrentSelection())
+                {
                     ReselectCurrentScreen();
+                    TryInvokeCurrentSelection();
+                }
                 return true;
             }
             return false;
+        }
+
+        bool TryInvokeCurrentSelection()
+        {
+            if (EventSystem.current == null) return false;
+            GameObject selected = EventSystem.current.currentSelectedGameObject;
+            if (!IsCurrentScreenSelection(selected)) return false;
+            Button button = selected != null ? selected.GetComponent<Button>() : null;
+            if (button == null || !button.interactable || !button.gameObject.activeInHierarchy)
+                return false;
+            button.onClick.Invoke();
+            return true;
         }
 
         void MoveSelection(Vector2Int direction)
@@ -361,6 +551,13 @@ namespace Parabox
             GameObject selectedObject = EventSystem.current.currentSelectedGameObject;
             Selectable selected = selectedObject != null ? selectedObject.GetComponent<Selectable>() : null;
             Selectable next = null;
+
+            // The level map is an inward spiral. Unity's generic spatial navigation can jump
+            // across nearby turns of that spiral, so level nodes follow their actual route
+            // neighbours instead. This keeps arcade-stick navigation visually predictable.
+            if (screen == 1 && selected is Button selectedButton
+                && TryMoveAlongLevelRoute(selectedButton, direction))
+                return;
 
             if (selected != null)
             {
@@ -378,6 +575,51 @@ namespace Parabox
                 Select(next);
                 Sfx.Hover();
             }
+        }
+
+        bool TryMoveAlongLevelRoute(Button selectedButton, Vector2Int direction)
+        {
+            if (levelButtons == null || selectedButton == null) return false;
+            int index = System.Array.IndexOf(levelButtons, selectedButton);
+            if (index < 0) return false;
+
+            Vector2 wanted = ((Vector2)direction).normalized;
+            Button best = null;
+            float bestAlignment = 0.08f;
+            int[] neighbourIndices = { index - 1, index + 1 };
+            for (int i = 0; i < neighbourIndices.Length; i++)
+            {
+                int candidateIndex = neighbourIndices[i];
+                if (candidateIndex < 0 || candidateIndex >= levelButtons.Length) continue;
+                Button candidate = levelButtons[candidateIndex];
+                if (candidate == null || !candidate.interactable || !candidate.gameObject.activeInHierarchy)
+                    continue;
+
+                Vector2 delta = (Vector2)candidate.transform.position - (Vector2)selectedButton.transform.position;
+                if (delta.sqrMagnitude < 0.001f) continue;
+                float alignment = Vector2.Dot(delta.normalized, wanted);
+                if (alignment <= bestAlignment) continue;
+                bestAlignment = alignment;
+                best = candidate;
+            }
+
+            if (best != null)
+            {
+                Select(best);
+                Sfx.Hover();
+                return true;
+            }
+
+            // Down from the lower outer arc reaches the persistent Back button. All other
+            // unmatched directions are consumed so the cursor never leaps to another orbit.
+            RectTransform selectedRect = selectedButton.transform as RectTransform;
+            if (direction.y < 0 && levelBoardBackButton != null && selectedRect != null
+                && selectedRect.anchoredPosition.y < -220f)
+            {
+                Select(levelBoardBackButton);
+                Sfx.Hover();
+            }
+            return true;
         }
 
         Selectable FindNearestSelectable(Selectable current, Vector2Int direction)
@@ -425,15 +667,36 @@ namespace Parabox
             return best;
         }
 
-        // ---------------------------------------------------------- main-menu 45-second auto start
+        // ---------------------------------------------------------- Luxodd 30-second menu auto-return
+        void BeginMenuTimeoutSession()
+        {
+            _autoStartWaitingForArm = false;
+            _autoStartDeadlineTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
+                + (long)(MenuAutoStartSeconds * System.Diagnostics.Stopwatch.Frequency);
+            _autoStartRemaining = MenuAutoStartSeconds;
+            _autoStartShown = -1;
+            _autoStartTriggered = false;
+            _autoStartLayoutScreen = -1;
+
+            if (_autoStartRoot == null) return;
+            _autoStartRoot.gameObject.SetActive(true);
+            if (_autoStartLabel != null) _autoStartLabel.rectTransform.localScale = Vector3.one;
+            PaintAutoStartTimer(Mathf.CeilToInt(_autoStartRemaining));
+        }
+
+        System.Collections.IEnumerator ArmMenuTimeoutOnVisibleFrame(int armVersion)
+        {
+            yield return null;
+            if (!isActiveAndEnabled || armVersion != _autoStartArmVersion) yield break;
+            BeginMenuTimeoutSession();
+        }
+
         void BuildAutoStartTimer()
         {
             if (homeGroup == null || _autoStartRoot != null) return;
 
-            _autoStartAccent = _theme != null ? _theme.frame : new Color(0.44f, 0.90f, 0.95f, 1f);
-            Color dark = _theme != null ? Color.Lerp(_theme.gutter, Color.black, 0.24f)
-                                        : new Color(0.025f, 0.09f, 0.15f, 1f);
-            dark.a = 0.94f;
+            _autoStartAccent = new Color(0.12f, 0.86f, 1f, 1f);
+            Color dark = new Color(0.012f, 0.045f, 0.09f, 0.96f);
 
             var root = new GameObject("AutoStartTimer", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             _autoStartRoot = (RectTransform)root.transform;
@@ -457,9 +720,10 @@ namespace Parabox
             shadow.effectDistance = new Vector2(0f, -5f);
 
             var outline = root.AddComponent<Outline>();
+            _autoStartOutline = outline;
             Color edge = _autoStartAccent; edge.a = 0.72f;
             outline.effectColor = edge;
-            outline.effectDistance = new Vector2(2f, -2f);
+            outline.effectDistance = new Vector2(2.4f, -2.4f);
 
             Font font = null;
             if (playButton != null)
@@ -471,41 +735,88 @@ namespace Parabox
 
             _autoStartLabel = MakeTimerText("Label", root.transform, font, 21, FontStyle.Bold,
                 Vector2.zero, Vector2.one, new Vector2(14f, 7f), new Vector2(-14f, -3f));
-            _autoStartLabel.text = "AUTO START IN 45 SECONDS";
+            _autoStartLabel.text = "AUTO START IN 30 SECONDS";
             _autoStartLabel.color = Color.Lerp(_autoStartAccent, Color.white, 0.42f);
-
-            var bar = new GameObject("Accent", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            _autoStartBar = (RectTransform)bar.transform;
-            _autoStartBar.SetParent(root.transform, false);
-            _autoStartBar.anchorMin = new Vector2(0.5f, 0f);
-            _autoStartBar.anchorMax = new Vector2(0.5f, 0f);
-            _autoStartBar.pivot = new Vector2(0.5f, 0f);
-            var barImage = bar.GetComponent<Image>();
-            barImage.raycastTarget = false;
-            barImage.color = _autoStartAccent;
+            var labelOutline = _autoStartLabel.gameObject.AddComponent<Outline>();
+            labelOutline.effectColor = new Color(0f, 0.03f, 0.10f, 0.88f);
+            labelOutline.effectDistance = new Vector2(1.2f, -1.2f);
+            var labelShadow = _autoStartLabel.gameObject.AddComponent<Shadow>();
+            labelShadow.effectColor = new Color(0f, 0f, 0f, 0.58f);
+            labelShadow.effectDistance = new Vector2(0f, -2f);
 
             _autoStartRoot.SetAsLastSibling();
             LayoutAutoStartTimer();
             PaintAutoStartTimer(Mathf.CeilToInt(_autoStartRemaining));
         }
 
+#if UNITY_EDITOR
+        // Editor-only construction entry point used by the one-click generator. The player build
+        // only updates these serialized objects; it never creates menu panels, badges or hit areas.
+        public void PrebuildStaticUi()
+        {
+            EnsurePrebuiltArtworkHitTarget(playButton);
+            EnsurePrebuiltArtworkHitTarget(levelsButton);
+            EnsurePrebuiltArtworkHitTarget(levelBoardBackButton);
+            if (levelButtons != null)
+                for (int i = 0; i < levelButtons.Length; i++)
+                    EnsurePrebuiltArtworkHitTarget(levelButtons[i]);
+
+            if (_autoStartRoot == null)
+                BuildAutoStartTimer();
+
+            if (_approvedCompletedBadges == null
+                || _approvedCompletedBadges.Length != CampaignLevelCount)
+                _approvedCompletedBadges = new GameObject[CampaignLevelCount];
+
+            if (levelButtons != null)
+                for (int i = 0; i < Mathf.Min(CampaignLevelCount, levelButtons.Length); i++)
+                    EnsureApprovedCompletedBadge(i, levelButtons[i], ApprovedChapterAccent(i));
+
+            foreach (Button button in GetComponentsInChildren<Button>(true))
+                Sfx.AttachButton(button);
+        }
+
+        static void EnsurePrebuiltArtworkHitTarget(Button button)
+        {
+            if (button == null) return;
+            if (button.GetComponent<CanvasGroup>() == null)
+                button.gameObject.AddComponent<CanvasGroup>();
+            if (button.GetComponent<Image>() == null)
+                button.gameObject.AddComponent<Image>();
+            EnsureArtworkHitTarget(button);
+        }
+#endif
+
+        public bool IsStaticUiPrebuilt
+        {
+            get
+            {
+                if (_autoStartRoot == null || _autoStartLabel == null || _autoStartOutline == null
+                    || _approvedCompletedBadges == null
+                    || _approvedCompletedBadges.Length != CampaignLevelCount)
+                    return false;
+                for (int i = 0; i < CampaignLevelCount; i++)
+                    if (_approvedCompletedBadges[i] == null) return false;
+                return true;
+            }
+        }
+
         void LayoutAutoStartTimer()
         {
             if (_autoStartRoot == null || _autoStartLayoutScreen == screen) return;
             _autoStartLayoutScreen = screen;
-            bool map = screen == 1;
 
-            _autoStartRoot.anchoredPosition = map ? new Vector2(-34f, -26f) : new Vector2(-52f, -44f);
-            _autoStartRoot.sizeDelta = map ? new Vector2(210f, 56f) : new Vector2(320f, 70f);
+            // Occupy the original timer's cleared space at the very top-right. Keeping the same
+            // position on Home and Level Select prevents the timer from jumping during navigation.
+            _autoStartBasePosition = new Vector2(-38f, -8f);
+            _autoStartRoot.anchoredPosition = _autoStartBasePosition;
+            // Keep the timer compact.  The old cyan progress strip extended below this panel and
+            // visually sat behind nearby menu/level buttons, so the timer is now text-only.
+            _autoStartRoot.sizeDelta = new Vector2(420f, 64f);
 
             if (_autoStartLabel != null)
             {
-                _autoStartLabel.fontSize = map ? 14 : 21;
-            }
-            if (_autoStartBar != null)
-            {
-                _autoStartBar.anchoredPosition = new Vector2(0f, map ? 4f : 5f);
-                _autoStartBar.sizeDelta = new Vector2(map ? 172f : 270f, map ? 3f : 4f);
+                _autoStartLabel.fontSize = 19;
             }
         }
 
@@ -528,15 +839,24 @@ namespace Parabox
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
+            CrispUiTypography.Polish(text);
             return text;
         }
 
         void TickAutoStartTimer()
         {
-            if (_autoStartTriggered || _autoStartRoot == null || transitioning) return;
+            if (!_menuTimeoutReady || _autoStartTriggered || _autoStartRoot == null
+                || transitioning || _autoStartWaitingForArm) return;
             LayoutAutoStartTimer();
 
-            _autoStartRemaining = Mathf.Max(0f, _autoStartRemaining - Time.unscaledDeltaTime);
+            // Gentle motion keeps the timer alive without distracting from the menu.
+            float slowWave = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 1.45f);
+            _autoStartRoot.anchoredPosition = _autoStartBasePosition
+                + Vector2.up * Mathf.Lerp(-1.5f, 1.5f, slowWave);
+
+            long ticksLeft = _autoStartDeadlineTimestamp - System.Diagnostics.Stopwatch.GetTimestamp();
+            _autoStartRemaining = Mathf.Max(0f,
+                (float)(ticksLeft / (double)System.Diagnostics.Stopwatch.Frequency));
             int seconds = Mathf.CeilToInt(_autoStartRemaining);
             PaintAutoStartTimer(seconds);
 
@@ -551,20 +871,49 @@ namespace Parabox
             _autoStartTriggered = true;
             transitioning = true;
             _autoStartRoot.gameObject.SetActive(false);
-            StartCoroutine(DiveIntoBoard(NewGameLevel));
+            StartLevel(NewGameLevel);
         }
 
         void PaintAutoStartTimer(int seconds)
         {
-            if (_autoStartLabel == null || seconds == _autoStartShown) return;
-            _autoStartShown = seconds;
             int shown = Mathf.Clamp(seconds, 0, 99);
-            _autoStartLabel.text = $"AUTO START IN {shown} SECOND{(shown == 1 ? "" : "S")}";
+            if (_autoStartLabel != null && seconds != _autoStartShown)
+            {
+                _autoStartShown = seconds;
+                _autoStartLabel.text = $"AUTO START IN {shown} SECOND{(shown == 1 ? "" : "S")}";
+
+                bool warning = shown > 0 && shown <= 5;
+                _autoStartLabel.color = warning
+                    ? AutoStartWarning
+                    : Color.Lerp(_autoStartAccent, Color.white, 0.42f);
+                if (_autoStartOutline != null)
+                {
+                    Color edge = warning ? AutoStartWarning : _autoStartAccent;
+                    edge.a = warning ? 0.92f : 0.72f;
+                    _autoStartOutline.effectColor = edge;
+                }
+            }
         }
 
         // ---------------------------------------------------------- progression
-        static bool Beaten(int i) => PlayerPrefs.HasKey(BestKey(i));
-        bool Unlocked(int i) => unlockAllForTesting || i == 0 || Beaten(i - 1);
+        static bool Beaten(int i) => PlayerPrefs.HasKey(GameManager.SessionClearKey(i));
+        bool Unlocked(int i)
+        {
+            if (unlockAllForTesting) return true;
+            // A level opens only when the whole chain before it has been completed. This prevents
+            // old test saves with scattered clears from opening later levels out of order.
+            for (int previous = 0; previous < i; previous++)
+                if (!Beaten(previous)) return false;
+            return true;
+        }
+
+        bool AllLevelsBeaten()
+        {
+            if (levelButtons == null || levelButtons.Length == 0) return false;
+            for (int i = 0; i < levelButtons.Length; i++)
+                if (!Beaten(i)) return false;
+            return true;
+        }
 
         int FirstUnbeaten()
         {
@@ -723,10 +1072,36 @@ namespace Parabox
         // that are about to animate — otherwise there'd be nothing to watch.
         System.Collections.IEnumerator PlayProgress(int beaten)
         {
-            if (progressFx == null || beaten < 0 || beaten >= levelButtons.Length) yield break;
+            if (beaten < 0 || beaten >= levelButtons.Length) yield break;
+
+            bool approvedProgress = _approvedNativeMap || _approvedMapProgressMaterial != null;
+
+            // The approved five-chapter artwork uses its own tightly clipped shader animation.
+            // Do not run the legacy burst/ring effect here: it spills outside the node and adds
+            // visual noise. The clean sequence completes in 0.66 seconds.
+            if (approvedProgress)
+            {
+                yield return PlayApprovedProgressLink(beaten);
+                RefreshStates();
+                int approvedNext = beaten + 1;
+                if (approvedNext < levelButtons.Length && levelButtons[approvedNext] != null
+                    && levelButtons[approvedNext].interactable)
+                {
+                    _startLevel = approvedNext;
+                    Select(levelButtons[approvedNext]);
+                }
+                else SelectCurrentNode();
+                yield break;
+            }
+
+            if (progressFx == null) yield break;
 
             var beatenRT = levelButtons[beaten] != null ? (RectTransform)levelButtons[beaten].transform : null;
-            var check = (levelChecks != null && beaten < levelChecks.Length) ? levelChecks[beaten] : null;
+            // Completion is already communicated by the tile colour and perfect-run star. Keep the
+            // old serialized badge hidden so existing scenes lose the dark corner circle too.
+            GameObject check = null;
+            if (levelChecks != null && beaten < levelChecks.Length && levelChecks[beaten] != null)
+                levelChecks[beaten].SetActive(false);
 
             int next = beaten + 1;
             RectTransform nextRT = null;
@@ -737,22 +1112,14 @@ namespace Parabox
                 if (levelHighlights != null && next < levelHighlights.Length) nextRing = levelHighlights[next];
             }
 
-            // the leg from the cleared level to the next one
+            // No travelling route/line effect: completion lands on the cleared tile, then the
+            // newly available tile wakes immediately.
             var road = new List<Image>();
             Color lit = Color.white;
-            if (pathDots != null && pathDotsPerLink > 0 && boardThemes != null && boardThemes.Length > 0)
+            if (boardThemes != null && boardThemes.Length > 0)
             {
                 var th = boardThemes[Mathf.Clamp(beaten / PerCategory, 0, boardThemes.Length - 1)];
                 lit = WithA(th.frame, 0.85f);
-                for (int d = 0; d < pathDotsPerLink; d++)
-                {
-                    int idx = beaten * pathDotsPerLink + d;
-                    if (idx < pathDots.Length && pathDots[idx] != null)
-                    {
-                        pathDots[idx].color = WithA(th.frame, 0.12f);   // rewind: dark, so it can light
-                        road.Add(pathDots[idx]);
-                    }
-                }
             }
             if (check != null) check.SetActive(false);
             if (nextRing != null) nextRing.SetActive(false);
@@ -770,24 +1137,26 @@ namespace Parabox
             else SelectCurrentNode();
         }
 
-        // A gate stays shut until the chapter behind it is finished, so the barrier is visible
-        // (and meaningful) for the whole chapter before it up and breaks.
+        // Chapter locks are communicated by the dim nodes and disabled buttons. The old pair of
+        // bars plus padlock crowded the route and chapter label, so legacy scene objects stay off.
         void RefreshGates()
+        {
+            HideChapterGates();
+        }
+
+        void HideChapterGates()
         {
             if (chapterGates == null) return;
             for (int c = 1; c < chapterGates.Length; c++)
-            {
-                if (chapterGates[c] == null) continue;
-                bool open = unlockAllForTesting || Beaten(c * PerCategory - 1);
-                chapterGates[c].SetActive(!open);
-            }
+                if (chapterGates[c] != null) chapterGates[c].SetActive(false);
         }
 
         // The chapter ceremony. `ch` is the chapter just COMPLETED; ch+1 is the one being opened.
         System.Collections.IEnumerator PlayChapterUnlock(int ch)
         {
             int next = ch + 1;
-            if (unlockFx == null || chapterGates == null || next >= chapterGates.Length) { yield break; }
+            if (unlockFx == null || next >= Mathf.CeilToInt(levelButtons.Length / (float)PerCategory))
+                yield break;
             ClaimMapCam(12f);   // the ceremony runs ~5s; past this the map takes its camera back
 
             var th = boardThemes[Mathf.Clamp(ch, 0, boardThemes.Length - 1)];
@@ -804,15 +1173,8 @@ namespace Parabox
                 doneFills.Add(levelFills != null && i < levelFills.Length ? levelFills[i] : null);
             }
 
-            // the new chapter's first stretch of road
+            // Keep the chapter unlock motion, but never draw a travelling route line.
             var newRoad = new List<Image>();
-            int link = next * PerCategory;           // road leaving the new chapter's first node
-            if (pathDots != null)
-                for (int d = 0; d < pathDotsPerLink; d++)
-                {
-                    int idx = link * pathDotsPerLink + d;
-                    if (idx < pathDots.Length && pathDots[idx] != null) newRoad.Add(pathDots[idx]);
-                }
 
             int firstIdx = next * PerCategory;
             RectTransform firstNode = (firstIdx < levelButtons.Length && levelButtons[firstIdx] != null)
@@ -820,17 +1182,11 @@ namespace Parabox
             GameObject firstRing = (levelHighlights != null && firstIdx < levelHighlights.Length)
                 ? levelHighlights[firstIdx] : null;
 
-            // the gate must be SHUT when the sequence starts, whatever RefreshStates decided
-            chapterGates[next].SetActive(true);
-
             float doneY = (regionBaseY != null && ch < regionBaseY.Length) ? regionBaseY[ch] : 0f;
             float newY  = (regionBaseY != null && next < regionBaseY.Length) ? regionBaseY[next] : 0f;
 
             yield return unlockFx.Play(mapCam, doneNodes, doneFills, Lighten(th.frame, 0.4f),
-                (RectTransform)chapterGates[next].transform,
-                gateLeft != null && next < gateLeft.Length ? gateLeft[next] : null,
-                gateRight != null && next < gateRight.Length ? gateRight[next] : null,
-                gateLocks != null && next < gateLocks.Length ? gateLocks[next] : null,
+                null, null, null, null,
                 null, newRoad, WithA(thNext.frame, 0.85f), firstNode, firstRing,
                 doneY, newY);
         }
@@ -838,7 +1194,9 @@ namespace Parabox
         // Finishing the game: the map replays your whole journey, then says so.
         System.Collections.IEnumerator PlayGameComplete()
         {
-            if (unlockFx == null) yield break;
+            // Defensive guard for stale transition flags or direct scene testing: the victory
+            // ceremony is valid only after every shipped level has actually been cleared.
+            if (unlockFx == null || !AllLevelsBeaten()) yield break;
             ClaimMapCam(20f);   // the victory lap runs ~8s
 
             var nodes = new List<RectTransform>();
@@ -857,7 +1215,7 @@ namespace Parabox
                     if (pathDots[i] != null)
                     {
                         var th = boardThemes[Mathf.Clamp(i / (pathDotsPerLink * PerCategory), 0, boardThemes.Length - 1)];
-                        pathDots[i].color = WithA(th.frame, 0.12f);
+                        pathDots[i].color = WithA(th.frame, 0.35f);
                     }
 
             if (finaleTitle != null) finaleTitle.text = "GAME COMPLETE";
@@ -880,7 +1238,7 @@ namespace Parabox
                 mapCam,
                 levelButtons[last] != null ? (RectTransform)levelButtons[last].transform : null,
                 regionBaseY != null && regionBaseY.Length > 0 ? regionBaseY[regionBaseY.Length - 1] : 0f,
-                pathDots, nodes, fills, cols, PerCategory, finaleBanner, finaleBadge);
+                null, nodes, fills, cols, PerCategory, finaleBanner, finaleBadge);
         }
 
         // The live world board — the one that becomes the O in the logo — sits in WORLD space,
@@ -890,7 +1248,7 @@ namespace Parabox
         // while the map is up, so it leaves.
         void ShowWorldBoard(bool on)
         {
-            if (_boardRoot != null) _boardRoot.gameObject.SetActive(on);
+            if (_boardRoot != null) _boardRoot.gameObject.SetActive(on && !useStaticHomeArtwork);
         }
 
         void ShowHome(bool on)
@@ -909,6 +1267,14 @@ namespace Parabox
         }
 
         void SelectHome() => Select(playButton);
+
+        bool IsCurrentScreenSelection(GameObject selected)
+        {
+            if (selected == null) return false;
+            if (screen == 1) return IsLevelBoardSelection(selected);
+            return (playButton != null && selected == playButton.gameObject)
+                   || (levelsButton != null && selected == levelsButton.gameObject);
+        }
 
         bool IsLevelBoardSelection(GameObject selected)
         {
@@ -950,51 +1316,10 @@ namespace Parabox
         {
             if (transitioning) return;
             if (!Unlocked(index)) { Sfx.Blocked(); return; }
-            // the last level is approached, not just opened
-            if (index == levelButtons.Length - 1 && mapCam != null && levelButtons[index] != null)
-            { StartCoroutine(FinalApproach(index)); return; }
+            // Every level, including Level 50, uses the same immediate game-scene handoff.
+            // The old Level-50-only map zoom exposed the title background while it moved the
+            // oversized map and made the button appear not to enter gameplay.
             transitioning = true;   // guard against UI Submit and key polling both firing this frame
-            StartLevel(index);
-        }
-
-        // The walk up to the final challenge. Every other level opens the instant you click it;
-        // this one makes you arrive. The map pushes in on the node until it fills the view and
-        // holds there — a beat of nothing but the destination — before the level loads. The pause
-        // IS the effect: anticipation is time, not particles.
-        System.Collections.IEnumerator FinalApproach(int index)
-        {
-            transitioning = true;
-            ClaimMapCam(6f);    // pushes in on node 50, then loads the level
-            Sfx.Ding();
-
-            var node = (RectTransform)levelButtons[index].transform;
-            Vector2 focus = node.anchoredPosition;
-            Vector2 fromPos = mapCam.anchoredPosition;
-            float fromZ = mapCam.localScale.x;
-            const float zoom = 2.1f, dur = 1.15f;
-
-            float t = 0f;
-            while (t < dur)
-            {
-                t += Time.unscaledDeltaTime;
-                float k = Mathf.Clamp01(t / dur);
-                float e = 1f - Mathf.Pow(1f - k, 3f);          // ease-out: rushes in, settles
-                float z = Mathf.Lerp(fromZ, zoom, e);
-                mapCam.anchoredPosition = Vector2.Lerp(fromPos, -focus * zoom, e);
-                mapCam.localScale = new Vector3(z, z, 1f);
-                // everything else drains away, so only the destination is left
-                if (levelBoardScreen != null)
-                {
-                    var cg = levelBoardScreen.GetComponent<CanvasGroup>();
-                    if (cg != null) cg.alpha = 1f;
-                }
-                yield return null;
-            }
-
-            t = 0f;
-            while (t < 0.45f) { t += Time.unscaledDeltaTime; yield return null; }   // the held beat
-
-            PlayerPrefs.SetInt("Parabox.FinalRun", 1);   // the level itself opens differently
             StartLevel(index);
         }
 
@@ -1015,13 +1340,14 @@ namespace Parabox
         // Beaten used to be box-orange in every chapter, on the reasoning that it looked like a box
         // resting on its goal. But the box is orange in all five chapters (their hues span 12
         // degrees), so a map with everything beaten was a field of identical orange squares and the
-        // chapters had no identity at all. The tick badge already says "done"; the colour is better
-        // spent saying WHERE you are. Orange now marks the one level you're on.
+        // chapters had no identity at all. The chapter-coloured tile now says "done", while orange
+        // marks the one level you're on.
         void RefreshStates()
         {
             int total = levelButtons.Length;
             int current = CurrentLevel();
             bool haveThemes = boardThemes != null && boardThemes.Length > 0;
+            bool approvedMap = mapCam != null && mapCam.Find("ApprovedFiveChapterMap") != null;
 
             for (int i = 0; i < total; i++)
             {
@@ -1032,9 +1358,9 @@ namespace Parabox
                 if (levelButtons[i] != null) levelButtons[i].interactable = unlocked;
 
                 if (levelChecks != null && i < levelChecks.Length && levelChecks[i] != null)
-                    levelChecks[i].SetActive(beaten);
+                    levelChecks[i].SetActive(false);
                 if (levelLocks != null && i < levelLocks.Length && levelLocks[i] != null)
-                    levelLocks[i].SetActive(!unlocked);
+                    levelLocks[i].SetActive(false);
                 if (levelHighlights != null && i < levelHighlights.Length && levelHighlights[i] != null)
                     levelHighlights[i].SetActive(isCurrent);
 
@@ -1042,48 +1368,618 @@ namespace Parabox
                 var th = boardThemes[Mathf.Clamp(i / PerCategory, 0, boardThemes.Length - 1)];
                 Color cell = (th.roomColors != null && th.roomColors.Length > 0) ? th.roomColors[0] : th.frame;
 
-                Color face = !unlocked ? Color.Lerp(th.gutter, Color.black, 0.28f)
+                // Keep a virtually invisible pixel of alpha on the real Button graphic. Unity's
+                // GraphicRaycaster culls a fully transparent CanvasGroup/Graphic, which made the
+                // printed map nodes impossible to click even though testing mode unlocked them.
+                Color approvedAccent = ApprovedChapterAccent(i);
+                Color approvedLockedAccent = ApprovedLockedAccent(approvedAccent);
+                Color face = approvedMap
+                           ? (!unlocked
+                               ? new Color(0.022f, 0.031f, 0.049f, 0.98f)
+                               : isCurrent
+                                   ? WithA(Lighten(approvedAccent, 0.28f), 1f)
+                                   : beaten
+                                       ? WithA(Lighten(approvedAccent, 0.10f), 1f)
+                                       : WithA(approvedAccent, 0.72f))
+                           : !unlocked ? Color.Lerp(th.gutter, Color.black, 0.28f)
                            : isCurrent ? th.box       // the only orange on the map
                            : beaten    ? th.frame     // this chapter's identity
                                        : cell;
 
                 if (levelFills != null && i < levelFills.Length && levelFills[i] != null)
+                {
                     levelFills[i].color = face;
+                    if (approvedMap)
+                        levelFills[i].material = !unlocked ? _approvedLockedBlurMaterial : null;
+                }
 
                 // one stroke weight everywhere; only its brightness tracks the state. A beaten node
                 // is already the frame colour, so its border lifts to white instead — otherwise the
                 // stroke would vanish into the face.
                 if (levelBorders != null && i < levelBorders.Length && levelBorders[i] != null)
-                    levelBorders[i].color = !unlocked
+                {
+                    levelBorders[i].color = approvedMap
+                        ? !unlocked
+                            ? WithA(approvedLockedAccent, 0.48f)
+                            : isCurrent
+                                ? WithA(Lighten(approvedAccent, 0.75f), 1f)
+                                : WithA(Lighten(approvedAccent, 0.48f), 0.96f)
+                        : !unlocked
                         ? WithA(Color.Lerp(th.gutter, Color.white, 0.14f), 1f)
                         : beaten    ? WithA(Lighten(th.frame, 0.55f), 0.95f)
                         : isCurrent ? WithA(th.frame, 0.95f)
                                     : WithA(th.frame, 0.5f);
+                    if (approvedMap)
+                        levelBorders[i].material = !unlocked ? _approvedLockedBlurMaterial : null;
+                }
 
-                // the number only reads on a lit face — a locked node shows its glyph instead
+                // Numbers remain crisp in every state; only the locked frame and face are softened.
                 if (levelNumbers != null && i < levelNumbers.Length && levelNumbers[i] != null)
                 {
-                    levelNumbers[i].enabled = unlocked;
-                    levelNumbers[i].color = th.wall;
+                    levelNumbers[i].enabled = true;
+                    levelNumbers[i].text = (i + 1).ToString();
+                    // The holographic map uses dark chapter tiles; bright numerals keep every
+                    // unlocked stop readable against all five colours and match the concept art.
+                    levelNumbers[i].color = approvedMap
+                        ? (!unlocked
+                            ? new Color(0.57f, 0.63f, 0.72f, 0.92f)
+                            : Color.white)
+                        : Color.Lerp(Color.white, th.frame, 0.12f);
+
+                    if (approvedMap)
+                    {
+                        RectTransform numberRect = levelNumbers[i].rectTransform;
+                        numberRect.anchoredPosition = Vector2.zero;
+                        numberRect.sizeDelta = new Vector2(68f, 66f);
+                        levelNumbers[i].fontSize = unlocked ? 25 : 20;
+                    }
+                }
+
+                if (approvedMap && i < _approvedCompletedBadges.Length
+                    && _approvedCompletedBadges[i] != null)
+                    _approvedCompletedBadges[i].SetActive(beaten);
+
+                if (approvedMap && levelHighlights != null && i < levelHighlights.Length
+                    && levelHighlights[i] != null && isCurrent)
+                {
+                    Image ring = levelHighlights[i].GetComponent<Image>();
+                    if (ring != null) ring.color = WithA(Lighten(approvedAccent, 0.72f), 0.98f);
                 }
 
                 // perfect = cleared at par. The par comes from the level prefab, so it can never
                 // disagree with what the solver actually proved.
                 bool perfect = beaten && Par(i) > 0 && PlayerPrefs.GetInt(BestKey(i), 9999) <= Par(i);
                 if (levelStars != null && i < levelStars.Length && levelStars[i] != null)
-                    levelStars[i].SetActive(perfect);
+                    levelStars[i].SetActive(!approvedMap && perfect);
 
-                // the leg of the route BEHIND this node lights once it's cleared — the trail you
-                // have walked is lit, the road ahead is dim. The path IS the progress bar.
+                // Route-dot progress is retired; the level tiles themselves show all progression.
                 if (pathDots != null && pathDotsPerLink > 0)
                     for (int d = 0; d < pathDotsPerLink; d++)
                     {
                         int idx = i * pathDotsPerLink + d;
                         if (idx < pathDots.Length && pathDots[idx] != null)
-                            pathDots[idx].color = WithA(th.frame, beaten ? 0.85f : 0.12f);
+                            pathDots[idx].gameObject.SetActive(false);
                     }
             }
 
+            RefreshApprovedMapProgressLights();
+
+        }
+
+        static Color ApprovedChapterAccent(int levelIndex)
+        {
+            switch (Mathf.Clamp(levelIndex / PerCategory, 0, 4))
+            {
+                case 0: return new Color(0.10f, 0.88f, 0.91f, 1f);
+                case 1: return new Color(0.31f, 0.62f, 1.00f, 1f);
+                case 2: return new Color(0.61f, 0.36f, 1.00f, 1f);
+                case 3: return new Color(0.91f, 0.31f, 0.82f, 1f);
+                default: return new Color(1.00f, 0.38f, 0.56f, 1f);
+            }
+        }
+
+        static Color ApprovedLockedAccent(Color accent)
+        {
+            return Color.Lerp(accent, new Color(0.24f, 0.30f, 0.39f, 1f), 0.74f);
+        }
+
+        void EnsureApprovedCompletedBadge(int index, Button button, Color accent)
+        {
+            if (index < 0 || index >= _approvedCompletedBadges.Length || button == null) return;
+            if (_approvedCompletedBadges[index] != null) return;
+            Transform existing = button.transform.Find("CompletedBadge");
+            if (existing != null)
+            {
+                _approvedCompletedBadges[index] = existing.gameObject;
+                return;
+            }
+            if (Application.isPlaying)
+            {
+                Debug.LogError("[Parabox] CompletedBadge is not prebuilt for level " + (index + 1)
+                    + ". Run the Prebuilt UI generator.");
+                return;
+            }
+
+            GameObject badge = new GameObject("CompletedBadge", typeof(RectTransform),
+                typeof(CanvasRenderer), typeof(Image));
+            badge.transform.SetParent(button.transform, false);
+            RectTransform badgeRect = badge.GetComponent<RectTransform>();
+            badgeRect.anchorMin = badgeRect.anchorMax = new Vector2(0.5f, 0.5f);
+            badgeRect.pivot = new Vector2(0.5f, 0.5f);
+            badgeRect.anchoredPosition = new Vector2(24f, 24f);
+            badgeRect.sizeDelta = new Vector2(20f, 20f);
+
+            Image background = badge.GetComponent<Image>();
+            background.raycastTarget = false;
+            background.type = Image.Type.Simple;
+            background.preserveAspect = false;
+            if (levelFills != null && index < levelFills.Length && levelFills[index] != null)
+                background.sprite = levelFills[index].sprite;
+            background.color = WithA(Lighten(accent, 0.78f), 1f);
+
+            Color checkColor = new Color(0.015f, 0.055f, 0.085f, 1f);
+            CreateCheckStroke(badge.transform, "CheckShort", new Vector2(-3.2f, -1.2f),
+                new Vector2(7.5f, 2.5f), -42f, checkColor);
+            CreateCheckStroke(badge.transform, "CheckLong", new Vector2(2.1f, 0.6f),
+                new Vector2(11f, 2.5f), 47f, checkColor);
+
+            badge.SetActive(false);
+            _approvedCompletedBadges[index] = badge;
+        }
+
+        static void CreateCheckStroke(Transform parent, string name, Vector2 position,
+            Vector2 size, float rotation, Color color)
+        {
+            GameObject stroke = new GameObject(name, typeof(RectTransform),
+                typeof(CanvasRenderer), typeof(Image));
+            stroke.transform.SetParent(parent, false);
+            RectTransform rect = stroke.GetComponent<RectTransform>();
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = size;
+            rect.localEulerAngles = new Vector3(0f, 0f, rotation);
+            Image image = stroke.GetComponent<Image>();
+            image.color = color;
+            image.raycastTarget = false;
+        }
+
+        void BuildApprovedMapProgressLights()
+        {
+            if (mapCam == null || levelButtons == null || levelButtons.Length == 0) return;
+            Transform approvedMap = mapCam.Find("ApprovedFiveChapterMap");
+            if (approvedMap == null) return;
+
+            _approvedNativeMap = true;
+            approvedMap.SetAsFirstSibling();
+
+            // Retire the old map's decorative regions. Their node containers are reused, but the
+            // old paths/panels would otherwise sit above the new artwork at mismatched positions.
+            for (int r = 0; r < mapCam.childCount; r++)
+            {
+                Transform region = mapCam.GetChild(r);
+                if (!region.name.StartsWith("Region")) continue;
+                for (int c = 0; c < region.childCount; c++)
+                {
+                    Transform layer = region.GetChild(c);
+                    layer.gameObject.SetActive(layer.name == "Nodes");
+                }
+            }
+
+            // Remove the older generated overlay if a Play Mode domain reload left one alive.
+            Transform old = mapCam.Find("ApprovedProgressLights");
+            if (old != null) Destroy(old.gameObject);
+
+            // The generated option-two artwork is deliberately neutral. State lighting, numbers
+            // and completion badges are placed above it by the real level controls below.
+            Transform artworkTransform = approvedMap.Find("Artwork");
+            Image artwork = artworkTransform != null ? artworkTransform.GetComponent<Image>() : null;
+            Sprite baseSprite = Resources.Load<Sprite>("UI/LevelMapOption2Base");
+            if (artwork != null)
+            {
+                if (baseSprite != null) artwork.sprite = baseSprite;
+                artwork.material = null;
+                artwork.color = Color.white;
+                artwork.raycastTarget = false;
+            }
+            Image duplicateRootArtwork = approvedMap.GetComponent<Image>();
+            if (duplicateRootArtwork != null)
+            {
+                duplicateRootArtwork.material = null;
+                duplicateRootArtwork.color = Color.clear;
+                duplicateRootArtwork.raycastTarget = false;
+            }
+            if (_approvedMapProgressMaterial != null)
+            {
+                Destroy(_approvedMapProgressMaterial);
+                _approvedMapProgressMaterial = null;
+            }
+            if (_approvedLockedBlurMaterial != null) Destroy(_approvedLockedBlurMaterial);
+            Shader lockedBlur = Resources.Load<Shader>("Shaders/LockedNodeSoftBlur");
+            _approvedLockedBlurMaterial = lockedBlur != null && lockedBlur.isSupported
+                ? new Material(lockedBlur) { name = "Locked Node Soft Blur (Runtime)" }
+                : null;
+            if (_approvedLockedBlurMaterial != null)
+                _approvedLockedBlurMaterial.SetFloat("_BlurSize", 1.15f);
+
+            // Reuse the authored Unity nodes as the visible, interactive state layer. Disable the
+            // legacy shadows/gradients/outlines so every fill is solid and cannot bloom outside.
+            for (int i = 0; i < Mathf.Min(50, levelButtons.Length); i++)
+            {
+                Button button = levelButtons[i];
+                if (button == null) continue;
+                button.transition = Selectable.Transition.None;
+                CanvasGroup group = button.GetComponent<CanvasGroup>();
+                if (group == null)
+                {
+                    Debug.LogError("[Parabox] Level-button CanvasGroup is not prebuilt for level "
+                        + (i + 1) + ". Run the Prebuilt UI generator.");
+                    continue;
+                }
+                group.alpha = 1f;
+                group.interactable = true;
+                group.blocksRaycasts = true;
+
+                RectTransform node = button.transform as RectTransform;
+                if (node != null)
+                {
+                    node.anchoredPosition = ApprovedMapNodePosition(i);
+                    // The concept-art map contains an empty 76px node socket behind every real
+                    // button.  A 74px live face left that socket peeking out on one side as a
+                    // duplicate border.  The live control must fully cover the inert artwork.
+                    node.sizeDelta = new Vector2(86f, 86f);
+                    node.localScale = Vector3.one;
+                }
+
+                RemoveApprovedNodeLegacyEffects(button);
+
+                if (levelFills != null && i < levelFills.Length && levelFills[i] != null)
+                {
+                    levelFills[i].type = Image.Type.Simple;
+                    levelFills[i].preserveAspect = false;
+                    levelFills[i].raycastTarget = true;
+                }
+                if (levelBorders != null && i < levelBorders.Length && levelBorders[i] != null)
+                {
+                    RectTransform border = levelBorders[i].rectTransform;
+                    border.anchoredPosition = Vector2.zero;
+                    // Keep one state-coloured stroke exactly on the enlarged live face.  This
+                    // covers the baked socket instead of drawing a second offset frame around it.
+                    border.sizeDelta = new Vector2(86f, 86f);
+                    levelBorders[i].type = Image.Type.Sliced;
+                    levelBorders[i].fillCenter = false;
+                    levelBorders[i].raycastTarget = false;
+                }
+                if (levelHighlights != null && i < levelHighlights.Length
+                    && levelHighlights[i] != null)
+                {
+                    RectTransform ring = levelHighlights[i].transform as RectTransform;
+                    if (ring != null)
+                    {
+                        ring.anchoredPosition = Vector2.zero;
+                        ring.sizeDelta = new Vector2(98f, 98f);
+                        ring.localScale = Vector3.one;
+                    }
+                }
+
+                if (levelLocks != null && i < levelLocks.Length && levelLocks[i] != null)
+                    levelLocks[i].SetActive(false);
+                EnsureApprovedCompletedBadge(i, button, ApprovedChapterAccent(i));
+
+                var hover = button.GetComponent<UIHoverScale>();
+                if (hover != null && hover.highlight != null)
+                {
+                    RectTransform highlight = hover.highlight.transform as RectTransform;
+                    if (highlight != null)
+                    {
+                        highlight.anchoredPosition = ApprovedMapNodePosition(i);
+                        highlight.sizeDelta = new Vector2(96f, 96f);
+                    }
+                    Image hoverImage = hover.highlight.GetComponent<Image>();
+                    if (hoverImage != null)
+                        hoverImage.color = WithA(Lighten(ApprovedChapterAccent(i), 0.55f), 0.34f);
+                }
+            }
+        }
+
+        static void RemoveApprovedNodeLegacyEffects(Button button)
+        {
+            if (button == null) return;
+
+            // Explicitly neutralise the authored effects as well as disabling them.  Unity can
+            // retain a previously generated UI mesh for part of a frame after a component is
+            // disabled; clearing the offsets and dirtying the Graphic makes the cleanup reliable
+            // with both normal and fast-enter Play Mode.
+            BaseMeshEffect[] effects = button.GetComponents<BaseMeshEffect>();
+            for (int e = 0; e < effects.Length; e++)
+            {
+                Shadow shadow = effects[e] as Shadow;
+                if (shadow != null)
+                {
+                    shadow.effectDistance = Vector2.zero;
+                    shadow.effectColor = Color.clear;
+                }
+                effects[e].enabled = false;
+            }
+
+            Graphic graphic = button.targetGraphic != null
+                ? button.targetGraphic
+                : button.GetComponent<Graphic>();
+            if (graphic != null) graphic.SetVerticesDirty();
+        }
+
+        void RefreshApprovedMapProgressLights()
+        {
+            if (mapCam == null || mapCam.Find("ApprovedFiveChapterMap") == null || levelButtons == null)
+                return;
+
+            int current = CurrentLevel();
+            int count = Mathf.Min(CampaignLevelCount, levelButtons.Length);
+            for (int i = 0; i < count; i++)
+            {
+                Button button = levelButtons[i];
+                if (button == null) continue;
+                CanvasGroup group = button.GetComponent<CanvasGroup>();
+                if (group != null) group.alpha = 1f;
+                bool beaten = Beaten(i);
+                bool unlocked = Unlocked(i);
+                bool isCurrent = unlocked && !beaten && i == current;
+                _approvedMapCompleted[i] = beaten ? 1f : 0f;
+                _approvedMapStates[i] = !unlocked ? 0f : beaten ? 1f : isCurrent ? 2f : 0f;
+                // Every completed node keeps the connection toward the next stop lit. This makes
+                // the travelled route readable immediately when the map opens.
+                _approvedMapPathLit[i] = beaten && i + 1 < count ? 1f : 0f;
+            }
+
+            if (_approvedMapProgressMaterial != null)
+            {
+                _approvedMapProgressMaterial.SetFloatArray("_Completed", _approvedMapCompleted);
+                _approvedMapProgressMaterial.SetFloatArray("_States", _approvedMapStates);
+                _approvedMapProgressMaterial.SetFloatArray("_PathLit", _approvedMapPathLit);
+                _approvedMapProgressMaterial.SetFloat("_CurrentIndex", current < count ? current : -1f);
+                _approvedMapProgressMaterial.SetFloat("_TravelLink", -1f);
+                _approvedMapProgressMaterial.SetFloat("_TravelProgress", 0f);
+                _approvedMapProgressMaterial.SetVector("_TravelEndpoints", Vector4.zero);
+            }
+
+        }
+
+        void BeginApprovedProgressAnimation(int beaten)
+        {
+            if (_approvedMapProgressMaterial == null) return;
+            int count = Mathf.Min(CampaignLevelCount, levelButtons.Length);
+            for (int i = 0; i < count; i++)
+            {
+                bool wasBeaten = i != beaten && Beaten(i);
+                _approvedMapStates[i] = wasBeaten ? 1f : i == beaten ? 2f : 0f;
+                _approvedMapPathLit[i] = i + 1 < count && wasBeaten ? 1f : 0f;
+            }
+            _approvedMapProgressMaterial.SetFloatArray("_States", _approvedMapStates);
+            _approvedMapProgressMaterial.SetFloatArray("_PathLit", _approvedMapPathLit);
+            _approvedMapProgressMaterial.SetFloat("_CurrentIndex", beaten);
+            _approvedMapProgressMaterial.SetFloat("_TravelLink", beaten);
+            _approvedMapProgressMaterial.SetFloat("_TravelProgress", 0f);
+            if (beaten >= 0 && beaten + 1 < count)
+            {
+                Vector2 from = ApprovedMapNodePosition(beaten);
+                Vector2 to = ApprovedMapNodePosition(beaten + 1);
+                _approvedMapProgressMaterial.SetVector("_TravelEndpoints", new Vector4(
+                    (from.x + 960f) / 1920f, (from.y + 540f) / 1080f,
+                    (to.x + 960f) / 1920f, (to.y + 540f) / 1080f));
+            }
+        }
+
+        void ApprovedNodeCompleted(int beaten)
+        {
+            if (_approvedMapProgressMaterial == null || beaten < 0 || beaten >= CampaignLevelCount) return;
+            _approvedMapStates[beaten] = 1f;
+            _approvedMapProgressMaterial.SetFloatArray("_States", _approvedMapStates);
+            _approvedMapProgressMaterial.SetFloat("_CurrentIndex", -1f);
+        }
+
+        void ApprovedRoadProgress(int beaten, float progress)
+        {
+            if (_approvedMapProgressMaterial == null || beaten < 0 || beaten >= CampaignLevelCount - 1) return;
+            _approvedMapProgressMaterial.SetFloat("_TravelLink", beaten);
+            _approvedMapProgressMaterial.SetFloat("_TravelProgress", Mathf.Clamp01(progress));
+            if (progress >= 0.999f)
+            {
+                _approvedMapPathLit[beaten] = 1f;
+                _approvedMapProgressMaterial.SetFloatArray("_PathLit", _approvedMapPathLit);
+            }
+        }
+
+        void ApprovedNextActivated(int next)
+        {
+            if (_approvedMapProgressMaterial == null) return;
+            if (next >= 0 && next < Mathf.Min(CampaignLevelCount, levelButtons.Length))
+            {
+                _approvedMapStates[next] = 2f;
+                _approvedMapProgressMaterial.SetFloatArray("_States", _approvedMapStates);
+                _approvedMapProgressMaterial.SetFloat("_CurrentIndex", next);
+            }
+            _approvedMapProgressMaterial.SetFloat("_TravelLink", -1f);
+        }
+
+        System.Collections.IEnumerator PlayApprovedProgressLink(int beaten)
+        {
+            if (_approvedNativeMap)
+            {
+                int count = Mathf.Min(CampaignLevelCount, levelButtons.Length);
+                int next = beaten + 1;
+                RefreshStates();
+                Sfx.Ding();
+
+                // Rewind the two changed nodes so the player watches the completed fill land, a
+                // small light travel along the existing connection, and the next node wake. No
+                // bloom or full-screen effect: the complete sequence stays local and lasts 0.68s.
+                RectTransform beatenNode = beaten >= 0 && beaten < count && levelButtons[beaten] != null
+                    ? levelButtons[beaten].transform as RectTransform : null;
+                Image beatenFill = beaten >= 0 && beaten < count && levelFills != null
+                    && beaten < levelFills.Length ? levelFills[beaten] : null;
+                Image beatenBorder = beaten >= 0 && beaten < count && levelBorders != null
+                    && beaten < levelBorders.Length ? levelBorders[beaten] : null;
+                GameObject beatenBadge = beaten >= 0 && beaten < _approvedCompletedBadges.Length
+                    ? _approvedCompletedBadges[beaten] : null;
+                Image nextFill = next >= 0 && next < count && levelFills != null
+                    && next < levelFills.Length ? levelFills[next] : null;
+                Image nextBorder = next >= 0 && next < count && levelBorders != null
+                    && next < levelBorders.Length ? levelBorders[next] : null;
+                GameObject nextRing = next >= 0 && next < count && levelHighlights != null
+                    && next < levelHighlights.Length ? levelHighlights[next] : null;
+                Text nextNumber = next >= 0 && next < count && levelNumbers != null
+                    && next < levelNumbers.Length ? levelNumbers[next] : null;
+
+                Color beatenAccent = ApprovedChapterAccent(beaten);
+                Color completedFace = WithA(Lighten(beatenAccent, 0.10f), 1f);
+                Color completedBorder = WithA(Lighten(beatenAccent, 0.48f), 0.96f);
+                Color activeFace = WithA(Lighten(beatenAccent, 0.28f), 1f);
+                Color activeBorder = WithA(Lighten(beatenAccent, 0.75f), 1f);
+                if (beatenFill != null) beatenFill.color = activeFace;
+                if (beatenBorder != null) beatenBorder.color = activeBorder;
+                if (beatenBadge != null) beatenBadge.SetActive(false);
+
+                Color accent = ApprovedChapterAccent(Mathf.Clamp(next, 0, count - 1));
+                Color lockedAccent = ApprovedLockedAccent(accent);
+                Color lockedFace = new Color(0.022f, 0.031f, 0.049f, 0.98f);
+                if (nextFill != null) nextFill.color = lockedFace;
+                if (nextBorder != null) nextBorder.color = WithA(lockedAccent, 0.48f);
+                if (nextRing != null) nextRing.SetActive(false);
+                if (nextNumber != null)
+                {
+                    nextNumber.rectTransform.anchoredPosition = Vector2.zero;
+                    nextNumber.rectTransform.sizeDelta = new Vector2(68f, 66f);
+                    nextNumber.fontSize = 20;
+                    nextNumber.color = new Color(0.57f, 0.63f, 0.72f, 0.92f);
+                }
+
+                float nativeT = 0f;
+                const float nativeSettle = 0.16f;
+                Vector3 beatenScale = beatenNode != null ? beatenNode.localScale : Vector3.one;
+                while (nativeT < nativeSettle)
+                {
+                    nativeT += Time.unscaledDeltaTime;
+                    float p = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(nativeT / nativeSettle));
+                    if (beatenFill != null) beatenFill.color = Color.Lerp(activeFace, completedFace, p);
+                    if (beatenBorder != null) beatenBorder.color = Color.Lerp(activeBorder, completedBorder, p);
+                    if (beatenNode != null)
+                        beatenNode.localScale = beatenScale * (1f + Mathf.Sin(p * Mathf.PI) * 0.055f);
+                    yield return null;
+                }
+                if (beatenNode != null) beatenNode.localScale = beatenScale;
+                if (beatenBadge != null) beatenBadge.SetActive(true);
+
+                nativeT = 0f;
+                const float nativeTravel = 0.36f;
+                RectTransform travelLight = CreateNativeProgressLight(beaten, next, beatenAccent,
+                    out Vector2 travelFrom, out Vector2 travelTo);
+                while (nativeT < nativeTravel)
+                {
+                    nativeT += Time.unscaledDeltaTime;
+                    float p = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(nativeT / nativeTravel));
+                    if (nextFill != null)
+                        nextFill.color = Color.Lerp(lockedFace,
+                            WithA(Lighten(accent, 0.28f), 1f), p);
+                    if (nextBorder != null)
+                        nextBorder.color = Color.Lerp(WithA(lockedAccent, 0.48f),
+                            WithA(Lighten(accent, 0.75f), 1f), p);
+                    if (travelLight != null)
+                    {
+                        travelLight.anchoredPosition = Vector2.Lerp(travelFrom, travelTo, p)
+                            + Vector2.up * (Mathf.Sin(p * Mathf.PI) * 10f);
+                        travelLight.localScale = Vector3.one * (0.80f + Mathf.Sin(p * Mathf.PI) * 0.25f);
+                        Image lightImage = travelLight.GetComponent<Image>();
+                        if (lightImage != null)
+                            lightImage.color = WithA(Lighten(beatenAccent, 0.72f),
+                                Mathf.Sin(p * Mathf.PI) * 0.94f);
+                    }
+                    yield return null;
+                }
+                if (travelLight != null) Destroy(travelLight.gameObject);
+
+                RefreshStates();
+                if (next >= 0 && next < count) Sfx.Ding();
+                nativeT = 0f;
+                const float nativeActivate = 0.16f;
+                RectTransform nextNode = next >= 0 && next < count && levelButtons[next] != null
+                    ? levelButtons[next].transform as RectTransform : null;
+                Vector3 nextScale = nextNode != null ? nextNode.localScale : Vector3.one;
+                while (nativeT < nativeActivate)
+                {
+                    nativeT += Time.unscaledDeltaTime;
+                    float p = Mathf.Clamp01(nativeT / nativeActivate);
+                    if (nextNode != null)
+                        nextNode.localScale = nextScale * (1f + Mathf.Sin(p * Mathf.PI) * 0.065f);
+                    yield return null;
+                }
+                if (nextNode != null) nextNode.localScale = nextScale;
+                yield break;
+            }
+
+            BeginApprovedProgressAnimation(beaten);
+            ApprovedNodeCompleted(beaten);
+            Sfx.Ding();
+            float t = 0f;
+            const float settle = 0.12f;
+            while (t < settle) { t += Time.unscaledDeltaTime; yield return null; }
+            t = 0f;
+            const float travel = 0.42f;
+            while (t < travel)
+            {
+                t += Time.unscaledDeltaTime;
+                ApprovedRoadProgress(beaten, Mathf.Clamp01(t / travel));
+                yield return null;
+            }
+            ApprovedNextActivated(beaten + 1);
+            if (beaten + 1 < Mathf.Min(CampaignLevelCount, levelButtons.Length)) Sfx.Ding();
+            t = 0f;
+            const float activate = 0.12f;
+            while (t < activate) { t += Time.unscaledDeltaTime; yield return null; }
+        }
+
+        RectTransform CreateNativeProgressLight(int beaten, int next, Color accent,
+            out Vector2 from, out Vector2 to)
+        {
+            from = to = Vector2.zero;
+            if (mapCam == null || levelButtons == null || beaten < 0 || next < 0
+                || beaten >= levelButtons.Length || next >= levelButtons.Length
+                || levelButtons[beaten] == null || levelButtons[next] == null)
+                return null;
+
+            from = mapCam.InverseTransformPoint(levelButtons[beaten].transform.position);
+            to = mapCam.InverseTransformPoint(levelButtons[next].transform.position);
+
+            GameObject go = new GameObject("ProgressTravelLight", typeof(RectTransform),
+                typeof(CanvasRenderer), typeof(Image));
+            RectTransform rect = go.GetComponent<RectTransform>();
+            rect.SetParent(mapCam, false);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = from;
+            rect.sizeDelta = new Vector2(13f, 13f);
+            rect.SetAsLastSibling();
+
+            Image image = go.GetComponent<Image>();
+            image.sprite = fxCell != null ? fxCell
+                : levelFills != null && beaten < levelFills.Length && levelFills[beaten] != null
+                    ? levelFills[beaten].sprite : null;
+            image.color = WithA(Lighten(accent, 0.72f), 0f);
+            image.raycastTarget = false;
+            image.preserveAspect = true;
+            return rect;
+        }
+
+        static Vector2 ApprovedMapNodePosition(int index)
+        {
+            Vector2[] positions =
+            {
+                new Vector2(-837.1f,226.7f), new Vector2(-737.2f,226.7f), new Vector2(-635.0f,226.7f), new Vector2(-793.5f,75.2f), new Vector2(-683.3f,75.2f), new Vector2(-793.5f,-61.4f), new Vector2(-683.3f,-61.4f), new Vector2(-840.6f,-203.7f), new Vector2(-737.2f,-203.7f), new Vector2(-633.9f,-203.7f),
+                new Vector2(-475.4f,226.7f), new Vector2(-369.8f,226.7f), new Vector2(-265.3f,226.7f), new Vector2(-428.3f,75.2f), new Vector2(-316.9f,75.2f), new Vector2(-428.3f,-61.4f), new Vector2(-316.9f,-61.4f), new Vector2(-477.7f,-203.7f), new Vector2(-370.9f,-203.7f), new Vector2(-265.3f,-203.7f),
+                new Vector2(-110.2f,226.7f), new Vector2(-4.6f,226.7f), new Vector2(97.6f,226.7f), new Vector2(-60.9f,75.2f), new Vector2(50.5f,75.2f), new Vector2(-60.9f,-61.4f), new Vector2(49.4f,-61.4f), new Vector2(-111.4f,-203.7f), new Vector2(-6.9f,-203.7f), new Vector2(97.6f,-203.7f),
+                new Vector2(254.9f,226.7f), new Vector2(359.4f,226.7f), new Vector2(462.8f,226.7f), new Vector2(299.7f,75.2f), new Vector2(413.4f,75.2f), new Vector2(299.7f,-61.4f), new Vector2(413.4f,-61.4f), new Vector2(252.6f,-203.7f), new Vector2(358.3f,-203.7f), new Vector2(462.8f,-203.7f),
+                new Vector2(621.2f,226.7f), new Vector2(724.6f,226.7f), new Vector2(826.8f,226.7f), new Vector2(667.2f,75.2f), new Vector2(782.0f,75.2f), new Vector2(667.2f,-61.4f), new Vector2(782.0f,-61.4f), new Vector2(620.1f,-203.7f), new Vector2(724.6f,-203.7f), new Vector2(827.9f,-203.7f)
+            };
+            return positions[Mathf.Clamp(index, 0, positions.Length - 1)];
         }
 
         // The level's optimal move count, straight off its prefab.
@@ -1097,7 +1993,11 @@ namespace Parabox
         void ResetProgress()
         {
             for (int i = 0; i < levelButtons.Length; i++)
+            {
                 PlayerPrefs.DeleteKey(BestKey(i));
+                PlayerPrefs.DeleteKey(GameManager.SessionClearKey(i));
+                PlayerPrefs.DeleteKey(GameManager.MechanicBriefingKey(i));
+            }
             ScoreSystem.Reset(levelButtons.Length);
             // A fresh start has to include the first-run demonstration, or "reset" quietly means
             // "reset everything except the one thing only a new player sees".
@@ -1119,7 +2019,7 @@ namespace Parabox
             // a continuation. Any other time the title represents a fresh run from Level 1.
             int want = PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1
                 ? PlayerPrefs.GetInt("Parabox.OutLevel", 0)
-                : NewGameLevel;
+                : PlayerPrefs.GetInt(LevelKey, NewGameLevel);
             _startLevel = Mathf.Clamp(want, 0, levelPrefabs.Length - 1);
             _theme = boardThemes[Mathf.Clamp(_startLevel / PerCategory, 0, boardThemes.Length - 1)];   // this level's chapter
             _model = LevelParser.Parse(levelPrefabs[_startLevel]);
@@ -1202,6 +2102,11 @@ namespace Parabox
             if (!_bdApplied && backdrop != null && _model != null) { _bdApplied = true; backdrop.Apply(_startLevel / PerCategory); }
 
             HealMapCam();
+
+            // The approved title art already contains the complete, precisely placed diorama.
+            // Keep it pixel-stable instead of drawing and drifting a second world-space preview
+            // over the authored image. Gameplay and level-map loading still use the same model.
+            if (useStaticHomeArtwork) return;
 
             if (transitioning || menuCam == null || _model == null) return;
             ComputeFarPose(out var pos, out var size);
@@ -1295,8 +2200,15 @@ namespace Parabox
         void BeginStart()
         {
             if (transitioning) return;
+            // Preserve the title-to-game transition hint. Whether a tutorial appears is decided by
+            // the resumed level's first-unseen mechanic, never by replaying that puzzle's solution.
+            PlayerPrefs.SetInt(MainPlayTutorialKey, 1);
+            PlayerPrefs.Save();
             transitioning = true;
-            StartCoroutine(DiveIntoBoard(NewGameLevel));
+            int resumeLevel = levelPrefabs != null && levelPrefabs.Length > 0
+                ? Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel), 0, levelPrefabs.Length - 1)
+                : NewGameLevel;
+            StartCoroutine(DiveIntoBoard(resumeLevel));
         }
 
         // Physically fly the menu camera INTO the world board — from the O framing to the EXACT gameplay
@@ -1378,19 +2290,19 @@ namespace Parabox
         void LoadGame(int index, bool seamless)
         {
             PlayerPrefs.SetInt(LevelKey, index);
+            // A previous build used this persisted flag for a special Level 50 entrance. Clear
+            // it so existing browser saves cannot re-enable that obsolete path after this fix.
+            PlayerPrefs.DeleteKey("Parabox.FinalRun");
             if (seamless) PlayerPrefs.SetInt("Parabox.Seamless", 1);   // menu already showed this board → no fade/fly-in
             else PlayerPrefs.SetInt("Parabox.FlyIn", 1);               // level-select: use the in-game fly-in
             PlayerPrefs.Save();                                        // commit the selected level before changing scenes
+            LuxoddGameService.SyncProgress();
             SceneManager.LoadScene("Game");
         }
 
         void Quit()
         {
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPlaying = false;
-#else
-            Application.Quit();
-#endif
+            LuxoddGameService.ReturnToSystem();
         }
     }
 }

@@ -15,5 +15,6 @@ namespace Parabox
         public bool locking;            // sets in stone the moment it reaches a mark
         public bool fragile;            // survives one shove, shatters on the second
         public bool anchored;           // a meta-box that can be entered but never pushed
+        public bool playerContainer;    // Chapter V: this recursive room wears the diver silhouette
     }
 }

@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Parabox
@@ -9,9 +11,8 @@ namespace Parabox
     // of text on it, which is what this replaced: finishing a fifty-level game and finishing
     // level 37 should not look the same.
     //
-    // It builds its own UI at runtime rather than being assembled by the wizard, for one reason:
-    // it must work in a project that has not re-run the wizard. Nothing to wire, nothing to
-    // forget, no null reference if a scene is a version behind.
+    // Its complete hierarchy is authored into Game.unity by the prebuilt-UI generator. Runtime
+    // only fills the final tally, wires the two outcomes and plays the animation.
     //
     // The staging is the point. Each beat lands on a screen that has stopped moving:
     //   1  everything else goes; the screen sinks to open water
@@ -27,22 +28,27 @@ namespace Parabox
         const float FadeIn = 1.1f;
         const int BubbleCount = 34;
 
-        CanvasGroup _group;
-        readonly List<RectTransform> _bubbles = new List<RectTransform>();
-        readonly List<float> _speed = new List<float>();
-        readonly List<float> _drift = new List<float>();
-        readonly List<float> _phase = new List<float>();
-        RectTransform _shaft;
+        [SerializeField] CanvasGroup _group;
+        [SerializeField] List<RectTransform> _bubbles = new List<RectTransform>();
+        [SerializeField] List<float> _speed = new List<float>();
+        [SerializeField] List<float> _drift = new List<float>();
+        [SerializeField] List<float> _phase = new List<float>();
+        [SerializeField] RectTransform _shaft;
+        [SerializeField] Text _tallyText;
         float _t;
+        [SerializeField] Button _againButton;
+        [SerializeField] Button _levelsButton;
+        bool _controlsReady;
+        System.Action _onAgain;
+        System.Action _onLevels;
 
         // Deep water, and the light coming down through it.
         static readonly Color Deep = new Color(0.016f, 0.055f, 0.098f, 1f);
         static readonly Color Cyan = new Color(0.435f, 0.918f, 0.949f, 1f);
         static readonly Color Warm = new Color(1f, 0.94f, 0.78f, 1f);
 
-        public static FinaleFx Build(Canvas canvas, Font font, Sprite glow, Sprite cell,
-                                     System.Action onAgain, System.Action onLevels,
-                                     int levels, int totalMoves)
+#if UNITY_EDITOR
+        public static FinaleFx Prebuild(Canvas canvas, Font font, Sprite glow, Sprite cell)
         {
             var root = new GameObject("FinaleFx", typeof(RectTransform), typeof(CanvasGroup));
             root.transform.SetParent(canvas.transform, false);
@@ -53,13 +59,47 @@ namespace Parabox
             fx._group = root.GetComponent<CanvasGroup>();
             fx._group.alpha = 0f;
             fx._group.blocksRaycasts = true;
-            fx.Compose(font, glow, cell, onAgain, onLevels, levels, totalMoves);
-            fx.StartCoroutine(fx.Run());
+            fx.Compose(font, glow, cell);
+            root.SetActive(false);
             return fx;
         }
+#endif
 
-        void Compose(Font font, Sprite glow, Sprite cell, System.Action onAgain,
-                     System.Action onLevels, int levels, int totalMoves)
+        public bool IsFullyPrebuilt => _group != null && _tallyText != null
+            && _againButton != null && _levelsButton != null
+            && _bubbles != null && _bubbles.Count == BubbleCount;
+
+        public void Play(System.Action onAgain, System.Action onLevels, int levels, int totalMoves)
+        {
+            if (!IsFullyPrebuilt)
+            {
+                Debug.LogError("[Parabox] Finale UI is not prebuilt. Run the Prebuilt UI generator.");
+                return;
+            }
+
+            _onAgain = onAgain;
+            _onLevels = onLevels;
+            _tallyText.text = $"all {levels} levels solved\n{totalMoves:n0} moves in total";
+            _againButton.onClick.AddListener(ChooseAgain);
+            _levelsButton.onClick.AddListener(ChooseLevels);
+            _controlsReady = false;
+            _t = 0f;
+            gameObject.SetActive(true);
+            transform.SetAsLastSibling();
+            _group.alpha = 0f;
+            _group.blocksRaycasts = true;
+            foreach (var n in new[] { "Verdict", "Rule", "Tally", "Title", "By", "Again", "Levels" })
+            {
+                Transform child = transform.Find(n);
+                if (child != null) Alpha(child.gameObject, 0f);
+            }
+            StartCoroutine(Run());
+        }
+
+        void ChooseAgain() => _onAgain?.Invoke();
+        void ChooseLevels() => _onLevels?.Invoke();
+
+        void Compose(Font font, Sprite glow, Sprite cell)
         {
             // open water
             var scrim = Panel("Water", transform, Deep);
@@ -104,9 +144,10 @@ namespace Parabox
             rule.anchoredPosition = new Vector2(0f, 122f);
 
             // what you actually did
-            Label("Tally", $"all {levels} levels solved\n{totalMoves:n0} moves in total",
-                  font, 30, FontStyle.Normal, new Color(1f, 1f, 1f, 0.82f),
-                  new Vector2(0f, 56f), 900f);
+            RectTransform tally = Label("Tally", "all 50 levels solved\n0 moves in total",
+                font, 30, FontStyle.Normal, new Color(1f, 1f, 1f, 0.82f),
+                new Vector2(0f, 56f), 900f);
+            _tallyText = tally.GetComponent<Text>();
 
             // whose game this is
             Label("Title", "HAYOT'S PARABOX", font, 34, FontStyle.Bold,
@@ -115,9 +156,9 @@ namespace Parabox
                   new Color(1f, 1f, 1f, 0.5f), new Vector2(0f, -84f), 900f);
 
             // the way out
-            MakeButton("Again", "PLAY AGAIN", font, new Vector2(-118f, -168f), Cyan, onAgain);
-            MakeButton("Levels", "LEVELS", font, new Vector2(118f, -168f),
-                       new Color(1f, 1f, 1f, 0.6f), onLevels);
+            _againButton = MakeButton("Again", "PLAY AGAIN", font, new Vector2(-155f, -168f), Cyan);
+            _levelsButton = MakeButton("Levels", "LEVEL SELECT", font, new Vector2(155f, -168f),
+                                       new Color(1f, 1f, 1f, 0.6f));
 
             // everything starts invisible; Run() brings each beat in
             foreach (var n in new[] { "Verdict", "Rule", "Tally", "Title", "By", "Again", "Levels" })
@@ -144,6 +185,75 @@ namespace Parabox
             yield return Wait(0.4f);
             yield return Reveal("Again", 0.4f, 14f);
             yield return Reveal("Levels", 0.4f, 14f);
+            _controlsReady = true;
+            if (_againButton != null && EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_againButton.gameObject);
+        }
+
+        public bool HandleArcadeInput(LuxoddArcadeAdapter arcade)
+        {
+            if (arcade == null) return false;
+            return HandleChoiceInput(arcade.Direction, arcade.NavigationPulse, arcade.ConfirmDown,
+                arcade.LevelsDown || arcade.BackDown);
+        }
+
+        public bool HandleKeyboardInput(Keyboard keyboard)
+        {
+            if (keyboard == null) return false;
+            Vector2Int direction = Vector2Int.zero;
+            if (keyboard.leftArrowKey.wasPressedThisFrame || keyboard.aKey.wasPressedThisFrame)
+                direction = Vector2Int.left;
+            else if (keyboard.rightArrowKey.wasPressedThisFrame || keyboard.dKey.wasPressedThisFrame)
+                direction = Vector2Int.right;
+            else if (keyboard.upArrowKey.wasPressedThisFrame || keyboard.wKey.wasPressedThisFrame)
+                direction = Vector2Int.up;
+            else if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame)
+                direction = Vector2Int.down;
+
+            return HandleChoiceInput(direction, direction != Vector2Int.zero,
+                keyboard.enterKey.wasPressedThisFrame || keyboard.spaceKey.wasPressedThisFrame,
+                keyboard.escapeKey.wasPressedThisFrame);
+        }
+
+        bool HandleChoiceInput(Vector2Int direction, bool movePulse, bool confirmDown, bool levelsDown)
+        {
+            // Swallow action presses while the finale is staging so the last level cannot be
+            // accidentally reloaded before its choices have appeared.
+            if (!_controlsReady)
+                return confirmDown || levelsDown || movePulse;
+
+            if (levelsDown)
+            {
+                if (_levelsButton != null) _levelsButton.onClick.Invoke();
+                return true;
+            }
+
+            if (movePulse && direction != Vector2Int.zero)
+            {
+                Button target = SelectedButton() == _againButton ? _levelsButton : _againButton;
+                if (target != null && EventSystem.current != null)
+                    EventSystem.current.SetSelectedGameObject(target.gameObject);
+                Sfx.Hover();
+                return true;
+            }
+
+            if (confirmDown)
+            {
+                Button selected = SelectedButton();
+                if (selected == null) selected = _againButton;
+                if (selected != null) selected.onClick.Invoke();
+                return true;
+            }
+            return false;
+        }
+
+        Button SelectedButton()
+        {
+            GameObject selected = EventSystem.current != null
+                ? EventSystem.current.currentSelectedGameObject : null;
+            if (_againButton != null && selected == _againButton.gameObject) return _againButton;
+            if (_levelsButton != null && selected == _levelsButton.gameObject) return _levelsButton;
+            return null;
         }
 
         // Fade a child up while it rises the last few pixels into place — the same "arrive, don't
@@ -231,17 +341,17 @@ namespace Parabox
             r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
             r.sizeDelta = new Vector2(width, size * 2.4f);
             r.anchoredPosition = at;
+            CrispUiTypography.Polish(t);
             return r;
         }
 
-        void MakeButton(string name, string text, Font font, Vector2 at, Color tint,
-                        System.Action onClick)
+        Button MakeButton(string name, string text, Font font, Vector2 at, Color tint)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
             go.transform.SetParent(transform, false);
             var r = go.GetComponent<RectTransform>();
             r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
-            r.sizeDelta = new Vector2(206f, 60f);
+            r.sizeDelta = new Vector2(284f, 60f);
             r.anchoredPosition = at;
 
             var img = go.GetComponent<Image>();
@@ -258,11 +368,12 @@ namespace Parabox
             t.color = tint;
             t.alignment = TextAnchor.MiddleCenter;
             t.raycastTarget = false;
+            CrispUiTypography.Polish(t);
 
             var btn = go.GetComponent<Button>();
             btn.targetGraphic = img;
             Sfx.AttachButton(btn);
-            if (onClick != null) btn.onClick.AddListener(() => onClick());
+            return btn;
         }
 
         static void Alpha(GameObject go, float a)

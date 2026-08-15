@@ -20,6 +20,7 @@ namespace Parabox
         public bool locking;            // sets in stone the moment it reaches a mark
         public bool fragile;            // survives one shove, shatters on the second
         public bool anchored;           // a meta-box bolted down: enterable, but never pushable
+        public bool playerContainer;    // visual identity for a recursive room shaped like the diver
 
         // Crates and meta-boxes. The player and the echo are divers, not cargo — this is what
         // separates "can be pushed / counts as weight / satisfies a crate goal" from "cannot".
@@ -126,6 +127,20 @@ namespace Parabox
         public PEntity echo;            // the shadow diver, or null if this level has none
         public PEntity mirror;          // the diver that moves the opposite way, or null
         public bool hasMagnet;          // set by LevelParser — skips the whole magnet pass otherwise
+
+        // Runtime-authored physical layout tightening. LevelLayoutRebalancer fills these after it
+        // protects the stored winning route; the campaign validator requires at least one physical
+        // addition on every shipped level.
+        public int rebalanceWalls;
+        public int rebalanceOneWays;
+        public int rebalanceHazards;
+        public int rebalanceObjectives;
+        // Mechanics deliberately rehearsed by the 50-level curriculum at parse time. These are
+        // real, solution-validated board rules (not labels or decorative tutorial claims).
+        public readonly HashSet<MechanicCatalog.Id> curriculumReuses =
+            new HashSet<MechanicCatalog.Id>();
+        public int RebalanceElementCount => rebalanceWalls + rebalanceOneWays + rebalanceHazards
+                                            + rebalanceObjectives;
 
         // Fragile crates that have already spent their one shove, and the direction a sticky floor
         // is demanding of the next move. Both are snapshotted, so undo restores them for free.

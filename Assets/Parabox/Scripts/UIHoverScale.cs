@@ -67,6 +67,18 @@ namespace Parabox
         void Update()
         {
             if (suspended) return;
+            // Most menu/map nodes are idle most of the time. Once the spring has settled, avoid
+            // running spring maths and writing the Transform every frame (notably 50 map nodes).
+            if (Mathf.Abs(target - cur) < 0.0005f && Mathf.Abs(vel) < 0.0005f)
+            {
+                if (cur != target || vel != 0f)
+                {
+                    cur = target;
+                    vel = 0f;
+                    transform.localScale = baseScale * cur;
+                }
+                return;
+            }
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);   // a hitch must not launch the spring
             float a = (target - cur) * Stiffness - vel * Damping;
             vel += a * dt;

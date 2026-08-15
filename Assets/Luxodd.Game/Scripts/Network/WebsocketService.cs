@@ -39,6 +39,7 @@ namespace Luxodd.Game.Scripts.Network
 
         private ClientWebSocket _clientWebSocket;
         private bool _isConnected;
+        private bool _isConnecting;
         private bool _wasConnected = false;
         private bool _isInReconnection = false;
         private bool _isInFlushing = false;
@@ -63,7 +64,7 @@ namespace Luxodd.Game.Scripts.Network
         {
             _onConnectedCallback = onSuccessCallback;
             _onConnectionErrorCallback = onErrorCallback;
-            _ = StartConnectionAsync();
+            BeginConnection();
         }
 
         internal void ConnectToServer(LuxoddSessionPayload sessionPayload, Action onSuccessCallback = null, Action onErrorCallback = null)
@@ -71,12 +72,34 @@ namespace Luxodd.Game.Scripts.Network
             _sessionPayload = sessionPayload;
             _onConnectedCallback = onSuccessCallback;
             _onConnectionErrorCallback = onErrorCallback;
+            BeginConnection();
+        }
+
+        private void BeginConnection()
+        {
+            if (_isConnected)
+            {
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(BeginConnection)}] Socket is already connected; duplicate request ignored.");
+                return;
+            }
+
+            if (_isConnecting)
+            {
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(BeginConnection)}] Connection is already in progress; duplicate request ignored.");
+                return;
+            }
+
+            // Set this synchronously. StartConnectionAsync yields before opening the browser
+            // socket, so a late luxodd:session event could otherwise start a second connection.
+            _isConnecting = true;
+            _isConnected = false;
             _ = StartConnectionAsync();
         }
 
         public void CloseConnection()
         {
             _isConnected = false;
+            _isConnecting = false;
 #if !UNITY_EDITOR
             _socketLibraryWrapper.CloseWebSocketConnection();
 #else
@@ -180,12 +203,17 @@ namespace Luxodd.Game.Scripts.Network
             LoggerHelper.Log(
                 $"[{DateTime.Now}][{GetType().Name}][{nameof(OnWebSocketConnectionErrorHandler)}] OK, error:{error}");
             _isConnected = false;
+            _isConnecting = false;
+            _isConnectedEvent.Notify(false);
+            _onConnectionErrorCallback?.Invoke();
         }
 
         private void OnWebSocketClosedHandler(int code)
         {
             LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnWebSocketConnectionErrorHandler)}] OK");
             _isConnected = false;
+            _isConnecting = false;
+            _isConnectedEvent.Notify(false);
         }
 
         private void UnsubscribeFromEvents()
@@ -198,6 +226,9 @@ namespace Luxodd.Game.Scripts.Network
 
         private string GetSessionToken()
         {
+            if (_sessionPayload != null && string.IsNullOrWhiteSpace(_sessionPayload.Token) == false)
+                return _sessionPayload.Token;
+
             var isDebug = false;
 #if UNITY_EDITOR
             isDebug = true;
@@ -258,7 +289,9 @@ namespace Luxodd.Game.Scripts.Network
                 LoggerHelper.LogError($"[{DateTime.Now}][{GetType().Name}][{nameof(StartConnectionAsync)}] Error: {ex}");
                 Console.WriteLine(ex);
                 _isConnected = false;
-                throw;
+                _isConnecting = false;
+                _isConnectedEvent.Notify(false);
+                _onConnectionErrorCallback?.Invoke();
             }
 #else
             LoggerHelper.Log(
@@ -280,7 +313,9 @@ namespace Luxodd.Game.Scripts.Network
                 LoggerHelper.LogError($"[{DateTime.Now}][{GetType().Name}][{nameof(StartConnectionAsync)}] Error: {e}");
                 Console.WriteLine(e);
                 _isConnected = false;
-                throw;
+                _isConnecting = false;
+                _isConnectedEvent.Notify(false);
+                _onConnectionErrorCallback?.Invoke();
             }
 
 #endif
@@ -387,6 +422,7 @@ namespace Luxodd.Game.Scripts.Network
         private void OnWebSocketConnectedHandler()
         {
             Debug.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnWebSocketConnectedHandler)}] OK");
+            _isConnecting = false;
             _isConnected = true;
             _wasConnected = true;
             _isConnectedEvent.Notify(_isConnected);
@@ -523,7 +559,11 @@ namespace Luxodd.Game.Scripts.Network
 
         private void OnSessionOptionsCallback(SessionOptionAction action)
         {
-            _onSessionOptionCallback?.Invoke(action);
+            // A host choice is one-shot. Clear it first so a duplicated or late bridge event
+            // cannot invoke Continue/Restart twice.
+            Action<SessionOptionAction> callback = _onSessionOptionCallback;
+            _onSessionOptionCallback = null;
+            callback?.Invoke(action);
         }
 
         public class SendCommandData

@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -27,13 +28,17 @@ namespace Parabox
 
         public IEnumerator Play(RectTransform beatenNode, GameObject beatenCheck,
                                 IList<Image> road, Color roadLit,
-                                RectTransform nextNode, GameObject nextRing)
+                                RectTransform nextNode, GameObject nextRing,
+                                Action nodeCompleted = null,
+                                Action<float> roadProgress = null,
+                                Action nextActivated = null)
         {
             float t = 0f;
             while (t < holdBefore) { t += Time.unscaledDeltaTime; yield return null; }
 
             // ---- 1. the node you just cleared lands ------------------------------------
             if (beatenCheck != null) beatenCheck.SetActive(true);
+            nodeCompleted?.Invoke();
             Sfx.Ding();
             // the moment itself: a ring thrown off the node and a burst of light. Without this the
             // node merely got bigger — a scale-up is a state change, not an achievement.
@@ -68,12 +73,15 @@ namespace Parabox
                 for (int i = 0; i < road.Count; i++)
                 {
                     if (road[i] != null) road[i].color = roadLit;
+                    roadProgress?.Invoke((i + 1f) / Mathf.Max(1, road.Count));
                     t = 0f;
                     while (t < dotStep) { t += Time.unscaledDeltaTime; yield return null; }
                 }
+            if (road == null || road.Count == 0) roadProgress?.Invoke(1f);
 
             // ---- 3. the next level wakes up -------------------------------------------
             if (nextRing != null) nextRing.SetActive(true);
+            nextActivated?.Invoke();
             if (nextNode != null)
             {
                 Sfx.Ding();

@@ -1,8 +1,12 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace Parabox
 {
@@ -65,10 +69,10 @@ namespace Parabox
         public Button nextButton;
         public Button menuButton;
 
-        // Built at runtime so existing scenes and regenerated scenes receive the score HUD without
-        // requiring a manual Inspector pass.
-        RectTransform scoreRoot;
-        Text scoreLabel;
+        [Header("Prebuilt score HUD")]
+        [Tooltip("Generated into Game.unity by Tools/Parabox/Generate Prebuilt UI (Run This).")]
+        public RectTransform scoreRoot;
+        public Text scoreLabel;
         int lastScoreGain;
 
         [Header("Timer")]
@@ -80,6 +84,12 @@ namespace Parabox
         public GameObject timeUpPanel;   // the lose panel (shared by both failure kinds)
         public Button retryButton;
         public Button backToLevelsButton;
+
+        // Menu auto-start and gameplay pressure are separate: once a level begins, its own timer
+        // follows puzzle complexity and grants extra reading time to chapter-opening lessons.
+        // Running out of gameplay time is terminal; Luxodd Continue restores a complete fresh
+        // allowance without changing the current puzzle state.
+        const bool GameplayCountdownEnabled = true;
 
         [Header("Lose sequence")]
         public LoseFx loseFx;            // drives the freeze / jolt / dim / verdict / options beats
@@ -98,7 +108,10 @@ namespace Parabox
 
         const string LevelKey = "Parabox.Level";
         const string OpenLevelsKey = "Parabox.OpenLevels";
+        public const string EditorPreviewLevelKey = "Parabox.EditorPreviewLevel";
         static string BestKey(int level) => "Parabox.Best." + level;
+        const string SessionClearPrefix = "Parabox.Session.Clear.";
+        public static string SessionClearKey(int level) => SessionClearPrefix + level;
         const float InteriorFit = 0.72f; // interior room size relative to its box cell
 
         // Sorting orders. Entities (box 6, player 8, meta-box group 6) are baked into
@@ -112,18 +125,44 @@ namespace Parabox
         readonly Dictionary<int, Transform> roomRoots = new Dictionary<int, Transform>();
         readonly Dictionary<PEntity, EntityView> views = new Dictionary<PEntity, EntityView>();
         readonly BoardTiles tiles = new BoardTiles();
+        readonly Dictionary<PEntity, (int room, Vector2Int pos)> moveStartPositions
+            = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+        readonly Dictionary<(int room, int x, int y), bool> goalsBeforeMove
+            = new Dictionary<(int room, int x, int y), bool>();
+        readonly Dictionary<(int room, int x, int y), bool> goalsAfterMove
+            = new Dictionary<(int room, int x, int y), bool>();
+        HiddenDiscoveryFx hiddenDiscovery;
+        // FocusRoom used to traverse the complete recursive board after every move. Large late-game
+        // boards contain hundreds of renderers, so that repeated hierarchy scan caused visible
+        // stalls. The rendered hierarchy is immutable during a level; cache it once and skip the
+        // visibility pass entirely while the active room/cinematic state has not changed.
+        Renderer[] focusRenderers;
+        int focusedRoomId = int.MinValue;
+        bool focusedCinematic;
         int levelIndex;
         bool won;
         Vector2Int lastHeld;
         float nextRepeat;
         float timeLeft;
         float timeLimit;
+        // A level's allowance begins with the player's first successful move, not while the board
+        // is arriving or the player is reading it. This is especially important at world changes,
+        // where the presentation beat used to spend several seconds of World 2's clock.
+        bool countdownArmed;
         bool timedUp;
         int par;
         int moveLimit;
         bool outOfMoves;
         bool levelEndReported;
-        bool lossTransactionReady;
+        bool tutorialExiting;
+        string mechanicBriefingSignature;
+        GameObject mechanicSpotlightRoot;
+        bool tutorialFromMainPlay;
+        bool editorPreviewMode;
+        [Header("Prebuilt finale")]
+        public FinaleFx finaleOverlay;
+        bool finaleSequenceActive;
+        bool lossTransactionRequested;
 
         // Any terminal state — won, timed out, or out of moves. Every input guard tests this, so a
         // new failure kind can never accidentally leave the board still playable. The tutorial
@@ -135,28 +174,27 @@ namespace Parabox
         // timeline), so there is one source of truth rather than a reach into the UI component.
         bool Tutoring => cinematic;
         bool cinematic;
-        bool demoMove;   // set only while the cinematic is driving DoMove itself
         // Lost, specifically — the win branch needs its own handling (Space = next level).
         bool Lost => timedUp || outOfMoves;
         int MovesLeft => Mathf.Max(0, moveLimit - model.MoveCount);
 
-        // Slack over the solver's optimal, escalating by chapter: forgiving while you're still
-        // learning the mechanic, demanding once you know it. Undo refunds a move (it pops the
-        // model's undo stack), so experimenting inside the limit stays free.
-        // Per chapter, five of them. Forgiving while you're learning the push, tightest in the
-        // Master chapter — but never below 2, because a chapter-5 level is four rooms deep and a
-        // single wasted probe move must not cost you the run.
+        // Slack over the solver's optimal, removed in measured bands: forgiving while you're still
+        // learning the vocabulary, demanding once you know it. Undo refunds the move itself so
+        // difficulty comes from understanding the puzzle rather than from punishing experiments.
+        // Each level now also has a clock-pressure mechanic, so the move allowance is deliberately
+        // tighter: enough room to read a new rule, but not enough to brute-force the board. The
+        // solver's par remains the floor, which guarantees the proven route always fits.
         static int MoveSlack(int levelIdx)
-        {
-            switch (levelIdx / 10)
-            {
-                case 0: return 5;    // Easy
-                case 1: return 4;    // Medium
-                case 2: return 3;    // Hard
-                case 3: return 3;    // Expert
-                default: return 2;   // Master
-            }
-        }
+            => CampaignProgression.ForLevel(levelIdx).moveSlack;
+
+        // Shared with the campaign validator so gameplay and automated QA can never drift onto
+        // different timer or move-limit formulas.
+        public static int MoveLimitForLevel(int levelIdx, int levelPar)
+            => levelPar > 0 ? levelPar + MoveSlack(levelIdx) : 999;
+
+        public static float TimeLimitForLevel(int levelIdx, int levelPar)
+            => CampaignProgression.TimeLimit(levelIdx, levelPar);
+
         float timerIntro;
         float tickBump;
         int lastSecond = -1;
@@ -175,13 +213,33 @@ namespace Parabox
 
         void Start()
         {
+            RepairLevelPrefabReferencesInEditor();
+            RepairGameplayCanvasScales();
             Sfx.Init();
             Fx.Piece = pieceSprite;
             Fx.Ring = ringSprite;
             Fx.Glow = glowSprite;
 
-            levelIndex = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
+            // Editor visual-QA can request one exact board without disturbing or being overridden
+            // by the player's normal saved campaign position. The key is consumed immediately.
+            int editorPreviewLevel = PlayerPrefs.GetInt(EditorPreviewLevelKey, -1);
+            editorPreviewMode = editorPreviewLevel >= 0;
+            if (editorPreviewLevel >= 0)
+            {
+                PlayerPrefs.DeleteKey(EditorPreviewLevelKey);
+                PlayerPrefs.Save();
+            }
+            levelIndex = Mathf.Clamp(editorPreviewLevel >= 0
+                ? editorPreviewLevel
+                : PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
+            tutorialFromMainPlay = PlayerPrefs.GetInt(MainMenuUI.MainPlayTutorialKey, 0) == 1;
+            if (tutorialFromMainPlay)
+            {
+                PlayerPrefs.DeleteKey(MainMenuUI.MainPlayTutorialKey);
+                PlayerPrefs.Save();
+            }
             ApplyLevelTheme(levelIndex / 10);   // Beginner / Intermediate / Advanced skin
+            ConfigureChapterPresentation(levelIndex / 10);
             if (loseFx != null) loseFx.SetLeaderboardTheme(frameColor, gutterColor);
             model = LevelParser.Parse(levelPrefabs[levelIndex]);
             BuildView();
@@ -192,21 +250,19 @@ namespace Parabox
             if (PlayerPrefs.GetInt("Parabox.FlyIn", 0) == 1)
             {
                 PlayerPrefs.DeleteKey("Parabox.FlyIn");
-                if (cameraFollow != null && !WillTutorial()) cameraFollow.PlayIntro();
+                if (cameraFollow != null && !WillTutorial())
+                {
+                    ConfigureChapterArrival(cameraFollow, levelIndex / 10);
+                    cameraFollow.PlayIntro();
+                }
             }
 
-            // The final level arrives differently: a slower, further fly-in, so the board opens
-            // out of the distance instead of simply being there. Same mechanism as every other
-            // level — only the numbers change, which keeps it honest and impossible to desync.
+            // Older browser saves may still contain the retired Level-50-only entrance flag.
+            // Consume it without changing the camera: Level 50 now enters exactly through the
+            // same shared responsive path as the other 49 levels.
             if (PlayerPrefs.GetInt("Parabox.FinalRun", 0) == 1)
             {
                 PlayerPrefs.DeleteKey("Parabox.FinalRun");
-                if (cameraFollow != null)
-                {
-                    cameraFollow.introDur = 2.2f;        // vs 1.2 — it takes its time
-                    cameraFollow.introZoomOut = 9f;      // vs 5 — it comes from further away
-                    cameraFollow.PlayIntro();
-                }
             }
             UpdateHud();
             winPanel.SetActive(false);
@@ -227,11 +283,12 @@ namespace Parabox
             // now run from 1 to 22, and that formula handed level 20 a 22-move puzzle and 29
             // seconds. Roughly three seconds a move plus a thinking cushion, and never under 20s,
             // so the clock is pressure rather than a dexterity test.
-            timeLimit = par > 0 ? Mathf.Max(20f, par * 3f + 14f) : 10f + levelIndex;
+            timeLimit = TimeLimitForLevel(levelIndex, par);
             timeLeft = timeLimit;
+            countdownArmed = false;
             // par == 0 means the prefab predates par data (wizard not re-run). Fall back to an
             // unrestrictive limit rather than handing the player an unwinnable level.
-            moveLimit = par > 0 ? par + MoveSlack(levelIndex) : 999;
+            moveLimit = MoveLimitForLevel(levelIndex, par);
             timedUp = false;
             // seamless menu-entry: the HUD is already "there" — skip the timer's scale/fade-in
             timerIntro = PlayerPrefs.GetInt("Parabox.Seamless", 0) == 1 ? IntroDur : 0f;
@@ -245,14 +302,138 @@ namespace Parabox
                 (timerAccents != null && timerAccents.Length > 0) ? timerAccents.Length - 1 : 0);
             timerAccentCur = (timerAccents != null && timerAccents.Length > 0)
                 ? timerAccents[tier] : new Color(1f, 0.62f, 0.37f, 1f);
-            BuildScoreHud();
+            if (scoreRoot == null || scoreLabel == null)
+                Debug.LogError("[Parabox] Score HUD is not prebuilt. Run Tools/Parabox/Generate Prebuilt UI (Run This) before Play or Build.");
             UpdateHud();
             if (timeUpPanel != null) timeUpPanel.SetActive(false);
-            if (retryButton != null) retryButton.onClick.AddListener(Restart);
-            if (backToLevelsButton != null) backToLevelsButton.onClick.AddListener(ReturnToLevels);
+            // Luxodd owns the post-loss decision. Hide legacy serialized action holders so scenes
+            // created before this flow was introduced cannot expose local Continue / Levels UI.
+            HideLegacyLossAction(retryButton);
+            HideLegacyLossAction(backToLevelsButton);
             WireOnScreenControls();
-            AnimateTimer();
+            if (timerRoot != null)
+                timerRoot.gameObject.SetActive(GameplayCountdownEnabled && !editorPreviewMode);
+            if (GameplayCountdownEnabled && !editorPreviewMode) AnimateTimer();
             LuxoddGameService.ReportLevelBegin(levelIndex);
+        }
+
+        #if UNITY_EDITOR
+        // Editor-authoring only. The one-click prebuilder runs this while Game.unity is open in
+        // edit mode; the resulting components and references are serialized into the scene.
+        public void PrebuildStaticUi()
+        {
+            ArcadeActionButtonStyle.Apply(nextButton, "CONTINUE", 24);
+            ArcadeActionButtonStyle.Apply(menuButton, "LEVELS", 24);
+
+            if (tutorialFx != null) tutorialFx.PrebuildStaticUi();
+            if (loseFx != null) loseFx.PrebuildStaticUi();
+            BuildScoreHud();
+
+            Canvas finaleCanvas = winPanel != null ? winPanel.GetComponentInParent<Canvas>() : null;
+            if (finaleOverlay == null && finaleCanvas != null)
+                finaleOverlay = finaleCanvas.GetComponentInChildren<FinaleFx>(true);
+            if (finaleOverlay != null && !finaleOverlay.IsFullyPrebuilt)
+            {
+                Object.DestroyImmediate(finaleOverlay.gameObject);
+                finaleOverlay = null;
+            }
+            if (finaleOverlay == null)
+            {
+                Font font = winTitle != null ? winTitle.font
+                    : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                if (finaleCanvas != null)
+                    finaleOverlay = FinaleFx.Prebuild(finaleCanvas, font, glowSprite, cellSprite);
+            }
+
+            foreach (Button button in GetComponentsInChildren<Button>(true))
+                Sfx.AttachButton(button);
+
+            AddPrebuiltHold(upButton);
+            AddPrebuiltHold(downButton);
+            AddPrebuiltHold(leftButton);
+            AddPrebuiltHold(rightButton);
+
+            Transform bar = upButton != null ? upButton.transform.parent
+                : undoButton != null ? undoButton.transform.parent : null;
+            Transform joystick = bar != null ? bar.Find("ArcadeJoystickHud") : null;
+            if (joystick != null && joystick.GetComponent<ArcadeJoystickControl>() == null)
+                joystick.gameObject.AddComponent<ArcadeJoystickControl>();
+        }
+
+        static void AddPrebuiltHold(Button button)
+        {
+            if (button != null && button.GetComponent<HoldRepeatButton>() == null)
+                button.gameObject.AddComponent<HoldRepeatButton>();
+        }
+        #endif
+
+        static void HideLegacyLossAction(Button button)
+        {
+            if (button == null) return;
+            Transform holder = button.transform.parent;
+            if (holder != null) holder.gameObject.SetActive(false);
+            else button.gameObject.SetActive(false);
+        }
+
+        // When Unity's fast Play Mode skips a domain reload, an asset reimport can leave the
+        // serialized prefab array pointing at destroyed in-memory objects even though the scene
+        // YAML and prefab files are valid. Recover the assets by path before parsing a level. This
+        // is editor-only and therefore adds no AssetDatabase dependency to WebGL builds.
+        void RepairLevelPrefabReferencesInEditor()
+        {
+#if UNITY_EDITOR
+            bool broken = levelPrefabs == null || levelPrefabs.Length != 50;
+            if (!broken)
+                for (int i = 0; i < levelPrefabs.Length; i++)
+                    if (levelPrefabs[i] == null) { broken = true; break; }
+
+            if (!broken) return;
+
+            var recovered = new GameObject[50];
+            for (int i = 0; i < recovered.Length; i++)
+            {
+                recovered[i] = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"Assets/Parabox/Prefabs/Levels/Level_{i + 1}.prefab");
+                if (recovered[i] == null)
+                {
+                    Debug.LogError($"Level prefab {i + 1} could not be recovered. Reimport the Levels folder.");
+                    return;
+                }
+            }
+            levelPrefabs = recovered;
+            Debug.Log("[Parabox] Recovered 50 stale level prefab references.");
+#endif
+        }
+
+        // A zero-scale root Canvas renders a permanently black frame during the tutorial because
+        // the gameplay camera is intentionally redirected into the cinematic panel. Unity can
+        // preserve that accidental Inspector state in the scene, so repair both UI roots before
+        // any tutorial, fade, timer, or HUD setup runs.
+        void RepairGameplayCanvasScales()
+        {
+            EnsureUsableCanvasScale(hudGroup != null ? hudGroup.transform : null);
+
+            if (tutorialFx != null)
+            {
+                Canvas tutorialCanvas = tutorialFx.GetComponent<Canvas>();
+                EnsureUsableCanvasScale(tutorialCanvas != null
+                    ? tutorialCanvas.transform
+                    : tutorialFx.transform);
+            }
+        }
+
+        static void EnsureUsableCanvasScale(Transform canvasTransform)
+        {
+            if (canvasTransform == null) return;
+
+            Vector3 scale = canvasTransform.localScale;
+            const float MinScale = 0.0001f;
+            if (Mathf.Abs(scale.x) < MinScale ||
+                Mathf.Abs(scale.y) < MinScale ||
+                Mathf.Abs(scale.z) < MinScale)
+            {
+                canvasTransform.localScale = Vector3.one;
+            }
         }
 
         // On-screen buttons drive the exact same logic as the keyboard (touch / click support).
@@ -263,18 +444,55 @@ namespace Parabox
             WireHold(downButton,  Vector2Int.down);
             WireHold(leftButton,  Vector2Int.left);
             WireHold(rightButton, Vector2Int.right);
-            if (undoButton != null)    undoButton.onClick.AddListener(UiUndo);
-            if (restartButton != null) restartButton.onClick.AddListener(Restart);
-            if (muteButton != null)    muteButton.onClick.AddListener(UiMute);
-            if (hudMenuButton != null) hudMenuButton.onClick.AddListener(GoToMenu);
+            WireClick(undoButton, UiUndo);
+            WireClick(restartButton, Restart);
+            WireClick(muteButton, UiMute);
+            WireClick(hudMenuButton, GoToMenu);
+            WireArcadeJoystick();
             UpdateMuteIcon();
+        }
+
+        static void WireClick(Button button, UnityEngine.Events.UnityAction action)
+        {
+            if (button == null) return;
+            button.interactable = true;
+            if (button.targetGraphic != null) button.targetGraphic.raycastTarget = true;
+            button.onClick.AddListener(action);
+        }
+
+        // The scene-baked joystick used to be presentation only. Give the exact visible control a
+        // hit target and route tap/drag/hold input through UiMove, the same entry point used by the
+        // hidden fallback d-pad and the physical Luxodd joystick.
+        void WireArcadeJoystick()
+        {
+            Transform bar = upButton != null ? upButton.transform.parent
+                : undoButton != null ? undoButton.transform.parent : null;
+            if (bar == null) return;
+
+            Transform joystick = bar.Find("ArcadeJoystickHud");
+            if (joystick == null) return;
+
+            Image hitTarget = joystick.GetComponent<Image>();
+            if (hitTarget != null) hitTarget.raycastTarget = true;
+
+            var control = joystick.GetComponent<ArcadeJoystickControl>();
+            if (control == null)
+            {
+                Debug.LogError("[Parabox] ArcadeJoystickControl is not prebuilt. Run the Prebuilt UI generator.");
+                return;
+            }
+            control.Configure(UiMove, joystick.Find("Ball") as RectTransform);
         }
 
         void WireHold(Button b, Vector2Int dir)
         {
             if (b == null) return;
             var h = b.GetComponent<HoldRepeatButton>();
-            if (h == null) h = b.gameObject.AddComponent<HoldRepeatButton>();
+            if (h == null)
+            {
+                Debug.LogError("[Parabox] HoldRepeatButton is not prebuilt on " + b.name + ". Run the Prebuilt UI generator.");
+                return;
+            }
             h.onFire = () => UiMove(dir);
         }
 
@@ -287,7 +505,12 @@ namespace Parabox
         public void UiUndo()
         {
             if (Ended) return;
-            if (model.Undo()) { Sfx.Undo(); SyncViews(false); UpdateHud(); }
+            if (model.Undo())
+            {
+                Sfx.Undo();
+                SyncViews(false);
+                if (!Ended) UpdateHud();
+            }
         }
 
         public void UiMute()
@@ -303,38 +526,55 @@ namespace Parabox
         }
 
         // Cabinet mapping: stick=move, Black=confirm/retry, Red=undo, Green=restart,
-        // Yellow/White=level select/back, Blue=mute. Orange remains owned by Luxodd.
+        // Yellow/White=level select/back, Blue=mute, Purple=skip walkthrough. Orange remains Luxodd's.
         bool HandleArcadeInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
             if (arcade == null) return false;
 
-            if (arcade.MuteDown) { Sfx.ToggleMute(); UpdateMuteIcon(); }
+            if (arcade.MuteDown)
+            {
+                Sfx.Click();
+                Sfx.ToggleMute();
+                UpdateMuteIcon();
+                return true;
+            }
             if (Lost)
             {
-                // Luxodd owns retry/end decisions once the loss sequence begins. Black or Green
-                // can reopen a popup that the player cancelled, but neither may bypass payment by
-                // directly reloading the scene.
-                if (lossTransactionReady && (arcade.ConfirmDown || arcade.RestartDown))
+                // The leaderboard is informational and Luxodd owns the upcoming transaction.
+                // Swallow all gameplay/cabinet input until the host returns a choice.
+                return true;
+            }
+
+            if (finaleSequenceActive)
+            {
+                return finaleOverlay != null && finaleOverlay.HandleArcadeInput(arcade);
+            }
+
+            if (Tutoring)
+            {
+                if (arcade.SkipDown)
                 {
-                    RequestLossTransaction();
+                    Sfx.Click();
+                    TutorialSkip();
                     return true;
                 }
-                return false;
+                return HandleArcadeTutorialInput(arcade);
             }
+
             if (arcade.BackDown || arcade.LevelsDown)
             {
+                Sfx.Click();
                 GoToMenu();
                 return true;
             }
 
-            if (Tutoring) return false; // tutorial UI keeps normal EventSystem ownership
             if (won)
             {
-                if (arcade.ConfirmDown) { NextLevel(); return true; }
+                if (arcade.ConfirmDown) { Sfx.Click(); NextLevel(); return true; }
                 return false;
             }
-            if (arcade.RestartDown) { Restart(); return true; }
+            if (arcade.RestartDown) { Sfx.Click(); Restart(); return true; }
             if (arcade.UndoDown)
             {
                 UiUndo();
@@ -348,6 +588,50 @@ namespace Parabox
             return false;
         }
 
+        bool HandleArcadeTutorialInput(LuxoddArcadeAdapter arcade)
+            => HandleTutorialChoiceInput(arcade.Direction, arcade.NavigationPulse, arcade.ConfirmDown);
+
+        bool HandleTutorialChoiceInput(Vector2Int direction, bool movePulse, bool confirmDown)
+        {
+            if (tutorialFx == null || tutorialExiting)
+                return false;
+
+            if (tutorialFx.choiceGroup == null || !tutorialFx.choiceGroup.interactable)
+                return false;
+
+            var buttons = new[] { tutorialFx.againButton, tutorialFx.tryButton };
+            int selected = 1;
+            GameObject selectedObject = EventSystem.current != null
+                ? EventSystem.current.currentSelectedGameObject : null;
+            for (int i = 0; i < buttons.Length; i++)
+                if (buttons[i] != null && buttons[i].gameObject == selectedObject) selected = i;
+
+            if (movePulse && direction != Vector2Int.zero)
+            {
+                int step = direction.x < 0 || direction.y > 0 ? -1 : 1;
+                for (int tries = 0; tries < buttons.Length; tries++)
+                {
+                    selected = (selected + step + buttons.Length) % buttons.Length;
+                    if (buttons[selected] == null || !buttons[selected].gameObject.activeInHierarchy
+                        || !buttons[selected].interactable) continue;
+                    if (EventSystem.current != null)
+                        EventSystem.current.SetSelectedGameObject(buttons[selected].gameObject);
+                    Sfx.Hover();
+                    break;
+                }
+                return true;
+            }
+
+            if (confirmDown)
+            {
+                Button button = selectedObject != null ? selectedObject.GetComponent<Button>() : null;
+                if (button == null || !button.interactable) button = tutorialFx.tryButton;
+                if (button != null) button.onClick.Invoke();
+                return true;
+            }
+            return false;
+        }
+
         bool _flagsConsumed;
 
         void Update()
@@ -356,8 +640,11 @@ namespace Parabox
             // has read it (ScreenFade + this component read it in Start; order between Starts is undefined).
             if (!_flagsConsumed) { _flagsConsumed = true; PlayerPrefs.DeleteKey("Parabox.Seamless"); }
 
-            TickTimer();
-            AnimateTimer();
+            if (GameplayCountdownEnabled && !editorPreviewMode)
+            {
+                TickTimer();
+                AnimateTimer();
+            }
 
             if (HandleArcadeInput()) return;
 
@@ -366,13 +653,15 @@ namespace Parabox
 
             if (kb.mKey.wasPressedThisFrame) { Sfx.ToggleMute(); UpdateMuteIcon(); }
 
-            // A failed run cannot use Escape/R to avoid the Luxodd transaction. Enter, Space or R
-            // only reopens a transaction popup after its five-second leaderboard dwell.
+            if (finaleSequenceActive)
+            {
+                if (finaleOverlay != null) finaleOverlay.HandleKeyboardInput(kb);
+                return;
+            }
+
             if (Lost)
             {
-                if (lossTransactionReady && (kb.enterKey.wasPressedThisFrame
-                    || kb.spaceKey.wasPressedThisFrame || kb.rKey.wasPressedThisFrame))
-                    RequestLossTransaction();
+                // No local escape, retry, or level-select action is available after death.
                 return;
             }
 
@@ -389,7 +678,20 @@ namespace Parabox
             // while a key was held down, the first frame after the demo would read that key as a
             // fresh press and fire a move the player never asked for, on the board the tutorial
             // just promised to hand back untouched.
-            if (Tutoring) { lastHeld = ReadDirection(kb); return; }
+            if (Tutoring)
+            {
+                lastHeld = ReadDirection(kb);
+                if (kb.tabKey.wasPressedThisFrame)
+                {
+                    TutorialSkip();
+                    return;
+                }
+                Vector2Int tutorialDirection = ReadDirectionDown(kb);
+                HandleTutorialChoiceInput(tutorialDirection,
+                    tutorialDirection != Vector2Int.zero,
+                    kb.enterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame);
+                return;
+            }
 
             if (won)
             {
@@ -442,10 +744,19 @@ namespace Parabox
             return Vector2Int.zero;
         }
 
+        static Vector2Int ReadDirectionDown(Keyboard kb)
+        {
+            if (kb.wKey.wasPressedThisFrame || kb.upArrowKey.wasPressedThisFrame) return Vector2Int.up;
+            if (kb.sKey.wasPressedThisFrame || kb.downArrowKey.wasPressedThisFrame) return Vector2Int.down;
+            if (kb.aKey.wasPressedThisFrame || kb.leftArrowKey.wasPressedThisFrame) return Vector2Int.left;
+            if (kb.dKey.wasPressedThisFrame || kb.rightArrowKey.wasPressedThisFrame) return Vector2Int.right;
+            return Vector2Int.zero;
+        }
+
         void DoMove(Vector2Int dir)
         {
-            var beforePos = CapturePositions();
-            var beforeGoals = SatisfiedGoals();
+            CapturePositions(moveStartPositions);
+            CaptureSatisfiedGoals(goalsBeforeMove);
             int beforeTerrain = TerrainChangeCount();
             int beforeSunk = SunkCount();
             int beforeCollected = model.collected.Count;
@@ -461,6 +772,9 @@ namespace Parabox
                 return;
             }
 
+            // Only a successful PLAYER move starts the gameplay clock.
+            countdownArmed = true;
+
             SyncViews(false);
 
             // Squash every entity that actually moved, in the move direction.
@@ -468,12 +782,16 @@ namespace Parabox
             bool pushedSomething = false;
             foreach (var e in model.entities)
             {
-                if (!beforePos.TryGetValue(e, out var bp) || bp.room != e.roomId || bp.pos != e.pos)
+                if (!moveStartPositions.TryGetValue(e, out var bp) || bp.room != e.roomId || bp.pos != e.pos)
                 {
                     views[e].Squash(moveDir);
-                    if (!e.isPlayer) pushedSomething = true;
+                    if (e.IsCrate) pushedSomething = true;
                 }
             }
+            // Exactly one blink after every second successful logical player move. Because this is
+            // below TryMovePlayer's failure return, pushing into a wall never advances the cadence.
+            if (controlledPlayerBlinker != null)
+                controlledPlayerBlinker.BlinkOnSuccessfulMove(model.MoveCount);
             if (pushedSomething) Sfx.Push(); else Sfx.Move();
 
             // Sound the consequence, not every internal rule that participated in it. Priority
@@ -485,7 +803,7 @@ namespace Parabox
                                  || model.GatesOpen() != beforeGates
                                  || model.HeavyGatesOpen() != beforeHeavyGates
                                  || model.LocksOpen() != beforeLocks;
-            var playerBefore = beforePos[model.player];
+            var playerBefore = moveStartPositions[model.player];
             bool travelled = playerBefore.room != model.player.roomId
                              || Mathf.Abs(playerBefore.pos.x - model.player.pos.x)
                                 + Mathf.Abs(playerBefore.pos.y - model.player.pos.y) > 1;
@@ -496,10 +814,10 @@ namespace Parabox
             if (travelled) Sfx.RoomShift();
 
             // Celebrate every target that just became satisfied.
-            var afterGoals = SatisfiedGoals();
-            foreach (var kv in afterGoals)
+            CaptureSatisfiedGoals(goalsAfterMove);
+            foreach (var kv in goalsAfterMove)
             {
-                if (beforeGoals.ContainsKey(kv.Key)) continue;
+                if (goalsBeforeMove.ContainsKey(kv.Key)) continue;
                 var parent = roomRoots[kv.Key.room];
                 var localPos = Cell(model.rooms[kv.Key.room], new Vector2Int(kv.Key.x, kv.Key.y));
                 Color col = kv.Value ? playerColor : boxColor;
@@ -509,21 +827,16 @@ namespace Parabox
             }
 
             UpdateHud();
-            // The tutorial replays the winning line, so it reaches both of these. It is a
-            // demonstration, not a run: it must not claim the level or spend the player's moves.
-            // Everything above this point — squash, push sound, the goal burst — is exactly what
-            // the demo exists to show, which is why it goes through DoMove rather than around it.
-            if (demoMove) return;
             if (model.IsWon()) { Win(); return; }
+            if (timeLeft <= 0f) { TimeUp(); return; }
             // solving ON the last move must still count as a win — hence the early return above
             if (MovesLeft <= 0) OutOfMoves();
         }
 
-        Dictionary<PEntity, (int room, Vector2Int pos)> CapturePositions()
+        void CapturePositions(Dictionary<PEntity, (int room, Vector2Int pos)> target)
         {
-            var d = new Dictionary<PEntity, (int room, Vector2Int pos)>();
-            foreach (var e in model.entities) d[e] = (e.roomId, e.pos);
-            return d;
+            target.Clear();
+            foreach (var e in model.entities) target[e] = (e.roomId, e.pos);
         }
 
         int TerrainChangeCount()
@@ -542,32 +855,54 @@ namespace Parabox
         }
 
         // Every currently-satisfied target, keyed by cell; value = true if it's a player goal.
-        Dictionary<(int room, int x, int y), bool> SatisfiedGoals()
+        void CaptureSatisfiedGoals(Dictionary<(int room, int x, int y), bool> target)
         {
-            var d = new Dictionary<(int, int, int), bool>();
+            target.Clear();
             foreach (var room in model.rooms.Values)
             {
                 foreach (var g in room.boxGoals)
                 {
                     var e = model.EntityAt(room.id, g);
-                    if (e != null && !e.isPlayer) d[(room.id, g.x, g.y)] = false;
+                    if (e != null && !e.isPlayer) target[(room.id, g.x, g.y)] = false;
                 }
                 foreach (var g in room.playerGoals)
                 {
                     var e = model.EntityAt(room.id, g);
-                    if (e != null && e.isPlayer) d[(room.id, g.x, g.y)] = true;
+                    if (e != null && e.isPlayer) target[(room.id, g.x, g.y)] = true;
                 }
             }
-            return d;
         }
 
         // -------------------------------------------------- view construction
         // Delegates to the shared BoardRenderer so the main menu renders the IDENTICAL board.
         Transform boardRoot;   // the rendered board — kept so the lose sequence can tear it apart
+        Blinker controlledPlayerBlinker;
 
         void BuildView()
         {
-            boardRoot = BoardRenderer.Render(model, BuildAssets(), roomRoots, views, tiles);
+            // BoardRenderer applies the approved cabinet palette to this concrete asset set.
+            // Keep the resulting colours as the gameplay source of truth too, so goal bursts,
+            // focus effects and discovery presentation cannot drift back to serialized themes.
+            BoardAssets renderedAssets = BuildAssets();
+            boardRoot = BoardRenderer.Render(model, renderedAssets, roomRoots, views, tiles);
+            roomColors = renderedAssets.roomColors;
+            boxColor = renderedAssets.boxColor;
+            playerColor = renderedAssets.playerColor;
+            wallColor = renderedAssets.wallColor;
+            gridColor = renderedAssets.gridColor;
+            frameColor = renderedAssets.frameColor;
+            gutterColor = renderedAssets.gutterColor;
+            controlledPlayerBlinker = views.TryGetValue(model.player, out var playerView)
+                && playerView != null
+                ? playerView.GetComponent<Blinker>()
+                : null;
+            focusRenderers = boardRoot != null
+                ? boardRoot.GetComponentsInChildren<Renderer>(true)
+                : null;
+            focusedRoomId = int.MinValue;
+            hiddenDiscovery = GetComponent<HiddenDiscoveryFx>();
+            if (hiddenDiscovery == null) hiddenDiscovery = gameObject.AddComponent<HiddenDiscoveryFx>();
+            hiddenDiscovery.Configure(levelIndex, model, roomRoots, views, roomColors, cameraFollow);
         }
 
         BoardAssets BuildAssets() => new BoardAssets
@@ -736,8 +1071,14 @@ namespace Parabox
             foreach (var kv in tiles.locks) Show(kv.Value, !unlocked);
 
             var playerRoom = model.rooms[model.player.roomId];
+            if (hiddenDiscovery != null) hiddenDiscovery.Refresh();
             FocusRoom(playerRoom.id);
-            cameraFollow.SetTargetRoom(roomRoots[playerRoom.id], playerRoom.width, playerRoom.height, instant);
+            // The active nested room lives inside a larger coloured meta-box shell. Frame both,
+            // not just the miniature room geometry, so the shell remains completely visible like
+            // a playable room-container instead of becoming cropped cyan bands at screen edges.
+            float nestedFraming = playerRoom.id == 0 ? 1f : 1.45f;
+            cameraFollow.SetTargetRoom(roomRoots[playerRoom.id], playerRoom.width,
+                playerRoom.height, instant, nestedFraming);
         }
 
         // Keep the complete recursive board rendered during room transitions. Only simplify the
@@ -748,15 +1089,26 @@ namespace Parabox
             if (boardRoot == null || !roomRoots.TryGetValue(roomId, out var activeRoot) || activeRoot == null)
                 return;
 
+            if (focusedRoomId == roomId && focusedCinematic == cinematic) return;
+            focusedRoomId = roomId;
+            focusedCinematic = cinematic;
+
             roomRoots.TryGetValue(0, out var mainRoot);
 
-            // During the cinematic only, isolate the room the demonstrated player entered so the
-            // tiny action is readable inside the tutorial video. In real gameplay every room stays
-            // rendered; entering a box must never make the outer board pop out of existence.
-            bool tutorialCloseUp = cinematic && roomId != 0;
-            foreach (var sr in boardRoot.GetComponentsInChildren<SpriteRenderer>(true))
+            // A nested room becomes the current playable board. Isolate it from the huge outer
+            // board during the zoom, but retain its immediate Frame + Backing so the player always
+            // sees the coloured box they entered. This is the visual grammar of a room inside a
+            // room; ancestor boards otherwise become giant cyan strips around the close-up.
+            bool nestedCloseUp = roomId != 0;
+            Transform immediateBox = nestedCloseUp ? activeRoot.parent : null;
+            if (focusRenderers == null)
+                focusRenderers = boardRoot.GetComponentsInChildren<Renderer>(true);
+            foreach (var sr in focusRenderers)
             {
-                bool visible = !tutorialCloseUp || sr.transform.IsChildOf(activeRoot);
+                if (sr == null) continue;
+                bool visible = !nestedCloseUp
+                    || sr.transform.IsChildOf(activeRoot)
+                    || IsImmediateRecursiveBoxShell(sr.transform, immediateBox);
 
                 // A nested room's perimeter is already enforced by the model. Its wall sprites
                 // collapse into four oversized blocks when that room is enlarged for play, so keep
@@ -764,12 +1116,12 @@ namespace Parabox
                 Transform owner = OwningRoomRoot(sr.transform);
                 if (visible && owner != null && owner != mainRoot && IsBoundaryWall(sr.transform, owner))
                     visible = false;
-                // Once a nested room is active, its ancestor meta-box frame and anchored marker
-                // become a giant ring plus four dark bars over the play area. Hide only chrome on
-                // enclosing boxes; boxes inside the active room stay fully readable.
+                // The enclosing room shell stays visible during entry, so the player can always
+                // understand that they are playing inside a coloured box. Only old decorative
+                // chrome is removed; the backing and frame now form the active room's bezel.
                 if (visible && IsEnclosingRecursiveBoxChrome(sr.transform, activeRoot))
                     visible = false;
-                if (visible && IsRecursiveBoxBacking(sr.transform))
+                if (visible && IsPlayerContainerLegacyChrome(sr.transform))
                     visible = false;
 
                 if (sr.enabled != visible) sr.enabled = visible;
@@ -790,19 +1142,47 @@ namespace Parabox
             return false;
         }
 
-        static bool IsRecursiveBoxBacking(Transform child)
+        static bool IsImmediateRecursiveBoxShell(Transform child, Transform immediateBox)
         {
-            if (child == null || (child.name != "Backing" && child.name != "Shadow")) return false;
-            var box = child.parent;
-            return box != null && box.Find("Frame") != null && box.Find("Backing") != null;
+            if (child == null || immediateBox == null) return false;
+            Transform owner = RecursiveBoxOwner(child);
+            return owner == immediateBox && (child.name == "Frame" || child.name == "Backing"
+                || child.name == "NestedShellHighlightTop"
+                || child.name == "NestedShellHighlightLeft"
+                || child.name.StartsWith("NestedDoorwayFloor_")
+                || child.name.StartsWith("NestedDoorwayMask_"));
+        }
+
+        // The special player-container owns a purpose-built portal skin. Its inherited meta-box
+        // frame and drop shadow form the dark lid, side rails and base that made it look like a
+        // trash can, so keep only those two legacy renderers hidden in normal room previews.
+        static bool IsPlayerContainerLegacyChrome(Transform child)
+        {
+            if (child == null || (child.name != "Frame" && child.name != "Shadow")) return false;
+            var box = RecursiveBoxOwner(child);
+            return box != null && box.Find("PlayerContainerSkin") != null;
         }
 
         static bool IsEnclosingRecursiveBoxChrome(Transform child, Transform activeRoot)
         {
             if (child == null || activeRoot == null) return false;
-            if (child.name != "Frame" && child.name != "Bar") return false;
-            var box = child.parent;
-            return box != null && box.Find("Backing") != null && activeRoot.IsChildOf(box);
+            var box = RecursiveBoxOwner(child);
+            if (box == null || !activeRoot.IsChildOf(box)) return false;
+
+            // Preserve Frame + Backing as the coloured active-room bezel. Shadows, old anchor bars
+            // and the legacy player-container decoration are exterior details that should not be
+            // magnified over the playable interior.
+            var skin = box.Find("PlayerContainerSkin");
+            return child.name == "Shadow" || child.name == "Bar"
+                || (skin != null && child.IsChildOf(skin));
+        }
+
+        static Transform RecursiveBoxOwner(Transform child)
+        {
+            for (var t = child != null ? child.parent : null; t != null; t = t.parent)
+                if (t.Find("Frame") != null && t.Find("Backing") != null)
+                    return t;
+            return null;
         }
 
         // SetActive is not free when it churns a subtree, so only touch it on an actual change.
@@ -846,6 +1226,37 @@ namespace Parabox
             if (th.cellLift > 0.001f) cellLift = th.cellLift;
             floorTex = th.floorTex;
             floorTexTint = th.floorTexTint;
+        }
+
+        void ConfigureChapterPresentation(int chapter)
+        {
+            if (cameraFollow == null) return;
+
+            CameraBackdrop chapterBackdrop = cameraFollow.GetComponentInChildren<CameraBackdrop>(true);
+            if (chapterBackdrop != null) chapterBackdrop.Apply(chapter);
+
+            AmbientParticles ambient = cameraFollow.GetComponentInChildren<AmbientParticles>(true);
+            if (ambient != null)
+            {
+                // Pass the selected level explicitly: editor previews do not overwrite the player's
+                // saved campaign level, and their atmosphere must still match the board on screen.
+                ambient.SetChapter(chapter);
+                ambient.gameObject.SetActive(true);
+            }
+        }
+
+        static void ConfigureChapterArrival(CameraFollow follow, int chapter)
+        {
+            // The same clean zoom language is retained, but its pace/depth grows with the campaign:
+            // calm foundation, deeper systems, then a deliberate final-chapter approach.
+            switch (Mathf.Clamp(chapter, 0, 4))
+            {
+                case 0: follow.introDur = 0.88f; follow.introZoomOut = 3.6f; break;
+                case 1: follow.introDur = 1.02f; follow.introZoomOut = 4.2f; break;
+                case 2: follow.introDur = 1.16f; follow.introZoomOut = 5.0f; break;
+                case 3: follow.introDur = 1.30f; follow.introZoomOut = 5.8f; break;
+                default: follow.introDur = 1.46f; follow.introZoomOut = 6.7f; break;
+            }
         }
 
         // A lightened rim outline around a piece's fill sprite — a premium, layered look.
@@ -895,11 +1306,21 @@ namespace Parabox
             UpdateScoreHud();
         }
 
+        #if UNITY_EDITOR
         void BuildScoreHud()
         {
             if (scoreRoot != null) return;
             Transform parent = timerRoot != null ? timerRoot.parent
                 : movesLabel != null ? movesLabel.transform.parent : transform;
+
+            Transform existing = parent != null ? parent.Find("ScorePanel") : null;
+            if (existing != null)
+            {
+                scoreRoot = existing as RectTransform;
+                scoreLabel = existing.GetComponentInChildren<Text>(true);
+                if (scoreRoot != null && scoreLabel != null) return;
+                Object.DestroyImmediate(existing.gameObject);
+            }
 
             var root = new GameObject("ScorePanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             scoreRoot = (RectTransform)root.transform;
@@ -947,8 +1368,10 @@ namespace Parabox
             scoreLabel.raycastTarget = false;
             scoreLabel.supportRichText = true;
             scoreLabel.lineSpacing = 0.82f;
+            CrispUiTypography.Polish(scoreLabel);
             scoreRoot.SetAsLastSibling();
         }
+        #endif
 
         void UpdateScoreHud()
         {
@@ -970,6 +1393,7 @@ namespace Parabox
             bool newBest = moves < prevBest;
             int best = Mathf.Min(moves, prevBest);
             PlayerPrefs.SetInt(BestKey(levelIndex), best);
+            PlayerPrefs.SetInt(SessionClearKey(levelIndex), 1);
 
             int runScore = ScoreSystem.Calculate(levelIndex, par, moves, moveLimit, timeLeft);
             ScoreSystem.Award scoreAward = ScoreSystem.RecordBest(
@@ -996,15 +1420,22 @@ namespace Parabox
                     winStats.text += "\nAll levels complete — thanks for playing!";
             }
 
-            var label = nextButton.GetComponentInChildren<Text>();
-            if (label != null) label.text = last ? "Play Again" : "Next Level";
+            Text nextLabel = nextButton != null
+                ? nextButton.GetComponentInChildren<Text>(true) : null;
+            if (nextLabel != null)
+                nextLabel.text = last ? "PLAY AGAIN" : "NEXT LEVEL";
 
             // Finishing the whole game is not the same event as finishing a level, so it does not
             // get the same panel. The finale takes the screen over entirely; the ordinary win UI
             // never appears.
-            if (last && allDone) { StartCoroutine(FinaleSequence()); return; }
+            if (last && allDone)
+            {
+                finaleSequenceActive = true;
+                StartCoroutine(FinaleSequence());
+                return;
+            }
 
-            StartCoroutine(WinSequence(last));
+            StartCoroutine(WinSequence());
         }
 
         // The completion, staged. The old version fired the burst on the same frame as the last
@@ -1014,7 +1445,7 @@ namespace Parabox
         //   beat 2  the burst + camera punch, and an energy pulse travelling through the board
         //   beat 3  you sit with the solved board while the pulse crosses it
         //   beat 4  hand off to the map, where the progression actually plays out
-        System.Collections.IEnumerator WinSequence(bool last)
+        System.Collections.IEnumerator WinSequence()
         {
             Sfx.Win();
 
@@ -1052,14 +1483,9 @@ namespace Parabox
             t = 0f;
             while (t < 1.5f) { t += Time.unscaledDeltaTime; yield return null; }
 
-            // ---- 4. the finale gets its own, much longer ending -------------------------
-            if (last)
-            {
-                yield return Finale();
-                yield break;
-            }
-
-            // ---- 4b. out to the map ------------------------------------------------------
+            // ---- 4. out to the map -------------------------------------------------------
+            // Campaign completion is handled only by FinaleSequence after AllLevelsBeaten has
+            // succeeded. Reaching Level 50 directly must never manufacture a completed campaign.
             // No panel and no Next button: the reward is watching your route light up, so the
             // map IS the completion screen. It opens focused on what you just unlocked.
             PlayerPrefs.SetInt("Parabox.JustBeat", levelIndex);
@@ -1257,32 +1683,48 @@ namespace Parabox
                 hudGroup.blocksRaycasts = false;
             }
 
-            var canvas = winPanel != null ? winPanel.GetComponentInParent<Canvas>()
-                                          : FindAnyObjectByType<Canvas>();
-            if (canvas == null) yield break;    // nothing to draw on — leave the board be
+            if (finaleOverlay == null || !finaleOverlay.IsFullyPrebuilt)
+            {
+                Debug.LogError("[Parabox] Finale is not prebuilt. Run Tools/Parabox/Generate Prebuilt UI (Run This).");
+                yield break;
+            }
 
-            var font = winTitle != null ? winTitle.font
-                                        : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            finaleOverlay.Play(
+                onAgain: () =>
+                {
+                    ResetCampaignForReplay();
+                    SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+                },
+                onLevels: () =>
+                {
+                    ResetCampaignForReplay();
+                    ReturnToLevels();
+                },
+                levels: levelPrefabs.Length,
+                totalMoves: TotalMovesAcrossRun());
+        }
 
-            FinaleFx.Build(canvas, font, glowSprite, cellSprite,
-                           onAgain: () =>
-                           {
-                               for (int i = 0; i < levelPrefabs.Length; i++)
-                                   PlayerPrefs.DeleteKey(BestKey(i));
-                               PlayerPrefs.SetInt(LevelKey, 0);
-                               PlayerPrefs.Save();
-                               LuxoddGameService.SyncProgress();
-                               SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
-                           },
-                           onLevels: ReturnToLevels,
-                           levels: levelPrefabs.Length,
-                           totalMoves: TotalMovesAcrossRun());
+        // A completed campaign becomes a completely fresh run when the player leaves the finale:
+        // level 1 available, levels 2-50 locked, no previous best moves and a zero total score.
+        void ResetCampaignForReplay()
+        {
+            for (int i = 0; i < levelPrefabs.Length; i++)
+            {
+                PlayerPrefs.DeleteKey(SessionClearKey(i));
+                PlayerPrefs.DeleteKey(BestKey(i));
+            }
+            ScoreSystem.Reset(levelPrefabs.Length);
+            PlayerPrefs.SetInt(LevelKey, 0);
+            PlayerPrefs.DeleteKey("Parabox.JustBeat");
+            PlayerPrefs.DeleteKey("Parabox.FinalRun");
+            PlayerPrefs.Save();
+            LuxoddGameService.SyncProgress();
         }
 
         bool AllLevelsBeaten()
         {
             for (int i = 0; i < levelPrefabs.Length; i++)
-                if (!PlayerPrefs.HasKey(BestKey(i))) return false;
+                if (!PlayerPrefs.HasKey(SessionClearKey(i))) return false;
             return true;
         }
 
@@ -1299,13 +1741,10 @@ namespace Parabox
         // -------------------------------------------------- timer
         void TickTimer()
         {
-            if (Ended) return;
+            if (Ended || !countdownArmed) return;
             timeLeft -= Time.deltaTime;
             if (timeLeft <= 0f)
-            {
-                timeLeft = 0f;
                 TimeUp();
-            }
         }
 
         // All timer visuals in one place: intro fade + scale-in, a per-second "tick" pop,
@@ -1332,13 +1771,15 @@ namespace Parabox
             tickBump = Mathf.MoveTowards(tickBump, 0f, Time.unscaledDeltaTime * 4f);
             if (timerLabel != null) timerLabel.transform.localScale = Vector3.one * (1f + tickBump * 0.16f);
 
-            bool danger = timeLeft <= 5f && !Ended;
-            if (timerFill != null)
-            {
-                timerFill.fillAmount = timeLimit > 0f ? Mathf.Clamp01(timeLeft / timeLimit) : 0f;
-                float danger01 = danger ? Mathf.Clamp01((5f - timeLeft) / 5f) : 0f;
-                timerFill.color = Color.Lerp(timerAccentCur, TimerWarn, danger01);
-            }
+        // Turn the visible countdown red as soon as it reaches 5 seconds.
+        bool danger = secs > 0 && secs <= 5 && !Ended;
+        if (timerLabel != null)
+            timerLabel.color = danger ? TimerWarn : Color.white;
+        if (timerFill != null)
+        {
+            timerFill.fillAmount = timeLimit > 0f ? Mathf.Clamp01(timeLeft / timeLimit) : 0f;
+            timerFill.color = danger ? TimerWarn : timerAccentCur;
+        }
 
             float pulse = danger
                 ? 1f + Mathf.Sin(Time.unscaledTime * 4.2f) * 0.05f    // slow, smooth — never a flash
@@ -1368,158 +1809,119 @@ namespace Parabox
             ShowLose("OUT OF MOVES", $"0 / {moveLimit} MOVES LEFT");
         }
 
-        // ================================================= level-1 onboarding (cinematic)
+        // ============================================ chapter-start onboarding (cinematic)
         //
-        // A dedicated cinematic, not an overlay on gameplay. The entire HUD is hidden, the screen is
-        // letterboxed, and the camera does real choreography over the board while the level plays its
-        // own solver-proven solve. Then three options; "Try It Yourself" retracts the letterbox,
-        // reveals the HUD and settles the camera into the playable board — all in-scene, so gameplay
-        // begins with no load and no cut. Runs on level 1 only, first time only.
+        // A dedicated mechanic cinematic, not an overlay on gameplay. The entire HUD is hidden and
+        // a small prebuilt vignette demonstrates only the new rule. It never plays the current board
+        // or reads its solution. "Try It Yourself" then reveals the untouched puzzle in-scene.
         public const string TutorialKey = "Parabox.Tutorial.Seen";
+        // The versioned prefix invalidates older solution replays and abstract rule cards. Existing
+        // players receive each spoiler-free gameplay mini-board once after a presentation upgrade.
+        const string MechanicBriefingPrefix = TutorialVideoVersion.MechanicSeenPrefix;
+        public static string MechanicBriefingKey(int levelIndex)
+            => MechanicBriefingPrefix + Mathf.Clamp(levelIndex, 0, 49);
         Coroutine _cine;
+        public int TutorialPlaybackSerial { get; private set; }
         GameObject _goalGlow;
         RenderTexture _rt;                      // the board renders into this; the panel shows it
         const int RTW = 1280, RTH = 720;        // 16:9 — matches the panel so the board isn't distorted
         float RTAspect => RTW / (float)RTH;
 
-        // The level's proven-optimal move string, straight off the prefab (e.g. "DDL").
-        string CurrentSolution()
-        {
-            var info = levelPrefabs[levelIndex].GetComponent<ParaboxLevel>();
-            return info != null ? info.solution : "";
-        }
+        List<MechanicCatalog.Id> CurrentMechanicIntroductions()
+            => MechanicCatalog.IntroductionsAt(levelPrefabs, levelIndex);
 
-        // The first level of every chapter is a TEACHING level: the cinematic plays it out so the
-        // player SEES the new mechanic solved rather than reading about it. These openers are all
-        // deliberately trivial (par 2-4), so demonstrating them gives nothing away. Plays every time
-        // (the player can Skip / Try It Yourself), same as level 1.
-        // Chapter openers only — levels 1, 11, 21, 31, 41.
-        static bool IsTutorialLevel(int i) => i == 0 || i == 10 || i == 20 || i == 30 || i == 40;
-
-        // The one line shown while that chapter's mechanic is demonstrated.
-        static string TutorialLine(int i)
-        {
-            switch (i)
-            {
-                case 10: return "Currents carry you. Land on one and you keep going.";
-                case 20: return "Push a rock into a gap to bridge it.";
-                case 30: return "Step into a whirlpool — you come out its twin.";
-                case 40: return "Some boxes have a room inside. You can go in.";
-                default: return "Push the box onto the marker.";
-            }
-        }
-
+        // A tutorial belongs to the first appearance of a rule, not to a chapter number and not to
+        // a puzzle solution. The stored signature makes each lesson play once while allowing a
+        // changed curriculum or video format to introduce itself again.
         bool WillTutorial()
-            => tutorialFx != null && IsTutorialLevel(levelIndex)
-               && !string.IsNullOrEmpty(CurrentSolution());
+        {
+            if (tutorialFx == null || tutorialFx.mechanicDemo == null) return false;
+            List<MechanicCatalog.Id> introductions = CurrentMechanicIntroductions();
+            if (introductions.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(introductions)))
+                return false;
+            string signature = MechanicCatalog.Signature(introductions);
+            return PlayerPrefs.GetString(MechanicBriefingKey(levelIndex), string.Empty) != signature;
+        }
 
         void MaybeTutorial()
         {
-            if (!WillTutorial()) return;
-            _cine = StartCoroutine(TutorialCinematic());
+            if (WillTutorial())
+            {
+                mechanicBriefingSignature = MechanicCatalog.Signature(CurrentMechanicIntroductions());
+                _cine = StartCoroutine(TutorialCinematic());
+            }
         }
 
-        // The master timeline. Camera + board + panel, sequenced.
+        // Keep mechanic briefings visually clean. Earlier versions placed large cyan focus rings
+        // over the player, arrows and targets; at preview scale those overlays looked like duplicate
+        // lighting and obscured the underlying board art. The caption and untouched board already
+        // explain the mechanic, so there is no additional spotlight layer.
+        void CreateMechanicSpotlights(IReadOnlyList<MechanicCatalog.Id> introductions)
+        {
+            ClearMechanicSpotlights();
+        }
+
+        void ClearMechanicSpotlights()
+        {
+            if (mechanicSpotlightRoot != null) Destroy(mechanicSpotlightRoot);
+            mechanicSpotlightRoot = null;
+        }
+
+        // The master timeline. It renders only the prebuilt rule vignette. The current board stays
+        // frozen behind the scrim and its solution is never read, replayed or even partially shown.
         System.Collections.IEnumerator TutorialCinematic()
         {
+            TutorialPlaybackSerial++;
             cinematic = true;
-            var cam = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
-            if (cam == null || !RootFraming(out var c, out var scale, out int w, out int h))
+            if (tutorialFx != null)
             {
-                cinematic = false;                 // can't stage it — hand the board over unharmed
-                if (tutorialFx != null) tutorialFx.HideChoice();
+                // Repeat can re-enter this timeline while the end-choice panel is still visible.
+                // Reset every overlay synchronously before the first yielded frame so the replay
+                // unmistakably starts as a video instead of appearing to ignore the button.
+                tutorialFx.HideChoice();
+                tutorialFx.HideCaptionImmediately();
+                tutorialFx.HideMechanicDemoImmediately();
+                tutorialFx.SetTitle("NEW MECHANIC");
+                tutorialFx.HideMechanicBriefingImmediately();
+                tutorialFx.ShowSkip();
+            }
+            if (tutorialFx == null || tutorialFx.mechanicDemo == null)
+            {
+                cinematic = false;
+                if (tutorialFx != null) tutorialFx.HideSkip();
+                Debug.LogError("[Parabox] The prebuilt mechanic tutorial is missing. "
+                    + "Run Tools/Parabox/Generate Prebuilt UI (Run This).");
                 yield break;
             }
 
-            // dedicate the screen: suspend the HUD's own reveal, hide the HUD, take the camera
+            // Dedicate the display to the lesson while leaving the gameplay model untouched.
             if (hudReveal != null) hudReveal.StandDown();
             SetHud(0f, false);
             if (cameraFollow != null) cameraFollow.enabled = false;
 
-            // This whole block runs SYNCHRONOUSLY inside Start() (StartCoroutine runs up to the first
-            // yield immediately), i.e. BEFORE the first frame renders. So cover the screen instantly
-            // and redirect the board into the RenderTexture right now: the full-screen game board is
-            // never shown, and the tutorial panel opens DIRECTLY instead of "board appears → fades →
-            // panel". The bg camera keeps the display fed; the opaque scrim hides the switch.
-            if (tutorialFx != null) tutorialFx.CoverInstant();
-            EnsureRT();
-            cam.targetTexture = _rt;               // Unity sets cam.aspect to the RT's 16:9 automatically
-            if (tutorialBgCamera != null) tutorialBgCamera.enabled = true;   // keep the DISPLAY fed
-            if (tutorialFx != null) { tutorialFx.SetVideo(_rt); tutorialFx.PanelIn(); }
+            tutorialFx.CoverInstant();
+            tutorialFx.SetVideo(null);
+            tutorialFx.PanelIn(tutorialFromMainPlay ? 0.8f : 0.5f);
+            yield return WaitU(tutorialFromMainPlay ? 0.9f : 0.6f);
 
-            // framings for the PANEL aspect, centred: wide to establish, then closer through the solve
-            CameraFraming.Compute(c, scale, w, h, RTAspect, 1.5f, 0.12f, 0.12f, out var widePos, out var wideSize);
-            CameraFraming.Compute(c, scale, w, h, RTAspect, 1.12f, 0.12f, 0.12f, out var closePos, out var closeSize);
+            List<MechanicCatalog.Id> introductions = CurrentMechanicIntroductions();
+            if (introductions.Count == 0)
+                introductions.Add(MechanicCatalog.Id.Navigation);
 
-            // the card's own entrance is the reveal, so the board simply starts on the wide shot
-            cam.transform.position = widePos;
-            cam.orthographicSize = wideSize;
-            SpawnGoalGlow();                        // subtle breathing highlight on the objective
-            yield return WaitU(0.6f);
-
-            // one quiet line, then it plays itself
-            if (tutorialFx != null) yield return tutorialFx.Caption(TutorialLine(levelIndex));
-
-            // the solve: fire each proven move on a beat while the camera pushes in continuously,
-            // so the two motions read as one gesture rather than a slideshow
-            string sol = CurrentSolution();
-            float gap = 0.62f;
-            float solveDur = Mathf.Max(gap, sol.Length * gap);
-            int establishingRoom = model.player.roomId;
-            int fired = 0;
-            float t = 0f;
-            while (t < solveDur)
+            for (int i = 0; i < introductions.Count; i++)
             {
-                t += Time.unscaledDeltaTime;
-                float g = Mathf.Clamp01(t / solveDur);
-                while (fired < sol.Length && t >= fired * gap) TutorialStep(sol[fired++]);
-
-                // Before the recursive entry, slowly push toward the whole board. Once the demo
-                // enters a room-box, follow that room and enlarge it inside the tutorial panel.
-                // This close-up is deliberately cinematic-only; CameraFollow retains the normal
-                // full recursive hierarchy during actual gameplay.
-                if (model.player.roomId != establishingRoom &&
-                    TutorialRoomFraming(model.player.roomId, 1.08f, out var activePos, out var activeSize))
+                tutorialFx.SetTitle(introductions.Count > 1
+                    ? $"NEW MECHANIC  {i + 1}/{introductions.Count}"
+                    : "NEW MECHANIC");
+                yield return tutorialFx.PlayMechanicDemo(introductions[i]);
+                if (i + 1 < introductions.Count)
                 {
-                    float follow = 1f - Mathf.Exp(-5.5f * Time.unscaledDeltaTime);
-                    cam.transform.position = Vector3.Lerp(cam.transform.position, activePos, follow);
-                    cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, activeSize, follow);
+                    tutorialFx.HideMechanicDemoImmediately();
+                    yield return WaitU(0.18f);
                 }
-                else
-                {
-                    cam.transform.position = Vector3.Lerp(widePos, closePos, g);
-                    cam.orthographicSize = Mathf.Lerp(wideSize, closeSize, g);
-                }
-                yield return null;
-            }
-            while (fired < sol.Length) TutorialStep(sol[fired++]);   // guard: never drop a move
-            if (model.player.roomId != establishingRoom &&
-                TutorialRoomFraming(model.player.roomId, 1.08f, out var finalPos, out var finalSize))
-            {
-                cam.transform.position = finalPos;
-                cam.orthographicSize = finalSize;
-            }
-            else
-            {
-                cam.transform.position = closePos;
-                cam.orthographicSize = closeSize;
             }
 
-            yield return WaitU(1.2f);              // hold on the solved board
-            if (tutorialFx != null) yield return tutorialFx.ShowChoice();
-        }
-
-        // One demonstrated move, through the SAME function the arrow keys call, so the cinematic
-        // shows exactly the squash / push sound / goal burst the player is about to feel.
-        bool TutorialStep(char c)
-        {
-            Vector2Int d = c == 'U' ? Vector2Int.up : c == 'D' ? Vector2Int.down
-                         : c == 'L' ? Vector2Int.left : Vector2Int.right;
-            int before = model.MoveCount;
-            demoMove = true;
-            try { DoMove(d); }
-            finally { demoMove = false; }   // a throw must not leave Win() disabled for the session
-            return model.MoveCount > before;
+            yield return tutorialFx.ShowChoice();
         }
 
         // Chosen: play the level for real. Hand the screen back to the camera (while the scrim is
@@ -1527,13 +1929,22 @@ namespace Parabox
         // reveal the ready-to-play board — the panel closing IS the transition into gameplay.
         System.Collections.IEnumerator TutorialExitToPlay()
         {
-            if (tutorialFx != null) tutorialFx.HideChoice();
+            if (tutorialFx != null)
+            {
+                tutorialFx.HideChoice();
+                tutorialFx.HideSkip();
+            }
             ClearGoalGlow();
+            ClearMechanicSpotlights();
 
             var cam = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
             if (cam != null) { cam.targetTexture = null; cam.ResetAspect(); }   // draw to the SCREEN again
             if (tutorialBgCamera != null) tutorialBgCamera.enabled = false;      // the main camera has the display back
-            TutorialRewind();                    // resets the board AND snaps the camera to the gameplay pose
+            if (!TutorialRewind())
+            {
+                RecoverFromTutorialRewindFailure();
+                yield break;
+            }
 
             Coroutine fade = (tutorialFx != null) ? tutorialFx.FadeOutAll() : null;   // card + scrim dissolve
             float dur = 0.5f, t = 0f;
@@ -1547,32 +1958,114 @@ namespace Parabox
             if (cameraFollow != null) cameraFollow.enabled = true;   // resumes at the gameplay pose
             ReleaseRT();
 
+            CompleteTutorialExit();
+        }
+
+        void CompleteTutorialExit()
+        {
             timeLeft = timeLimit;                   // the demo cost no clock; the player starts fresh
+            countdownArmed = false;
             cinematic = false;                      // gameplay is live from here
-            PlayerPrefs.SetInt(TutorialKey, 1);     // once ever — set only on the way INTO play
+            tutorialExiting = false;
+            _cine = null;
+            FocusRoom(model.player.roomId);         // restore normal all-room visibility after close-up
+            if (!string.IsNullOrEmpty(mechanicBriefingSignature))
+            {
+                // Record the exact mechanic set only after the video closes and the player enters
+                // play. A changed curriculum therefore replays the new lesson without ever using
+                // puzzle progress as tutorial state.
+                PlayerPrefs.SetString(MechanicBriefingKey(levelIndex), mechanicBriefingSignature);
+                mechanicBriefingSignature = null;
+            }
+            PlayerPrefs.SetInt(TutorialKey, 1);
             PlayerPrefs.Save();
             LuxoddGameService.SyncProgress();
         }
 
         public void TutorialWatchAgain()
         {
+            tutorialExiting = false;
             if (_cine != null) StopCoroutine(_cine);
             if (tutorialFx != null) tutorialFx.HideChoice();
-            TutorialRewind();
+            if (!TutorialRewind())
+            {
+                RecoverFromTutorialRewindFailure();
+                return;
+            }
             ClearGoalGlow();
+            ClearMechanicSpotlights();
             _cine = StartCoroutine(TutorialCinematic());
         }
 
-        public void TutorialTryIt() { Sfx.Ding(); StartCoroutine(TutorialExitToPlay()); }
-        public void TutorialSkip()  { StartCoroutine(TutorialExitToPlay()); }
+        public void TutorialTryIt()
+        {
+            if (tutorialExiting) return;
+            tutorialExiting = true;
+            Sfx.Ding();
+            StartCoroutine(TutorialExitToPlay());
+        }
+
+        // Available for the complete duration of every walkthrough. Purple on a Luxodd cabinet
+        // and RB on a standard gamepad call here.
+        public void TutorialSkip()
+        {
+            if (!Tutoring || tutorialExiting) return;
+
+            if (_cine != null)
+            {
+                StopCoroutine(_cine);
+                _cine = null;
+            }
+
+            Sfx.Ding();
+            tutorialExiting = true;
+            ClearMechanicSpotlights();
+            StartCoroutine(TutorialExitToPlay());
+        }
 
         // Put the board back exactly as it was, replaying backwards through the same undo the player's
         // Z key uses — so the board they play cannot differ from the one they watched.
-        void TutorialRewind()
+        bool TutorialRewind()
         {
-            while (model.MoveCount > 0) model.Undo();
+            if (model == null) return false;
+
+            // Never use an open-ended "while moves remain" loop on Unity's main thread. If an
+            // authored mechanic ever leaves an undo snapshot inconsistent, the old loop could keep
+            // the opaque tutorial cover on screen forever and even prevent the Editor Stop button
+            // from running. The count captured here is the absolute maximum amount of work allowed.
+            int maximumUndos = model.MoveCount;
+            for (int i = 0; i < maximumUndos && model.MoveCount > 0; i++)
+            {
+                int before = model.MoveCount;
+                if (!model.Undo() || model.MoveCount >= before)
+                {
+                    Debug.LogError("[Parabox] Tutorial rewind did not make progress; reloading the level safely.");
+                    return false;
+                }
+            }
+            if (model.MoveCount != 0)
+            {
+                Debug.LogError("[Parabox] Tutorial rewind exceeded its safety bound; reloading the level safely.");
+                return false;
+            }
+            if (controlledPlayerBlinker != null) controlledPlayerBlinker.ResetOpen();
             SyncViews(true);
             UpdateHud();
+            return true;
+        }
+
+        void RecoverFromTutorialRewindFailure()
+        {
+            ClearGoalGlow();
+            ClearMechanicSpotlights();
+            ReleaseRT();
+            if (tutorialFx != null) tutorialFx.RevealGameplayImmediately();
+            if (cameraFollow != null) cameraFollow.enabled = true;
+            SetHud(1f, true);
+            cinematic = false;
+            if (model != null && model.player != null) FocusRoom(model.player.roomId);
+            tutorialExiting = false;
+            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
         }
 
         // ---- cinematic helpers -------------------------------------------------------------------
@@ -1588,6 +2081,7 @@ namespace Parabox
             return true;
         }
 
+        // Keep a nested/recursive room readable after the demonstrated player enters it.
         bool TutorialRoomFraming(int roomId, float padding, out Vector3 position, out float size)
         {
             position = Vector3.zero;
@@ -1716,49 +2210,87 @@ namespace Parabox
             // running; levels without it could fail silently.  This is now the single call site
             // for both TIME UP and OUT OF MOVES.
             Sfx.Death();
-
-            // the board comes apart in WORLD space, before any UI appears
-            var cam = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
-            BoardBreakFx.Play(cam, BoardCentre(), BoardShards(), glowSprite, ringSprite,
-                new[] { new Color(1f, 0.42f, 0.34f), new Color(1f, 0.66f, 0.33f), new Color(0.62f, 0.70f, 0.80f) });
+            PlayLoseBoardLight();
 
             if (loseFx != null)
             {
-                loseFx.Play(title, sub, RequestLossTransaction);
+                // Keep the board/model intact. LoseFx reveals the leaderboard, holds it for 3.5
+                // seconds, then asks this manager to launch Luxodd's official transaction.
+                loseFx.Play(title, sub, BeginLossTransaction);
                 return;
             }
-            // no LoseFx wired (wizard not re-run) — fall back to the old panel rather than
-            // silently leaving the player on a dead board with no way out
+            // Old-scene safety: even without LoseFx, never expose local post-loss choices.
             if (timeUpPanel != null) timeUpPanel.SetActive(true);
-            StartCoroutine(RequestLossTransactionAfter(5f));
+            StartCoroutine(BeginLossTransactionAfterDelay(3.5f));
         }
 
-        System.Collections.IEnumerator RequestLossTransactionAfter(float seconds)
+        System.Collections.IEnumerator BeginLossTransactionAfterDelay(float delay)
         {
-            float elapsed = 0f;
-            while (elapsed < seconds) { elapsed += Time.unscaledDeltaTime; yield return null; }
-            RequestLossTransaction();
+            while (delay > 0f)
+            {
+                delay -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+            BeginLossTransaction();
         }
 
-        void RequestLossTransaction()
+        void BeginLossTransaction()
         {
-            if (!Lost) return;
-            lossTransactionReady = true;
+            if (!Lost || lossTransactionRequested) return;
+            lossTransactionRequested = true;
             int totalScore = ScoreSystem.Total(levelPrefabs != null ? levelPrefabs.Length : 0);
             LuxoddGameService.RequestLossTransaction(levelIndex, totalScore, ContinueCurrentSession);
         }
 
-        // Paid Continue keeps the Luxodd game session alive but gives this puzzle a clean new
-        // attempt at the same level. The shattered board cannot safely be reconstructed in place,
-        // so a scene reload is the deterministic continuation owned by the game.
-        void ContinueCurrentSession()
+        void PlayLoseBoardLight()
         {
-            Sfx.Mechanic();
-            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+            // The win and lose reactions now share the same travelling cell-light system. A loss
+            // uses one quick coral-red wave; a win remains brighter and uses two waves.
+            StartCoroutine(ShakeBoardOnLose());
+            var fx = BoardWinFx.Play(BoardCentre(), FloorCells(), null,
+                new Color(1f, 0.30f, 0.32f, 1f), 1);
+            if (fx == null) return;
+            fx.speed = 11f;
+            fx.width = 2.4f;
+            fx.lift = 0.20f;
+            fx.waveGap = 0.4f;
+            fx.syncPieces = false;
+        }
+
+        System.Collections.IEnumerator ShakeBoardOnLose()
+        {
+            if (boardRoot == null) yield break;
+
+            Vector3 restPosition = boardRoot.localPosition;
+            Quaternion restRotation = boardRoot.localRotation;
+            const float duration = 0.32f;
+            const float distance = 0.10f;
+            const float angle = 0.65f;
+            float t = 0f;
+
+            while (t < duration && boardRoot != null)
+            {
+                t += Time.unscaledDeltaTime;
+                float k = Mathf.Clamp01(t / duration);
+                float strength = (1f - k) * (1f - k);
+                float x = Mathf.Sin(k * Mathf.PI * 9f) * distance * strength;
+                float y = Mathf.Sin(k * Mathf.PI * 13f + 0.7f) * distance * 0.45f * strength;
+                float z = Mathf.Sin(k * Mathf.PI * 7f) * angle * strength;
+                boardRoot.localPosition = restPosition + new Vector3(x, y, 0f);
+                boardRoot.localRotation = restRotation * Quaternion.Euler(0f, 0f, z);
+                yield return null;
+            }
+
+            if (boardRoot != null)
+            {
+                boardRoot.localPosition = restPosition;
+                boardRoot.localRotation = restRotation;
+            }
         }
 
         void ReturnToLevels()
         {
+            LuxoddGameService.AbandonLossTransaction();
             ReportLevelEndOnce();
             PlayerPrefs.SetInt(OpenLevelsKey, 1);
             PlayerPrefs.Save();
@@ -1767,11 +2299,43 @@ namespace Parabox
 
         void Restart()
         {
-            // Guarded on Tutoring, NOT on Ended: the lose panel's Retry button also calls this, and
-            // it fires exactly when Ended is true. The R key is already blocked during the demo, so
-            // without this the on-screen button could interrupt it while the keyboard could not.
+            // Restart remains available during ordinary play. Once a loss is terminal, recovery
+            // belongs exclusively to the delayed Luxodd transaction.
             if (Tutoring) return;
+            if (Lost) return; // loss recovery belongs exclusively to the Luxodd transaction
             ReportLevelEndOnce();
+            ReloadCurrentLevel();
+        }
+
+        // Luxodd Continue keeps this attempt alive. The model, positions, move count and undo
+        // history are intentionally untouched; only the terminal flags and failure overlay are
+        // cleared so Continue cannot behave like Restart.
+        void ContinueCurrentSession()
+        {
+            // Refill complete resources from the death position. The model and its undo stack are
+            // deliberately not parsed, reloaded, or rewound, so every body, crate, terrain state,
+            // collected key and room transition remains exactly where the player left it.
+            timeLimit = TimeLimitForLevel(levelIndex, par);
+            timeLeft = timeLimit;
+            countdownArmed = false;
+            moveLimit = model.MoveCount + MoveLimitForLevel(levelIndex, par);
+            timedUp = false;
+            outOfMoves = false;
+            lossTransactionRequested = false;
+            lastHeld = Vector2Int.zero;
+            nextRepeat = 0f;
+            tickBump = 0f;
+            lastSecond = -1;
+
+            if (timeUpPanel != null) timeUpPanel.SetActive(false);
+            if (loseFx != null) loseFx.DismissImmediate();
+            UpdateHud();
+            AnimateTimer();
+            Sfx.Mechanic();
+        }
+
+        void ReloadCurrentLevel()
+        {
             Sfx.Mechanic();
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
         }

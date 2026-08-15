@@ -30,12 +30,10 @@
     canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
 
-    const dpr = window.devicePixelRatio || 1;
-    const pxW = Math.floor(cssW * dpr);
-    const pxH = Math.floor(cssH * dpr);
-
-    if (canvas.width !== pxW) canvas.width = pxW;
-    if (canvas.height !== pxH) canvas.height = pxH;
+    // Unity owns the WebGL drawing-buffer dimensions. Changing canvas.width or
+    // canvas.height after the context is created clears the WebGL surface and
+    // can leave a permanent magenta screen in browsers. Only size the canvas
+    // through CSS here; Unity keeps the render target and hit testing aligned.
   }
 
   function LuxoddInstallViewportHandlers() {
@@ -121,20 +119,20 @@
       // way that non-critical warnings and error messages are presented to the
       // user.
       function unityShowBanner(msg, type) {
+        // Luxodd is a public arcade surface: routine Unity/connection warnings belong in the
+        // browser console, not in yellow debug ribbons over the game's real UI.
+        if (type != 'error') {
+          if (type == 'warning') console.warn(msg);
+          else console.log(msg);
+          return;
+        }
         function updateBannerVisibility() {
           warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
         }
         var div = document.createElement('div');
         div.innerHTML = msg;
         warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
+        div.style = 'background: #8e1f2d; color: white; padding: 10px;';
         updateBannerVisibility();
       }
 
@@ -167,7 +165,7 @@
       // Set this to false if you want to decouple this synchronization from
       // happening inside the engine, and you would instead like to size up
       // the canvas DOM size and WebGL render target sizes yourself.
-      config.matchWebGLToCanvasSize = false;
+      config.matchWebGLToCanvasSize = true;
 
 
 #if BACKGROUND_FILENAME

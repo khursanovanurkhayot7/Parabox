@@ -5,7 +5,8 @@ namespace Parabox
 {
     // A press-and-hold button for the on-screen d-pad: fires the instant it's pressed and keeps
     // firing while held, so tapping OR holding an arrow moves the player (like a real game pad).
-    // Added at runtime by GameManager to the d-pad buttons; works on Play, no wizard re-run needed.
+    // Serialized onto the d-pad buttons by the prebuilt-UI generator; GameManager only assigns the
+    // current movement callback when play begins.
     public class HoldRepeatButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
     {
         public System.Action onFire;

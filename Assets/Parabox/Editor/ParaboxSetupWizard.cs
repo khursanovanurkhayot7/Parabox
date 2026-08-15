@@ -12,6 +12,7 @@ using UnityEngine.UI;
 namespace Parabox.EditorTools
 {
     // ONE-TIME setup wizard (URP / WebGL, polished sprite look).
+    // Campaign definitions below are also the reproducible source for the mechanic-rich curriculum v4.
     // Run "Tools > Parabox > Create Everything (Run Once)".
     //
     // It sets up URP, generates rounded-rectangle sprites procedurally, builds
@@ -22,6 +23,7 @@ namespace Parabox.EditorTools
     // DO NOT delete Assets/Parabox/Scripts — the game needs it!
     public static class ParaboxSetupWizard
     {
+        const int CampaignRevision = 5;
         const string Root = "Assets/Parabox";
         const string SpriteDir = Root + "/Sprites";
         const string PrefabDir = Root + "/Prefabs";
@@ -72,6 +74,125 @@ namespace Parabox.EditorTools
         static Font s_font;     // optional drop-in font from Assets/Parabox/Fonts (else the default UI font)
         class Tiles { public GameObject floor, grid, border, wall, box, metaBox, player, boxGoal, playerGoal; }
 
+        [InitializeOnLoadMethod]
+        static void RunRequestedCampaignRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildCampaign.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateDifficultyOrderedCampaign();
+                var result = ParaboxCampaignValidator.ValidateCampaign();
+                string reportPath = Path.Combine(projectRoot, "Library", "ParaboxFullCurveValidation.txt");
+                File.WriteAllText(reportPath, result.report);
+                if (result.failures == 0) Debug.Log(result.report);
+                else Debug.LogError(result.report);
+            };
+        }
+
+        // Narrow, non-destructive rebuild hook used while iterating on the approved Chapter V.
+        // Keeping this separate from the full-campaign request prevents a Chapter V edit from
+        // touching the forty already-approved level prefabs.
+        [InitializeOnLoadMethod]
+        static void RunRequestedMasterRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildMaster.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateMasterLevels();
+                Debug.Log("Parabox: applied the Chapter V recursive-world rebuild request.");
+            };
+        }
+
+        // Focused finale rebuild. Playtest feedback on Level 50 must never force a reserialization
+        // of the other 49 approved boards, so the open editor consumes this request and replaces
+        // only the last prefab from the reproducible definition below.
+        [InitializeOnLoadMethod]
+        static void RunRequestedFinaleRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildFinale.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateFinaleSilent();
+                var result = ParaboxCampaignValidator.ValidateCampaign();
+                string reportPath = Path.Combine(projectRoot, "Library", "ParaboxFinaleValidation.txt");
+                File.WriteAllText(reportPath,
+                    $"failures={result.failures}\nwarnings={result.warnings}\n{result.report}");
+                if (result.failures == 0) Debug.Log(result.report);
+                else Debug.LogError(result.report);
+            };
+        }
+
+        // Narrow rebuild hook for the Chapter I learning curve. A request file lets the already
+        // open Unity editor regenerate only Levels 1-10 after scripts finish compiling; no second
+        // editor process and no destructive full-project rebake are required.
+        [InitializeOnLoadMethod]
+        static void RunRequestedChapterOneRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildChapterOne.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateChapterOneSilent();
+                var result = ParaboxCampaignValidator.ValidateCampaign();
+                if (result.failures == 0) Debug.Log(result.report);
+                else Debug.LogError(result.report);
+            };
+        }
+
+        // Narrow rebuild hook for the Chapter II systems curriculum. The request is handled by
+        // the already-open editor after scripts compile, avoiding both a project-lock conflict and
+        // any reserialization of the forty levels outside the requested chapter.
+        [InitializeOnLoadMethod]
+        static void RunRequestedChapterTwoRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildChapterTwo.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateChapterTwoSilent();
+                var result = ParaboxCampaignValidator.ValidateCampaign();
+                string reportPath = Path.Combine(projectRoot, "Library", "ParaboxChapterTwoValidation.txt");
+                File.WriteAllText(reportPath,
+                    $"failures={result.failures}\nwarnings={result.warnings}\n{result.report}");
+                if (result.failures == 0) Debug.Log(result.report);
+                else Debug.LogError(result.report);
+            };
+        }
+
+        // Narrow rebuild hook for Chapter III. The open editor consumes the request after scripts
+        // compile, rebuilds only Levels 21-30, and leaves a machine-readable full-campaign report.
+        [InitializeOnLoadMethod]
+        static void RunRequestedChapterThreeRebuild()
+        {
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string request = Path.Combine(projectRoot, "Library", "ParaboxRebuildChapterThree.request");
+            if (!File.Exists(request)) return;
+            File.Delete(request);
+            EditorApplication.delayCall += () =>
+            {
+                RegenerateChapterThreeSilent();
+                var result = ParaboxCampaignValidator.ValidateCampaign();
+                string reportPath = Path.Combine(projectRoot, "Library", "ParaboxChapterThreeValidation.txt");
+                File.WriteAllText(reportPath,
+                    $"failures={result.failures}\nwarnings={result.warnings}\n{result.report}");
+                if (result.failures == 0) Debug.Log(result.report);
+                else Debug.LogError(result.report);
+            };
+        }
+
         [MenuItem("Tools/Parabox/Create Everything (Run Once)")]
         public static void CreateEverything()
         {
@@ -115,8 +236,264 @@ namespace Parabox.EditorTools
                 "OK");
         }
 
+        [MenuItem("Tools/Parabox/Regenerate Difficulty-Ordered Campaign (1-50)")]
+        public static void RegenerateDifficultyOrderedCampaign()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) return;
+
+            var defs = Levels();
+            for (int i = 0; i < defs.Length; i++)
+            {
+                BuildLevelPrefab(i, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(48, defs[i].par + 24));
+                    Debug.Log($"Parabox: solved L{i + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"Parabox: regenerated all 50 levels in progressive difficulty order (revision {CampaignRevision}).");
+        }
+
+        // Refreshes curriculum fields without rebuilding a single room, marker or stored route.
+        // Use this when wording or first-appearance metadata changes after playtesting; keeping it
+        // separate from regeneration makes the safe operation explicit in CI and local recovery.
+        public static void RefreshCampaignMetadataFromCommandLine()
+        {
+            int updated = 0;
+            for (int index = 0; index < 50; index++)
+            {
+                string path = LevelDir + "/Level_" + (index + 1) + ".prefab";
+                GameObject root = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    ParaboxLevel info = root.GetComponent<ParaboxLevel>();
+                    if (info == null)
+                        throw new System.InvalidOperationException($"{path} has no ParaboxLevel component.");
+
+                    CampaignProgression.Profile progression = CampaignProgression.ForLevel(index);
+                    info.difficultyRating = progression.rating;
+                    info.chapter = progression.chapter;
+                    info.chapterName = progression.chapterName;
+                    info.chapterPhilosophy = progression.philosophy;
+                    info.progressionRole = progression.role;
+                    info.mechanicFocus = progression.mechanicFocus;
+                    info.introducesMechanic = progression.introducesMechanic;
+                    PrefabUtility.SaveAsPrefabAsset(root, path);
+                    updated++;
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(root);
+                }
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"Parabox: refreshed curriculum metadata on {updated}/50 level prefabs without rebuilding gameplay.");
+        }
+
         [MenuItem("Tools/Parabox/Regenerate Master Levels (41-50)")]
         public static void RegenerateMasterLevels()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) return;
+
+            var defs = Levels();
+            for (int i = 40; i < Mathf.Min(50, defs.Length); i++)
+            {
+                BuildLevelPrefab(i, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(48, defs[i].par + 24));
+                    Debug.Log($"Parabox: solved L{i + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated Master levels 41-50.");
+        }
+
+        // Rebuild just Level 50 after finale playtests. Keeping this public also gives designers a
+        // safe menu-independent automation entry point without disturbing levels 1-49.
+        public static void RegenerateFinaleSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            if (defs.Length < 50) throw new System.InvalidOperationException("Parabox finale definition is missing.");
+            BuildLevelPrefab(49, defs[49], tiles);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated only Level 50.");
+        }
+
+        // Authoring probe for Chapter V chamber iteration. It builds only the requested source
+        // definition in memory, asks the exact runtime solver for a route, and never touches a
+        // shipped prefab unless the designer later copies the proven route into the definition.
+        public static string ProbeChapterFiveLevel(int levelNumber, int maximumDepth = 90)
+        {
+            if (levelNumber < 41 || levelNumber > 50)
+                throw new System.ArgumentOutOfRangeException(nameof(levelNumber));
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            int index = levelNumber - 1;
+            string probePath = LevelDir + "/__ChapterFiveProbe.prefab";
+            AssetDatabase.DeleteAsset(probePath); // exact disposable authoring asset, never shipped
+            try
+            {
+                GameObject temporary = BuildLevelPrefab(index, defs[index], tiles, probePath);
+                string route = ParaboxCampaignSolver.FindShortest(
+                    temporary, 1, maximumDepth, 5000000);
+                if (route == null)
+                    throw new System.InvalidOperationException(
+                        $"No Level {levelNumber} route found by depth {maximumDepth}.");
+                Debug.Log($"Parabox probe L{levelNumber}: {route.Length} moves ({route}).");
+                return route;
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(probePath);
+            }
+        }
+
+        public static void ProbeChapterFiveFromCommandLine()
+        {
+            int level = 45;
+            string[] args = System.Environment.GetCommandLineArgs();
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (args[i] == "-paraboxLevel") int.TryParse(args[i + 1], out level);
+            ProbeChapterFiveLevel(level);
+        }
+
+        // Command-line safe rebuild for the Chapter III opening trio. Keeping this narrow avoids
+        // touching the other 47 approved prefabs while applying playtest difficulty feedback.
+        public static void RegenerateChapterThreeOpeningSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            for (int i = 20; i <= 22 && i < defs.Length; i++)
+                BuildLevelPrefab(i, defs[i], tiles);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated rebalanced Levels 21-23.");
+        }
+
+        // Command-line safe Chapter III rebuild. The solver stores the exact winning route for
+        // every redesigned synergy board while leaving the other forty prefabs untouched.
+        public static void RegenerateChapterThreeSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            for (int i = 20; i < Mathf.Min(30, defs.Length); i++)
+            {
+                BuildLevelPrefab(i, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(60, defs[i].par + 24));
+                    Debug.Log($"Parabox: solved Chapter III L{i + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated progressive Chapter III levels 21-30.");
+        }
+
+        // Command-line safe Chapter 1 rebuild used while iterating on the mixed-mechanic onboarding.
+        public static void RegenerateChapterOneSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            for (int i = 0; i < Mathf.Min(10, defs.Length); i++)
+            {
+                BuildLevelPrefab(i, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(48, defs[i].par + 24));
+                    Debug.Log($"Parabox: solved Chapter I L{i + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated progressive Chapter I levels 1-10.");
+        }
+
+        // Command-line safe Chapter II rebuild. This keeps playtest-driven ordering changes
+        // inside the Systems chapter without reserializing the other 40 approved prefabs.
+        public static void RegenerateChapterTwoSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = Levels();
+            for (int i = 10; i < Mathf.Min(20, defs.Length); i++)
+            {
+                BuildLevelPrefab(i, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(48, defs[i].par + 24));
+                    Debug.Log($"Parabox: solved Chapter II L{i + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated progressive Chapter II levels 11-20.");
+        }
+
+        // Chapter I deliberately uses only the core puzzle vocabulary. This migration removes the
+        // old conveyor/current and one-way arrow objects from the already-generated prefabs, while
+        // BuildLevelPrefab below makes the rule permanent for future campaign regenerations.
+        public static void RemoveChapterOneDirectionalMechanicsSilent()
+        {
+            int removed = 0;
+            for (int level = 1; level <= 10; level++)
+            {
+                string path = LevelDir + "/Level_" + level + ".prefab";
+                var root = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    foreach (var marker in root.GetComponentsInChildren<CurrentMarker>(true))
+                    {
+                        UnityEngine.Object.DestroyImmediate(marker.gameObject);
+                        removed++;
+                    }
+                    foreach (var marker in root.GetComponentsInChildren<OneWayMarker>(true))
+                    {
+                        UnityEngine.Object.DestroyImmediate(marker.gameObject);
+                        removed++;
+                    }
+
+                    PrefabUtility.SaveAsPrefabAsset(root, path);
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(root);
+                }
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"Parabox: removed {removed} directional arrow/current tiles from Levels 1-10.");
+        }
+
+        static Tiles LoadLevelTiles()
         {
             var tiles = new Tiles
             {
@@ -136,16 +513,9 @@ namespace Parabox.EditorTools
                 tiles.player == null || tiles.boxGoal == null || tiles.playerGoal == null)
             {
                 Debug.LogError("Parabox: one or more base tile prefabs are missing. Run Create Everything first.");
-                return;
+                return null;
             }
-
-            var defs = Levels();
-            for (int i = 40; i < Mathf.Min(50, defs.Length); i++)
-                BuildLevelPrefab(i, defs[i], tiles);
-
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            Debug.Log("Parabox: regenerated Master levels 41-50.");
+            return tiles;
         }
 
         // ================================================= URP pipeline
@@ -594,11 +964,14 @@ namespace Parabox.EditorTools
             player.AddComponent<EntityView>();
             SpriteChild("Shadow", player.transform, s.shadow, ShadowCol, OrderPlayer - 1, new Vector3(0f, ObjShadowY, 0f), V(ObjShadow));
             SpriteChild("Body", player.transform, s.shaded, PlayerColor, OrderPlayer, Vector3.zero, V(ObjSize));
-            var eyeL = SpriteChild("EyeL", player.transform, s.fill, EyeColor, OrderPlayer + 1, new Vector3(-0.162f, 0.067f, 0f), new Vector3(0.134f, 0.20f, 1f));
-            var eyeR = SpriteChild("EyeR", player.transform, s.fill, EyeColor, OrderPlayer + 1, new Vector3(0.162f, 0.067f, 0f), new Vector3(0.134f, 0.20f, 1f));
+            var eyeL = SpriteChild("EyeL", player.transform, s.fill, EyeColor, OrderPlayer + 1, new Vector3(-0.162f, 0.067f, 0f), new Vector3(0.16f, 0.22f, 1f));
+            var eyeR = SpriteChild("EyeR", player.transform, s.fill, EyeColor, OrderPlayer + 1, new Vector3(0.162f, 0.067f, 0f), new Vector3(0.16f, 0.22f, 1f));
             var blink = player.AddComponent<Blinker>();
             blink.eyeL = eyeL.transform;
             blink.eyeR = eyeR.transform;
+            blink.stepsPerBlink = 2;
+            blink.blinkTime = 0.16f;
+            blink.closedEyeScale = 0.06f;
             t.player = SavePrefab(player, PrefabDir + "/Player.prefab");
 
             // Goals — thick rounded outline in the target's color.
@@ -645,36 +1018,1450 @@ namespace Parabox.EditorTools
         //   # wall   . floor   P player   b box
         //   1..9 meta-box containing that room id
         //   x box goal   p player goal
-        class LevelDef { public string name; public string[][] rooms; public int par; public string solution; }
-
-        static LevelDef[] Levels() => new[]
+        class LevelDef
         {
-            new LevelDef { name = "Down the Chute", rooms = new[] { new[] { "#######", "#..P..#", "#..b..#", "#.._..#", "#.._..#", "#..x..#", "#.....#", "#######" } }, par = 1, solution = "D" },
-            new LevelDef { name = "Long Slide", rooms = new[] { new[] { "########", "#P.b__x#", "#......#", "########" } }, par = 2, solution = "RR" },
-            new LevelDef { name = "Take Aim", rooms = new[] { new[] { "#######", "#P....#", "#..b..#", "#.._..#", "#.._..#", "#..x..#", "#######" } }, par = 3, solution = "RRD" },
-            new LevelDef { name = "The Straight", rooms = new[] { new[] { "##########", "#P.b__..x#", "#........#", "##########" } }, par = 5, solution = "RRRRR" },
-            new LevelDef { name = "Ice Block", rooms = new[] { new[] { "######", "#P...#", "#.b__#", "#..__#", "#...x#", "######" } }, par = 6, solution = "DRRURD" },
-            new LevelDef { name = "Two Ways", rooms = new[] { new[] { "########", "#P.b__x#", "#..b...#", "#.._...#", "#.._...#", "#...x..#", "########" } }, par = 7, solution = "RRDDLDR" },
-            new LevelDef { name = "The Bend", rooms = new[] { new[] { "#######", "#..P..#", "#..b..#", "#.._..#", "#..__x#", "#.....#", "#######" } }, par = 8, solution = "LDRRURDD" },
-            new LevelDef { name = "Long Bend", rooms = new[] { new[] { "#######", "#.P...#", "#.b...#", "#._...#", "#.___x#", "#.....#", "#######" } }, par = 9, solution = "LDRRRURDD" },
-            new LevelDef { name = "Aim It", rooms = new[] { new[] { "########", "#Pb__.x#", "#..__..#", "#..b..x#", "#......#", "########" } }, par = 9, solution = "RRRLDDRRR" },
-            new LevelDef { name = "Cold Finish", rooms = new[] { new[] { "########", "#P.b_.x#", "#......#", "#..b_.x#", "#......#", "########" } }, par = 11, solution = "RRRRLLDDRRR" },
-            new LevelDef { name = "The Drift", rooms = new[] { new[] { "##########", "#P.ddddd.#", "#.######.#", "#.######.#", "#.......p#", "##########" } }, par = 5, solution = "RRDDD" },
-            new LevelDef { name = "The Geyser", rooms = new[] { new[] { "########", "#P*~...#", "#####.##", "#......#", "#.....p#", "########" } }, par = 6, solution = "RRDDRD" },
-            new LevelDef { name = "Against the Flow", rooms = new[] { new[] { "#######", "#P.<.p#", "#.###.#", "#.....#", "#######" } }, par = 8, solution = "DDRRRRUU" },
-            new LevelDef { name = "The Shell Switch", rooms = new[] { new[] { "#########", "#P.b...B#", "#####G###", "#...p...#", "#########" } }, par = 9, solution = "RRRRRLDDL" },
-            new LevelDef { name = "Dead Weight", rooms = new[] { new[] { "##########", "#P.b....W#", "#####H####", "#....p...#", "##########" } }, par = 10, solution = "RRRRRRLLDD" },
-            new LevelDef { name = "Deep Water", rooms = new[] { new[] { "#######", "#..P..#", "#..b..#", "#,.,,,#", "#...x.#", "#######" } }, par = 11, solution = "RDLULDDLDRR" },
-            new LevelDef { name = "The Pearl", rooms = new[] { new[] { "#########", "#P....k.#", "#.#####.#", "#.......#", "####K####", "###.p.###", "#########" } }, par = 13, solution = "RRRRRRDDLLLDD" },
-            new LevelDef { name = "Through the Kelp", rooms = new[] { new[] { "#########", "#P......#", "#..b....#", "#.%%%%..#", "#..xp...#", "#########" } }, par = 14, solution = "RDRRRURDDRDLLL" },
-            new LevelDef { name = "No Way Back", rooms = new[] { new[] { "#######", "#Pp...#", "###c#.#", "#.....#", "#.b.x.#", "#.....#", "#######" } }, par = 17, solution = "RRRRDDLLLLDRRUUUL" },
-            new LevelDef { name = "Undertow", rooms = new[] { new[] { "###########", "#.........#", "#P.b......#", "#%%%%%%%..#", "#B........#", "#.dddddd..#", "########G##", "#.......p.#", "###########" } }, par = 22, solution = "RRRRRRURDDRDLLLLLLLDDD" },
+            public string name;
+            public string[][] rooms;
+            public int par;
+            public string solution;
+            public int authoredOrder;
+            public int designComplexity;
+        }
+
+        // Explicit player-facing curriculum. A heuristic may measure an authored board, but it may
+        // never decide teaching order: a long corridor is not automatically harder than a short
+        // dependency puzzle. Keeping the order named and reviewable also means playtest feedback
+        // such as "Level 12 feels easier than Level 11" can be fixed intentionally and permanently.
+        static readonly string[] CurriculumOrder =
+        {
+            "The Right Way", "First Push", "Set Up the Push", "Ice Inside", "Bridge the Gap",
+            "Open the Gate", "Weight Matters", "Deep Crossing", "Pearl Lock", "Recursive Turn",
+
+            "The Drift", "The Geyser", "Against the Arrow", "Dead Weight", "Deep Water",
+            "Pearl Pair", "The Shell Switch", "Through the Kelp", "No Way Back", "Undertow",
+
+            "Too Narrow", "Slippery Cargo", "Break Through", "Throw the Switch", "Off Beat",
+            "Get a Run-Up", "Down the Well", "Your Shadow", "Colour Coded", "The Machine",
+
+            "Wrong Chimney", "Facing Away", "One Way In", "Carried Past", "Magnetic Relay",
+            "Set in Stone", "Nothing to Brace", "Opposite Numbers", "Two of Us", "The Undertow",
+
+            // The chamber finale is deliberately ordered by dependency depth rather than source
+            // order. Every new chamber rule is first readable on its own, then combined, and the
+            // final three boards require several previously learned systems at once.
+            "Switch Chamber", "Boulder Chamber", "Pearl Chamber", "Pulse Chamber", "One-Way Chamber",
+            "Weight Chamber", "Latch Chamber", "Coral Chamber", "Undertow Chamber", "The Machine Within"
+        };
+
+        // The first forty boards are drawn from the authored mechanic lessons above, but their
+        // player-facing order is determined by real puzzle evidence: route depth, turns, objects,
+        // targets, mechanic interactions and irreversible dependencies. This list is deliberately
+        // explicit so playtest feedback changes a reviewed curriculum rather than a hidden sort.
+        static readonly string[] FirstFortyDifficultyOrder =
+        {
+            "Read the Route", "Arrow and Push", "Deep Route", "Cargo Holds the Route", "Line Up the Break",
+            "Wrong Chimney", "Slide to Open", "Make a Bridge", "Carried Past", "One Way In",
+
+            "Facing Away", "Pearl Crossing", "Magnetic Relay", "Echo Relay", "Nothing to Brace",
+            "Set in Stone", "Foundations Circuit", "Opposite Numbers", "Two Kinds of Gate", "Colour Logistics",
+
+            "Two of Us", "Two-Stage Switch", "Geyser Workshop", "Cargo Reversal", "Synergy Engine",
+            "Systems Engine", "The Undertow", "Kelp Detour", "Weight Transfer", "Demolition Order",
+
+            "The Last Crossing", "Arrow Relay", "Gravity Transfer", "Narrow Relay", "Twin Pearl Circuit",
+            "Corner Charge", "Dry Channel", "Latched Delivery", "Freight on Ice", "Pulse Relay"
+        };
+
+        static LevelDef[] Levels()
+        {
+            // This is the mechanic-rich campaign currently shipped by the game. The smaller
+            // recursive prototypes remain below as references, but regenerating the project must
+            // never silently replace the real 50 levels with those prototypes.
+            var levels = LegacyAuthoredLevels();
+            var byName = new Dictionary<string, LevelDef>(System.StringComparer.Ordinal);
+            for (int i = 0; i < levels.Length; i++)
+            {
+                levels[i].authoredOrder = i;
+                if (!byName.TryAdd(levels[i].name, levels[i]))
+                    throw new System.InvalidOperationException($"Duplicate authored level name: {levels[i].name}");
+            }
+
+            if (CurriculumOrder.Length != levels.Length)
+                throw new System.InvalidOperationException(
+                    $"Curriculum has {CurriculumOrder.Length} entries for {levels.Length} authored levels.");
+
+            var ordered = new LevelDef[CurriculumOrder.Length];
+            for (int i = 0; i < CurriculumOrder.Length; i++)
+            {
+                if (!byName.TryGetValue(CurriculumOrder[i], out LevelDef level))
+                    throw new System.InvalidOperationException(
+                        $"Curriculum references missing level '{CurriculumOrder[i]}'.");
+
+                level.designComplexity = AuthoredDifficulty(level);
+                ordered[i] = level;
+            }
+
+            // Build one candidate library, then apply the reviewed global difficulty order. This
+            // removes the old chapter-boundary resets while preserving every compact authored board.
+            var candidates = new Dictionary<string, LevelDef>(byName, System.StringComparer.Ordinal);
+            foreach (LevelDef level in ChapterOneFoundations()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterTwoSystems()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterThreeSynergy()) candidates[level.name] = level;
+            for (int i = 0; i < FirstFortyDifficultyOrder.Length; i++)
+            {
+                string name = FirstFortyDifficultyOrder[i];
+                if (!candidates.TryGetValue(name, out LevelDef level))
+                    throw new System.InvalidOperationException($"Difficulty curve references missing level '{name}'.");
+                level.designComplexity = AuthoredDifficulty(level);
+                ordered[i] = level;
+            }
+
+            // Chapter V is a complete recursion curriculum. Every board contains a real inner
+            // space, and the sequence rises from entering one pinned chamber to repositioning a
+            // room, transferring cargo inward and outward, crossing sibling rooms, and finally
+            // extracting a two-crate convoy through four nested boundaries. The layouts are
+            // original; the reference material supplied only the push-before-enter interaction.
+            LevelDef[] recursionWorld = ChapterFiveRecursion();
+            for (int i = 0; i < recursionWorld.Length; i++)
+            {
+                LevelDef level = recursionWorld[i];
+                int campaignIndex = 40 + i;
+                level.designComplexity = AuthoredDifficulty(level);
+                ordered[campaignIndex] = level;
+            }
+
+            // Chapter V's final score is calculated after its prefab exists, by replaying the
+            // stored route through the runtime model. This provisional static score is never used
+            // to hide an inversion with a level-number bonus.
+            return ordered;
+        }
+
+        static LevelDef[] ChapterOneFoundations()
+        {
+            return new[]
+            {
+                // TEACH — the arrow is the first real rule and the ivory column is the first route
+                // decision. The goal is visible, but walking straight at it does not work.
+                new LevelDef
+                {
+                    name = "Read the Route",
+                    rooms = new[] { new[] { "#######", "#P>#.p#", "##.#..#", "#.....#", "#######" } },
+                    par = 8,
+                    solution = "RDDRRUUR"
+                },
+
+                // TEACH PUSH — the one-way arrow remains from Level 1, then the crate adds a second
+                // readable decision: go around and approach it from the useful side.
+                new LevelDef
+                {
+                    name = "Arrow and Push",
+                    rooms = new[] { new[] { "########", "#....p.#", "#..x...#", "#P>b...#", "##.....#", "########" } },
+                    par = 8,
+                    solution = "RDRURUUR"
+                },
+
+                // PRACTICE PUSH / TEACH BUTTON — the crate is deliberately approached from the
+                // side, turned upward onto the button, and only then does the lower gate become a
+                // route to the exit. This is a dependency puzzle, not another straight shove.
+                new LevelDef
+                {
+                    name = "Cargo Holds the Route",
+                    rooms = new[] { new[]
+                    {
+                        "#######",
+                        "#.bB###",
+                        "#.....#",
+                        "#.P.###",
+                        "##.G.p#",
+                        "#######"
+                    } },
+                    par = 10,
+                    solution = "ULURDRDDRR"
+                },
+
+                // COMBINE — ice remains visible and the trench must first be filled by cargo. The
+                // bridge leads into a compact bent return route, so holding Right cannot finish it.
+                new LevelDef
+                {
+                    name = "Make a Bridge",
+                    rooms = new[] { new[]
+                    {
+                        "#########",
+                        "##.##...#",
+                        "#.#.##p.#",
+                        "#Pb~_#..#",
+                        "#.....#.#",
+                        "#.......#",
+                        "#########"
+                    } },
+                    par = 12,
+                    solution = "RRRDRDRRUUUL"
+                },
+
+                // PRACTICE BUTTON / TEACH SLIDE — the slick crate has two deliberate launch axes.
+                // It first stops against the right wall, then drops onto the button; the player
+                // must use the newly opened gate to reach the exit.
+                new LevelDef
+                {
+                    name = "Slide to Open",
+                    rooms = new[] { new[]
+                    {
+                        "#######",
+                        "#..pG.#",
+                        "#.##..#",
+                        "#.....#",
+                        "#P.i..#",
+                        "##...B#",
+                        "#######"
+                    } },
+                    par = 11,
+                    solution = "RRURRDUUULL"
+                },
+
+                // TEACH DEPTH — cargo must be turned upward while it remains on dry ground. The
+                // diver then uses the two-cell water channel as the only return to the player
+                // target, teaching both halves of the rule without a walk-straight solution.
+                new LevelDef
+                {
+                    name = "Deep Route",
+                    rooms = new[] { new[]
+                    {
+                        "#######",
+                        "#.p,P.#",
+                        "#.x,..#",
+                        "#..b..#",
+                        "#.....#",
+                        "#######"
+                    } },
+                    par = 10,
+                    solution = "DDLDLURUUL"
+                },
+
+                // COMBINE GATES — the light button/gate returns at the top. Beyond it, a second
+                // cargo piece must hold the heavier plate before the final gate can be crossed.
+                new LevelDef
+                {
+                    name = "Two Kinds of Gate",
+                    rooms = new[] { new[] { "###########", "#P.b...B..#", "#####G#####", "#..b...W..#", "#.........#", "#####H#####", "#....p....#", "###########" } },
+                    par = 21,
+                    solution = "RRRRRLDDDLLLURRRRDLDD"
+                },
+
+                // TEACH KEY — the centre wall splits the board into two readable loops. The player
+                // must take the lower opening to the pearl, return, and only then cross the lock.
+                new LevelDef
+                {
+                    name = "Pearl Crossing",
+                    rooms = new[] { new[]
+                    {
+                        "#######",
+                        "#P.#.k#",
+                        "#..#..#",
+                        "#.....#",
+                        "###K###",
+                        "###p###",
+                        "#######"
+                    } },
+                    par = 14,
+                    solution = "RDDRRUURDDLLDD"
+                },
+
+                // TEACH BREAK — line the cargo up with the visibly cracked rock, then sacrifice it
+                // to open a direct route to the goal. The previous pearl/lock dependency is absent.
+                new LevelDef
+                {
+                    name = "Line Up the Break",
+                    rooms = new[] { new[] { "###########", "#P........#", "#.b.......#", "#######R###", "#.........#", "#......p..#", "###########" } },
+                    par = 12,
+                    solution = "DRRRRRURDDDD"
+                },
+
+                // CHAPTER TEST — three short routes replace the old nine-step shove. Turn and
+                // sacrifice the crate into the rock, travel to the toggle, then return through the
+                // latch to the target; the familiar rules matter because of their order.
+                new LevelDef
+                {
+                    name = "Foundations Circuit",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#.LbpR...#",
+                        "#...#....#",
+                        "#P..#....#",
+                        "#........#",
+                        "#...#..T.#",
+                        "#........#",
+                        "##########"
+                    } },
+                    par = 19,
+                    solution = "RRDRRRRDULLLLUULURR"
+                },
+            };
+        }
+
+        static LevelDef[] ChapterTwoSystems()
+        {
+            return new[]
+            {
+                // REORIENT: neither crate can be pushed straight at its target because the two
+                // lower pillars remove the useful pushing side. The player must move each crate
+                // sideways, circle the pillar and rebuild the upward push from open floor.
+                new LevelDef
+                {
+                    name = "Cargo Reversal",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#........#",
+                        "#..x..x..#",
+                        "#........#",
+                        "#..b..b..#",
+                        "#..#.....#",
+                        "#P......p#",
+                        "##########"
+                    } },
+                    par = 27,
+                    solution = "RUURLDDRRUUURULDRDDRUURRDDD"
+                },
+
+                // TEACH GEYSER: the opening P*~ lane pictures the complete rule in one move—the
+                // diver lands safely beyond the trench. The landing room then asks for two cargo
+                // deliveries, including one turn around a wall, so this cannot be easier than L11.
+                new LevelDef
+                {
+                    name = "Geyser Workshop",
+                    rooms = new[] { new[]
+                    {
+                        "############",
+                        "#..x.....p.#",
+                        "#..#..###..#",
+                        "#..b.......#",
+                        "#..........#",
+                        "#P*~....b.x#",
+                        "############"
+                    } },
+                    par = 24,
+                    solution = "UURRDRUURULRDDRRDDRRUUUU"
+                },
+
+                // COMBINE BUTTON + ARROW: cargo must remain on the shell button. Past its gate,
+                // the opposing arrow refuses the direct approach, so the lower loop is mandatory.
+                new LevelDef
+                {
+                    name = "Arrow Relay",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P..........#",
+                        "#..b..###...#",
+                        "#.....###...#",
+                        "#.........B.#",
+                        "####G########",
+                        "#......<p...#",
+                        "###.######.##",
+                        "###........##",
+                        "#############"
+                    } },
+                    par = 34,
+                    solution = "RRDDLDRRRRRRRLLLLLDDLDDRRRRRRRUULL"
+                },
+
+                // COMBINE HEAVY GATE + DELIVERY: the first crate is committed to the striped
+                // plate. Only then can the second crate be turned along the lower route and lifted
+                // onto its target, making the held-open gate a real dependency rather than décor.
+                new LevelDef
+                {
+                    name = "Weight Transfer",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P.b......W.#",
+                        "#...........#",
+                        "######H######",
+                        "#...........#",
+                        "#....J......#",
+                        "#.#######.j.#",
+                        "#..........p#",
+                        "#############"
+                    } },
+                    par = 28,
+                    solution = "RRRRRRRRDLLLDDLLDRRRRRURDRDD"
+                },
+
+                // DEEP-WATER ROUTING: the diver can cross anywhere, but cargo has exactly one dry
+                // three-cell channel. After lowering the crate through it, the player must swim
+                // back above the water to perform the final downward delivery from the useful side.
+                new LevelDef
+                {
+                    name = "Dry Channel",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P........k.#",
+                        "#.....b.....#",
+                        "#,,,,.K.,,,,#",
+                        "#...........#",
+                        "#.x...###...#",
+                        "#..........p#",
+                        "#############"
+                    } },
+                    par = 35,
+                    solution = "RRRRRRRRRLLLLDDRDLLLLULDRRRRRRRDDRR"
+                },
+
+                // KEY + BUTTON SEQUENCE: both pearls sit at opposite ends of the upper loop. The
+                // cargo must then stay on the button; only a fully opened lock-and-gate stack leads
+                // to the exit. Every dependency is visible in one central vertical line.
+                new LevelDef
+                {
+                    name = "Twin Pearl Circuit",
+                    rooms = new[] { new[]
+                    {
+                        "###############",
+                        "#k....#....k..#",
+                        "#.....#.......#",
+                        "#..P..#.......#",
+                        "#.....#.......#",
+                        "#.....B..b....#",
+                        "#######K#######",
+                        "#######G#######",
+                        "#......p......#",
+                        "###############"
+                    } },
+                    par = 33,
+                    solution = "UULLRRRRDDDDRRUUUURRRRDDDDLLLLDDD"
+                },
+
+                // LINKED SWITCHES: leaving the crate on the upper button opens the first gate.
+                // The lower loop then reaches a toggle whose persistent state opens the latch.
+                // Solving either system alone never exposes the goal.
+                new LevelDef
+                {
+                    name = "Two-Stage Switch",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P..........#",
+                        "#..b..###...#",
+                        "#.....###...#",
+                        "#.........B.#",
+                        "######G######",
+                        "#.....T.....#",
+                        "######L######",
+                        "#..........p#",
+                        "#############"
+                    } },
+                    par = 25,
+                    solution = "RRDDLDRRRRRRRLLLDDDDRRRRR"
+                },
+
+                // TEACH KELP: a tall, unbroken bank makes the rule obvious. The diver may shortcut
+                // through it, but cargo must travel down, around the open bottom and back up before
+                // the diver can finish on the far side.
+                new LevelDef
+                {
+                    name = "Kelp Detour",
+                    rooms = new[] { new[]
+                    {
+                        "###########",
+                        "#P...%....#",
+                        "#....%....#",
+                        "#..b.%..B.#",
+                        "#....%....#",
+                        "#....%....#",
+                        "#....%....#",
+                        "#.........#",
+                        "#.........#",
+                        "#####G#####",
+                        "#....p....#",
+                        "###########"
+                    } },
+                    par = 29,
+                    solution = "RRDDDDDLDRRRRRDRUUUUDDDDLLLDD"
+                },
+
+                // TEACH CRACKED FLOOR: the cracked bridge is the only route from left to right and
+                // collapses behind the delivery. After collecting the pearl, the one-way lower door
+                // is the only return, turning the new rule into a readable plan-before-crossing test.
+                new LevelDef
+                {
+                    name = "The Last Crossing",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P....#...xk#",
+                        "#.....#.....#",
+                        "#..b..c.....#",
+                        "#.....#.....#",
+                        "#pK...<.*...#",
+                        "#...........#",
+                        "#############"
+                    } },
+                    par = 28,
+                    solution = "DDRRRRRRRRDRUURUDDDDLLLLLLLL"
+                },
+
+                // CHAPTER TEST: the crate cannot travel straight to the button. It must be taken
+                // below a wall, across, and back up. With the gate held, the diver collects the
+                // pearl and commits to a current corridor; gate and lock then resolve in sequence.
+                new LevelDef
+                {
+                    name = "Systems Engine",
+                    rooms = new[] { new[]
+                    {
+                        "##################",
+                        "#P...............#",
+                        "#...b...#...B....#",
+                        "#.......#........#",
+                        "#................#",
+                        "#########....#####",
+                        "############k#####",
+                        "############ddGKp#",
+                        "##################"
+                    } },
+                    par = 25,
+                    solution = "RRRDDLDRRRRRRRRDRUUDDDDRR"
+                },
+            };
+        }
+
+        static LevelDef[] ChapterThreeSynergy()
+        {
+            return new[]
+            {
+                // NARROW GAP + KEY/GATE: cargo slips through the narrow cell and must remain on
+                // the button. The diver takes the long route for the pearl, then crosses the lock
+                // and the cargo-held gate. The two paths are visually separated and easy to read.
+                new LevelDef
+                {
+                    name = "Narrow Relay",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P..........#",
+                        "#..b.=B.....#",
+                        "#.#########.#",
+                        "#..........k#",
+                        "#.#########.#",
+                        "#...........#",
+                        "#####K#######",
+                        "#####G#######",
+                        "#....p......#",
+                        "#############"
+                    } },
+                    par = 32,
+                    solution = "DRRRLLLURRRRRRRRRRDDDDDLLLLLLDDD"
+                },
+
+                // SLIDING CARGO + KEY/GATE: the wall at the end of the upper rail stops the slick
+                // crate. The player must circle above it, launch it down onto the button, collect
+                // the pearl on the far side and return through the two central checkpoints.
+                new LevelDef
+                {
+                    name = "Freight on Ice",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#...........#",
+                        "#P.i_=..#...#",
+                        "#......g#...#",
+                        "#......g#...#",
+                        "#......B#...#",
+                        "#......##.k.#",
+                        "######K######",
+                        "######G######",
+                        "#.....p.....#",
+                        "#############"
+                    } },
+                    par = 34,
+                    solution = "RRURRRRDURRRDDDDDUUUUULLLLDDDDDDDD"
+                },
+
+                // DOUBLE BREAK: each crate is a one-use tool. The first opens the descent on the
+                // far right; the second must then be approached from below and breaks the return
+                // wall. Reversing their order is impossible, so the dependency is unambiguous.
+                new LevelDef
+                {
+                    name = "Demolition Order",
+                    rooms = new[] { new[]
+                    {
+                        "############",
+                        "#P..b..R...#",
+                        "##########.#",
+                        "#....R..b..#",
+                        "##########.#",
+                        "#..........#",
+                        "#.##########",
+                        "#p.........#",
+                        "############"
+                    } },
+                    par = 32,
+                    solution = "RRRRRRRRRDDLLLLRRRRDDLLLLLLLLLDD"
+                },
+
+                // BUTTON/GATE + TOGGLE/LATCH + DELIVERY: one crate is parked above to hold the
+                // first checkpoint. Beyond it the toggle opens the persistent latch, but the level
+                // still ends with a second cargo turn rather than a direct walk to the target.
+                new LevelDef
+                {
+                    name = "Latched Delivery",
+                    rooms = new[] { new[]
+                    {
+                        "###############",
+                        "#P............#",
+                        "#..b..###.....#",
+                        "#.....###.....#",
+                        "#..........B..#",
+                        "#######G#######",
+                        "#......T......#",
+                        "#######L#######",
+                        "#p.......q..x.#",
+                        "###############"
+                    } },
+                    par = 37,
+                    solution = "DRRURDDLDRRRRRRRLLLDDDDRRRRLLLLLLLLLL"
+                },
+
+                // PULSE + HELD GATE: the familiar cargo turn opens the central checkpoint. Two
+                // pulse barriers sit on different approach parities, so the side loop is a clear
+                // timing tool rather than an unexplained wait command.
+                new LevelDef
+                {
+                    name = "Pulse Relay",
+                    rooms = new[] { new[]
+                    {
+                        "###############",
+                        "#P............#",
+                        "#..b..###.....#",
+                        "#.....###.....#",
+                        "#..........B..#",
+                        "#######G#######",
+                        "#......:......#",
+                        "#.###########.#",
+                        "#......:......#",
+                        "#............p#",
+                        "###############"
+                    } },
+                    par = 42,
+                    solution = "DRRURDDLDRRRRRRRLLLDDRRRRRRDDLLLLLLRRRRRRD"
+                },
+
+                // BOULDER + KEY/LOCK: the boulder needs a horizontal charge, then a new vertical
+                // run-up to reach its target. That placement exposes the pearl at the top-right;
+                // the lock below turns the solved cargo state into a required return journey.
+                new LevelDef
+                {
+                    name = "Corner Charge",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#.........xk#",
+                        "#..######...#",
+                        "#......O....#",
+                        "#..####.....#",
+                        "#...........#",
+                        "#P..........#",
+                        "######K######",
+                        "#.....p.....#",
+                        "#############"
+                    } },
+                    par = 33,
+                    solution = "UUURRRRRRRRDRDUUUDRUUDDDDLLLLLDDD"
+                },
+
+                // GRAVITY + SECOND DELIVERY: the upper crate is pushed into the clearly pictured
+                // gravity column and falls onto the button. Its gate reveals a conventional crate
+                // below, which still needs a turn around the wall before both targets are satisfied.
+                new LevelDef
+                {
+                    name = "Gravity Transfer",
+                    rooms = new[] { new[]
+                    {
+                        "#############",
+                        "#P..........#",
+                        "#.#######...#",
+                        "#..b......g.#",
+                        "##########g.#",
+                        "##########B.#",
+                        "#...........#",
+                        "######G######",
+                        "#....b....x.#",
+                        "#..........p#",
+                        "#############"
+                    } },
+                    par = 34,
+                    solution = "DDRRRRRRRRRRDDDLLLLLDDDLLURRRRRDRR"
+                },
+
+                // ECHO + HELD GATE: the echo reaches the lower button one move before the diver
+                // reaches the matching gate. Once through, their different wall banks require a
+                // shared command sequence that lands both silhouettes on their own targets.
+                new LevelDef
+                {
+                    name = "Echo Relay",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#P......p#",
+                        "#..####..#",
+                        "#E.#....e#",
+                        "#...##...#",
+                        "#........#",
+                        "#........#",
+                        "##########"
+                    } },
+                    par = 17,
+                    solution = "RDDDRDRRRRRUUUUDU"
+                },
+
+                // COLOUR CARGO + EXIT GATE: the two coloured crates must cross around separate
+                // wall banks to reach opposite targets. A third neutral crate holds the final gate,
+                // so committing to the exit too early removes the standing space used for sorting.
+                new LevelDef
+                {
+                    name = "Colour Logistics",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#........#",
+                        "#P.J.N...#",
+                        "#........#",
+                        "#..n....j#",
+                        "##########"
+                    } },
+                    par = 21,
+                    solution = "RRRURDDLDRRRUULLLULDD"
+                },
+
+                // CHAPTER MACHINE: breaking the first wall exposes the toggle; the latch leads to
+                // a charged boulder delivery. A second crate then holds the exit gate, and the final
+                // pulse barrier checks timing. Each stage uses a rule already practised above.
+                new LevelDef
+                {
+                    name = "Synergy Engine",
+                    rooms = new[] { new[]
+                    {
+                        "############",
+                        "#P..b..R...#",
+                        "##########.#",
+                        "#....T.....#",
+                        "######L#####",
+                        "#.....O....#",
+                        "#.....x....#",
+                        "#.##########",
+                        "#p.........#",
+                        "############"
+                    } },
+                    par = 27,
+                    solution = "RRRRRRRRRDDLLLLLRDDLLLLLDDD"
+                },
+            };
+        }
+
+        static LevelDef[] ChapterFiveRecursion()
+        {
+            return new[]
+            {
+                // TEACH: a pinned cobalt chamber is the only bridge into the lower pocket. The
+                // player enters from the left, reads one compact inner bend, then exits through a
+                // different edge. There is no straight-line or walk-around solution.
+                new LevelDef
+                {
+                    name = "Across the Inside",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#########",
+                            "#P..#...#",
+                            "#...#..##",
+                            "#......1#",
+                            "#######.#",
+                            "####....#",
+                            "#jAAAJ.p#",
+                            "#########"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "#.###.#",
+                            "......#",
+                            "#.###.#",
+                            "#.....#",
+                            "###.###"
+                        }
+                    },
+                    par = 21,
+                    solution = "RRDDRRRRRDDRRDDDDLLRR"
+                },
+
+                // PRACTICE: unlike Level 41's fixed bridge, this chamber must be moved around a
+                // corner: down into the rail, then right into its socket. Inside, four independent
+                // cargo pieces must be approached from different sides and placed on four separate
+                // goals. This tests room positioning and route planning instead of repeating the
+                // previous level's single horizontal convoy.
+                new LevelDef
+                {
+                    name = "Corner Dock",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#########",
+                            "#..P....#",
+                            "#..1#...#",
+                            "#.......#",
+                            "#......##",
+                            "#..#...p#",
+                            "#########"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "#xb.bx#",
+                            "......#",
+                            "#.b.b.#",
+                            "#.x..x#",
+                            "###.###"
+                        }
+                    },
+                    par = 26,
+                    solution = "DDLDRRRRRRDURULRRDDLDRLDDR"
+                },
+
+                // PRACTICE: cargo begins two spaces deep. The player must circle inside the
+                // smallest room, push the amber crate through both room boundaries, keep pushing
+                // after following it outside, then return to the separate outer player target.
+                new LevelDef
+                {
+                    name = "Bring It Out",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "########",
+                            "#.p....#",
+                            "#...Q..#",
+                            "#P.....#",
+                            "#..AAAj#",
+                            "########"
+                        },
+                        new[]
+                        {
+                            "##.##",
+                            "#...#",
+                            "...U#",
+                            "#...#",
+                            "##.##"
+                        },
+                        new[]
+                        {
+                            "#####",
+                            "#...#",
+                            "..J..",
+                            "#...#",
+                            "#####"
+                        }
+                    },
+                    par = 29,
+                    solution = "URRRRRRRURRDLLLLLLLULDDLDRUUU"
+                },
+
+                // EXPERIMENT: reverse the transfer. An outer crate is driven through two pinned
+                // rooms, turned onto the deep goal, and left there while the player backtracks to
+                // a separate outer target. This proves boundaries work in both directions.
+                new LevelDef
+                {
+                    name = "Send It In",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "##########",
+                            "jAAJp....#",
+                            "####Pb.Q##",
+                            "####.....#",
+                            "##########"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "#.....#",
+                            ".......",
+                            "#.....#",
+                            "#.U...#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "###.###",
+                            "#x....#",
+                            "#...#.#",
+                            "#.....#",
+                            "#.....#",
+                            "#######"
+                        }
+                    },
+                    par = 35,
+                    solution = "RRRRURDDDDLDDRUDRRUULLLRUUULLLULLLR"
+                },
+
+                // EXPERIMENT: the green child room is pushed down exactly twice. Its top entrance
+                // is occupied and braced against a column, so the player must leave, re-approach
+                // from the side, enter, and extract that same cargo into the parent goal.
+                new LevelDef
+                {
+                    name = "Shift the Chamber",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#########",
+                            "#......p#",
+                            "#P...1###",
+                            "jAAJ....#",
+                            "#########"
+                        },
+                        new[]
+                        {
+                            "#...###",
+                            "#.#2#.#",
+                            "#.#.#.#",
+                            ".x..#.#",
+                            "...##.#",
+                            "#.....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "...b...",
+                            "#..#..#",
+                            ".......",
+                            "#.....#",
+                            "#######"
+                        }
+                    },
+                    par = 40,
+                    solution = "URRRRDDDDUULLDDDRRRRRRUULLLLLDLLLLUURRRR"
+                },
+
+                // COMBINE: three fixed chambers alternate entry directions. Deep cargo first
+                // travels upward, then turns left and crosses the remaining three boundaries.
+                new LevelDef
+                {
+                    name = "Boundary Relay",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#########",
+                            "#.......#",
+                            "#.p.....#",
+                            "#x....Q##",
+                            "#..JAAAj#",
+                            "#P......#",
+                            "#########"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "#.....#",
+                            "....U##",
+                            "#.....#",
+                            "#.....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "#####",
+                            "#...#",
+                            "#...#",
+                            ".....",
+                            "#.V.#",
+                            "#...#",
+                            "#####"
+                        },
+                        new[]
+                        {
+                            "##.##",
+                            "#...#",
+                            "#.b.#",
+                            "#...#",
+                            "#####"
+                        }
+                    },
+                    par = 46,
+                    solution = "UURRRRRRRRRRRDDRDDLUUUURUULDRDLLLLLLLLLLLDRLUU"
+                },
+
+                // COMBINE: this is a branching containment graph rather than another straight
+                // stack. Cargo leaves the deep right branch, crosses the outer sorting bay, enters
+                // the left sibling room, turns onto its goal, and ends beside the player target.
+                new LevelDef
+                {
+                    name = "Between Worlds",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "###########",
+                            "#.........#",
+                            "#.Q.....U##",
+                            "#.........#",
+                            "#....P....#",
+                            "###########"
+                        },
+                        new[]
+                        {
+                            "####j##",
+                            "#...A.#",
+                            "#nCCJ.#",
+                            "###....",
+                            "#.....#",
+                            "#p....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "#########",
+                            "#.......#",
+                            "#.......#",
+                            ".....V###",
+                            "#.......#",
+                            "#.......#",
+                            "#########"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "#..#..#",
+                            "...N...",
+                            "#..#..#",
+                            "#.....#",
+                            "#######"
+                        }
+                    },
+                    par = 46,
+                    solution = "UURRRRRRRRRUURRRDDLLLLLLLLLLLLLLLLDLURULDDDLLL"
+                },
+
+                // TWIST: the indigo room is movable. Its final socket determines where the coral
+                // cargo reappears after three boundaries; the outer wall then forces one last turn
+                // onto the colour-matched target instead of accepting a straight shove.
+                new LevelDef
+                {
+                    name = "Exit Side",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#######",
+                            "#...P.#",
+                            "#.....#",
+                            "#..Q..#",
+                            "#A....#",
+                            "#A...p#",
+                            "#A....#",
+                            "#A....#",
+                            "#j....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "###.###",
+                            "#.....#",
+                            "#..2..#",
+                            "..#...#",
+                            "#.....#",
+                            "#.....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "#####",
+                            "#...#",
+                            "#...#",
+                            ".....",
+                            "#...#",
+                            "#.V.#",
+                            "#####"
+                        },
+                        new[]
+                        {
+                            "##.##",
+                            "#...#",
+                            "#.J.#",
+                            "#...#",
+                            "#...#",
+                            "#...#",
+                            "#####"
+                        }
+                    },
+                    par = 49,
+                    solution = "DLDDRDLLULDURRUULDRRRRDDDRDDLUUUURULLLLLULDRDRRRD"
+                },
+
+                // MASTERY: the reference interaction is now used as a complete original puzzle.
+                // Push the child down twice, discover that its top entrance is sealed, leave the
+                // parent, re-enter from another side, descend to violet depth, and bring the coral
+                // cargo back through all four room boundaries before reaching the outer target.
+                new LevelDef
+                {
+                    name = "The Long Way Out",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#############",
+                            "#.......p...#",
+                            "#...........#",
+                            "jAAAA.....Q##",
+                            "#...........#",
+                            "#....P......#",
+                            "#############"
+                        },
+                        new[]
+                        {
+                            "#...###",
+                            "#.#2#.#",
+                            "#.#.#.#",
+                            "....#.#",
+                            "...##.#",
+                            "#.....#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "#####",
+                            "#...#",
+                            "...V#",
+                            "#...#",
+                            "#####"
+                        },
+                        new[]
+                        {
+                            "#####",
+                            "#...#",
+                            "...4#",
+                            "#...#",
+                            "#####"
+                        },
+                        new[]
+                        {
+                            "#######",
+                            "#.....#",
+                            "...J...",
+                            "#.....#",
+                            "#######"
+                        }
+                    },
+                    par = 55,
+                    solution = "UUURRRRRDDDUUULDRRRRRRRRRRRURRRDLLLLLLLLLLLLLLLLLLUURRR"
+                },
+
+                // FINALE: this containment graph branches instead of repeating Level 49's stack.
+                // Fixed sibling chambers prevent cargo from auto-docking the destination. Deep in
+                // the source branch, the player must lift and side-dock a movable room, align two
+                // coloured crates around its brace, extract the ordered convoy through four room
+                // boundaries, then turn the colours into the vertical sibling receiver. The turn
+                // breaks up the final cabinet input without reducing the planning requirement.
+                new LevelDef
+                {
+                    name = "Nested Exodus",
+                    rooms = new[]
+                    {
+                        new[]
+                        {
+                            "#######",
+                            "#....p#",
+                            "#...Q##",
+                            "#...P.#",
+                            "#.....#",
+                            "#...U.#",
+                            "#######"
+                        },
+                        new[]
+                        {
+                            "##.##",
+                            "#...#",
+                            "#..V#",
+                            "#...#",
+                            "#..##"
+                        },
+                        new[]
+                        {
+                            "##.##",
+                            "#.n.#",
+                            "#.A.#",
+                            "#.A.#",
+                            "#.A.#",
+                            "#.j.#",
+                            "#####"
+                        },
+                        new[]
+                        {
+                            ".#####",
+                            ".4...#",
+                            "######"
+                        },
+                        new[]
+                        {
+                            "#########",
+                            "#...#####",
+                            "#..J...##",
+                            ".......##",
+                            "#####N.##",
+                            "#####..##",
+                            "#########"
+                        }
+                    },
+                    par = 58,
+                    solution = "UUURRRRRRUURRDRRRDDDLURULLLLLLLLLLUULDULDDDUURDDDDDUULUURR"
+                }
+            };
+        }
+
+        static int AuthoredDifficulty(LevelDef level)
+        {
+            var mechanics = new HashSet<string>();
+            int objects = 0, targets = 0, featureTiles = 0, dependencies = 0;
+            int cognitiveLoad = 0, regularPlayers = 0;
+            bool lightSwitch = false, lightGate = false, heavySwitch = false, heavyGate = false;
+            bool key = false, locked = false, colourA = false, colourAGoal = false;
+            bool colourB = false, colourBGoal = false, echo = false, echoGoal = false;
+            bool mirror = false, mirrorGoal = false;
+
+            foreach (var room in level.rooms)
+                foreach (string row in room)
+                    foreach (char ch in row)
+                    {
+                        if (CrateKinds.ContainsKey(ch) || ColourCargoOnGoals.ContainsKey(ch)
+                            || (ch >= '1' && ch <= '9')
+                            || AnchoredBoxes.ContainsKey(ch)) objects++;
+                        if (ch == 'x' || ch == 'p' || ch == 'e' || ch == 'm'
+                            || ColourGoals.ContainsKey(ch) || ColourCargoOnGoals.ContainsKey(ch)) targets++;
+
+                        if (ch == '_') { mechanics.Add("ice"); featureTiles++; }
+                        else if (ch == '~') { mechanics.Add("trench"); featureTiles++; }
+                        else if (ch == 'o') { mechanics.Add("portal"); featureTiles++; }
+                        else if (CurrentDirs.ContainsKey(ch)) { mechanics.Add("current"); featureTiles++; }
+                        else if (OneWayDirs.ContainsKey(ch)) { mechanics.Add("oneway"); featureTiles++; }
+                        else if (TerrainKinds.TryGetValue(ch, out var kind))
+                        {
+                            mechanics.Add(kind.ToString());
+                            featureTiles++;
+                        }
+
+                        if (ch == 'i') mechanics.Add("slick-cargo");
+                        else if (ch == 'O') mechanics.Add("boulder");
+                        else if (ch == 'q') mechanics.Add("locking-cargo");
+                        else if (ch == 'E') { mechanics.Add("echo"); echo = true; }
+                        else if (ch == 'e') echoGoal = true;
+                        else if (ch == 'M') { mechanics.Add("mirror"); mirror = true; }
+                        else if (ch == 'm') mirrorGoal = true;
+                        else if (ch == 'P') regularPlayers++;
+                        else if (ch == 'B') lightSwitch = true;
+                        else if (ch == 'G') lightGate = true;
+                        else if (ch == 'W') heavySwitch = true;
+                        else if (ch == 'H') heavyGate = true;
+                        else if (ch == 'k') key = true;
+                        else if (ch == 'K') locked = true;
+                        else if (ch == 'J') colourA = true;
+                        else if (ch == 'j') colourAGoal = true;
+                        else if (ch == 'N') colourB = true;
+                        else if (ch == 'n') colourBGoal = true;
+                    }
+
+            if (lightSwitch && lightGate) dependencies++;
+            if (heavySwitch && heavyGate) dependencies++;
+            if (key && locked) dependencies++;
+            if (colourA && colourAGoal) dependencies++;
+            if (colourB && colourBGoal) dependencies++;
+            if (echo && echoGoal) dependencies++;
+            if (mirror && mirrorGoal) dependencies++;
+            // Mirror and echo boards ask the player to predict a second actor whose movement is
+            // coupled to every input.  Treating that like a familiar key-and-lock dependency put
+            // the cognitively harder Facing Away before the simpler Pearl Lock.  This small human-
+            // difficulty premium resolves that inversion without pushing the mechanic past later
+            // multi-stage boards.
+            if (mirror && mirrorGoal) cognitiveLoad += 8;
+            if (echo && echoGoal) cognitiveLoad += 8;
+
+            // Multiple interchangeable player bodies and inner/outer boards are not comparable to
+            // ordinary walking distance. Each input can commit another goal route or change which
+            // body remains controllable, while a chamber adds a second coordinate space whose
+            // final state must be predicted before returning outside. These premiums represent
+            // real state the player tracks; they are not level-number bonuses.
+            if (regularPlayers > 1)
+                cognitiveLoad += 2000 + Mathf.Max(0, regularPlayers - 2) * 500;
+
+            bool hasPulse = mechanics.Contains(TerrainKind.Pulse.ToString());
+            bool hasMagnet = mechanics.Contains(TerrainKind.Magnet.ToString());
+            if (hasPulse && level.rooms.Length > 1)
+                cognitiveLoad += 320; // time state must be carried across the room transition
+            if (hasMagnet && level.rooms.Length > 1)
+                cognitiveLoad += 160; // predict an inner cargo result before returning outside
+            dependencies += Mathf.Max(0, level.rooms.Length - 1); // finish one room to reach the next
+
+            int turns = 0;
+            for (int i = 1; i < level.solution.Length; i++)
+                if (level.solution[i] != level.solution[i - 1]) turns++;
+
+            return level.par * 60
+                   + turns * 18
+                   + objects * 25
+                   + targets * 20
+                   + mechanics.Count * 55
+                   + dependencies * 90
+                   + cognitiveLoad
+                   // A room transition is real cognitive work, but the old 2400-point premium
+                   // made adding a third room look harder than an entire solved route. A calibrated
+                   // 300-point layer cost lets Chapter V rise smoothly while par, turns, cargo and
+                   // dependencies still provide most of the evidence.
+                   + Mathf.Max(0, level.rooms.Length - 1) * 300
+                   + featureTiles * 2;
+        }
+
+        // Solver-proven recursive curriculum.  Difficulty comes from the relationship between a
+        // box and the board it contains, not from procedural clutter.  Each chapter adds exactly
+        // one layer of spatial recursion, then follows Teach -> Practice -> Combine -> Master.
+        // Every stored route below was verified against the same movement model used by Unity.
+        static LevelDef[] AuthoredLevels() => new[]
+        {
+            new LevelDef { name = "First Steps", rooms = new[] { new[] { "#...#", "..#P.", ".....", "#xb.#" } }, par = 3, solution = "DDL" },
+            new LevelDef { name = "Little Nudge", rooms = new[] { new[] { "#...#", "....P", "x.b..", "#...#" } }, par = 4, solution = "LDLL" },
+            new LevelDef { name = "Around the Bend", rooms = new[] { new[] { "#...#", "#.b..", "#.xP.", "#...#" } }, par = 4, solution = "UULD" },
+            new LevelDef { name = "The Long Way", rooms = new[] { new[] { "#.bx#", "..#..", "...P.", "#...#" } }, par = 5, solution = "LLUUR" },
+            new LevelDef { name = "Up and Over", rooms = new[] { new[] { "#.bx#", ".....", ".#...", "#.P.#" } }, par = 5, solution = "UULUR" },
+            new LevelDef { name = "Zigzag", rooms = new[] { new[] { "#P..#", "...#.", "..b..", "#x..#" } }, par = 6, solution = "RDDRDL" },
+            new LevelDef { name = "Company", rooms = new[] { new[] { "#x..#", ".....", ".#b..", "#..P#" } }, par = 6, solution = "LUURUL" },
+            new LevelDef { name = "Sidestep", rooms = new[] { new[] { "#..P#", ".....", "..b..", "#x..#" } }, par = 6, solution = "LDDRDL" },
+            new LevelDef { name = "Past the Wall", rooms = new[] { new[] { "#...#", "....P", "..b.x", "###.#" } }, par = 6, solution = "LLLDRR" },
+            new LevelDef { name = "Tight Corner", rooms = new[] { new[] { "#...#", "..b..", ".....", "#P.x#" } }, par = 7, solution = "UURURDD" },
+
+            new LevelDef { name = "Double Trouble", rooms = new[] { new[] { "#.P...#", "..b1.b.", ".......", ".......", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 6, solution = "LDRRRR" },
+            new LevelDef { name = "Crossroads", rooms = new[] { new[] { "#..#..#", "...#...", "1b.##..", "..b....", "#..#P.#" }, new[] { "...", ".x.", "..." } }, par = 6, solution = "ULLULL" },
+            new LevelDef { name = "Think Inside", rooms = new[] { new[] { "#.....#", ".......", "..bb...", "..1.P..", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 7, solution = "LUULDDD" },
+            new LevelDef { name = "Tuck It In", rooms = new[] { new[] { "#P....#", ".......", "###b###", ".1b....", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 8, solution = "RRDDDLLL" },
+            new LevelDef { name = "Special Delivery", rooms = new[] { new[] { "#..#..#", "...#..P", "...#b..", ".1.b...", "#..#..#" }, new[] { "...", ".x.", "..." } }, par = 8, solution = "LLDDLLLL" },
+            new LevelDef { name = "Housewarming", rooms = new[] { new[] { "#..P..#", "..b....", "...1...", "...b#..", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 9, solution = "LLDRURDDD" },
+            new LevelDef { name = "Pocket", rooms = new[] { new[] { "#..#..#", "...#...", "....bb.", "...#.P.", "#1.#..#" }, new[] { "...", ".x.", "..." } }, par = 9, solution = "ULLLULDDD" },
+            new LevelDef { name = "Nesting", rooms = new[] { new[] { "#.....#", ".bb..1.", "#.#####", "....P..", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 10, solution = "LLLUURRRRR" },
+            new LevelDef { name = "Roommates", rooms = new[] { new[] { "#..P..#", "...1...", ".......", ".bb....", "#.....#" }, new[] { "...", ".x.", "..." } }, par = 10, solution = "DDLLDRRRRR" },
+            new LevelDef { name = "Moving In", rooms = new[] { new[] { "#1.b..#", ".......", "....b..", ".......", "#P....#" }, new[] { "...", ".x.", "..." } }, par = 10, solution = "RRUURUULLL" },
+
+            new LevelDef { name = "Homebound", rooms = new[] { new[] { "#.....#", ".......", "#####.#", "Pb.....", "#..b.1#" }, new[] { "...", ".2.", "..." }, new[] { "...", ".x.", "..." } }, par = 8, solution = "RRDRRRRR" },
+            new LevelDef { name = "Split Errand", rooms = new[] { new[] { "#.....#", ".....P.", "###.###", "1.bb...", "#.....#" }, new[] { "...", "2..", "..." }, new[] { "...", ".x.", "..." } }, par = 9, solution = "LLDDLLLLL" },
+            new LevelDef { name = "Fetch", rooms = new[] { new[] { "##P..##", "#.....#", "...b...", "#..b..#", "##..1##" }, new[] { "...", "2..", "..." }, new[] { "...", ".x.", "..." } }, par = 10, solution = "RDDLDDRRRR" },
+            new LevelDef { name = "Settle Down", rooms = new[] { new[] { "#.....#", ".....1.", ".......", "..bb...", "#.P...#" }, new[] { ".2.", "...", "..." }, new[] { "...", ".x.", "..." } }, par = 11, solution = "URRDRUUUUUU" },
+            new LevelDef { name = "Twin Rooms", rooms = new[] { new[] { "##.#.##", "#..#..#", "....b.P", "#.b#..#", "##1#.##" }, new[] { "...", "...", "2.." }, new[] { "...", ".x.", "..." } }, par = 11, solution = "LLLLDDDRDLL" },
+            new LevelDef { name = "Rabbit Hole", rooms = new[] { new[] { "#.....#", ".......", "####P##", "..b....", "#.b..1#" }, new[] { "...", "..2", "..." }, new[] { "...", ".x.", "..." } }, par = 11, solution = "DLLLDRRRRRR" },
+            new LevelDef { name = "Go Deeper", rooms = new[] { new[] { "#.b.1.#", ".....#.", "...bP..", ".......", "#.....#" }, new[] { "...", ".2.", "..." }, new[] { "...", ".x.", "..." } }, par = 11, solution = "LLLUURRRRRR" },
+            new LevelDef { name = "Two Deep", rooms = new[] { new[] { "#.....#", ".1#....", "....bb.", ".......", "#....P#" }, new[] { "...", "...", ".2." }, new[] { "...", ".x.", "..." } }, par = 12, solution = "UULLLDLUUUUU" },
+            new LevelDef { name = "Descent", rooms = new[] { new[] { "#.....#", "...#...", "P.b....", ".b.....", "#....1#" }, new[] { "...", "2..", "..." }, new[] { "...", ".x.", "..." } }, par = 13, solution = "RURDDLDRRRRRR" },
+            new LevelDef { name = "Double Delivery", rooms = new[] { new[] { "#..P..#", ".1..bb.", ".......", ".......", "#.....#" }, new[] { "..2", "...", "..." }, new[] { "...", ".x.", "..." } }, par = 13, solution = "RRDLLLLDLURUU" },
+
+            new LevelDef { name = "Understudy", rooms = new[] { new[] { "#.Pb..#", "....b..", ".......", "....1..", "#.....#" }, new[] { "...", ".2.", "..." }, new[] { "...", ".3.", "..." }, new[] { "...", ".x.", "..." } }, par = 10, solution = "RRDDDDDDDD" },
+            new LevelDef { name = "The Long Game", rooms = new[] { new[] { "#.....#", ".......", "...b.1#", "....b.#", "#....P#" }, new[] { "...", "2..", "..." }, new[] { "...", ".3.", "..." }, new[] { "...", ".x.", "..." } }, par = 10, solution = "LULURRRRRR" },
+            new LevelDef { name = "Chain of Custody", rooms = new[] { new[] { "##...##", "#.....#", "....1b.", "#..b..#", "##..P##" }, new[] { "...", ".2.", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".x.", "..." } }, par = 11, solution = "LULURRRRRRR" },
+            new LevelDef { name = "Inner Circle", rooms = new[] { new[] { "#.....#", ".......", "..bP...", "..b.#..", "#...1.#" }, new[] { "...", "2..", "..." }, new[] { "...", "3..", "..." }, new[] { "...", ".x.", "..." } }, par = 12, solution = "LDLDRRRRRRRR" },
+            new LevelDef { name = "Layer Cake", rooms = new[] { new[] { "##...##", "#1...##", "...b...", "#..b..#", "##..P##" }, new[] { "...", "2..", "..." }, new[] { "...", "3..", "..." }, new[] { "...", ".x.", "..." } }, par = 12, solution = "LURUULLLLLLL" },
+            new LevelDef { name = "Matryoshka", rooms = new[] { new[] { "#1##..#", ".b.....", ".......", ".b.....", "#.P...#" }, new[] { "...", "...", ".2." }, new[] { "..3", "...", "..." }, new[] { "...", ".x.", "..." } }, par = 13, solution = "LUUUUUULUURRR" },
+            new LevelDef { name = "Deep Water", rooms = new[] { new[] { "#.P...#", ".b..1b.", "......#", "......#", "#.....#" }, new[] { "...", ".2.", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".x.", "..." } }, par = 14, solution = "DDLLURRRRRRRRR" },
+            new LevelDef { name = "The Undercroft", rooms = new[] { new[] { "#.....#", "....P..", "#b#####", "...b1..", "#.....#" }, new[] { "...", "2..", "..." }, new[] { "...", ".3.", "..." }, new[] { "...", ".x.", "..." } }, par = 14, solution = "LLLDDRRRRRRRRR" },
+            new LevelDef { name = "Threefold", rooms = new[] { new[] { "#..#..#", ".b.#...", "b..#.#.", "...1...", "#..#P.#" }, new[] { "...", "2..", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".x.", "..." } }, par = 15, solution = "ULLLUULDDRDLLLL" },
+            new LevelDef { name = "Cascade", rooms = new[] { new[] { "#..P..#", "...bb..", "#..#..1", "#......", "#.....#" }, new[] { "...", "..2", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".x.", "..." } }, par = 15, solution = "LDRRURDLDRRRRRR" },
+
+            new LevelDef { name = "Recursion", rooms = new[] { new[] { "#..#..#", "P.b1b..", "...#...", "...#...", "#..#..#" }, new[] { ".2.", "...", "..." }, new[] { "...", ".3.", "..." }, new[] { "...", "...", ".4." }, new[] { "...", ".x.", "..." } }, par = 14, solution = "RRRRRDRUUUUUUU" },
+            new LevelDef { name = "Event Horizon", rooms = new[] { new[] { "#..#.1#", "...#...", ".....b.", "..P#.b.", "#..#..#" }, new[] { "...", ".2.", "..." }, new[] { "...", "...", ".3." }, new[] { "...", ".4.", "..." }, new[] { "...", ".x.", "..." } }, par = 14, solution = "URRDRUUUUUUUUU" },
+            new LevelDef { name = "Turtles All The Way", rooms = new[] { new[] { "##..1##", "#Pb...#", "...b...", "#.....#", "##...##" }, new[] { "...", ".2.", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".4.", "..." }, new[] { "...", ".x.", "..." } }, par = 14, solution = "RDRULURRRRRRRR" },
+            new LevelDef { name = "The Deep End", rooms = new[] { new[] { "##.P.##", "#.b...#", "##1####", "#.b...#", "##...##" }, new[] { "...", "...", ".2." }, new[] { "...", ".3.", "..." }, new[] { "...", "...", "4.." }, new[] { "...", ".x.", "..." } }, par = 15, solution = "LDDDDDDDRDLULDD" },
+            new LevelDef { name = "Strange Loop", rooms = new[] { new[] { "##...##", "#.....#", "#P#####", "#.b...#", "##1b.##" }, new[] { "...", "...", ".2." }, new[] { "...", ".3.", "..." }, new[] { "...", "...", ".4." }, new[] { "...", ".x.", "..." } }, par = 15, solution = "DRRRDLLULDDDDDD" },
+            new LevelDef { name = "Inward", rooms = new[] { new[] { "##...##", "#..P..#", "##1####", "#...b.#", "##.b.##" }, new[] { "...", "...", ".2." }, new[] { "...", "...", ".3." }, new[] { "...", "...", ".4." }, new[] { "...", ".x.", "..." } }, par = 16, solution = "LDDRRDLLULDDDDDD" },
+            new LevelDef { name = "Vanishing Point", rooms = new[] { new[] { "##...##", "#.....#", ".1.b...", "#..Pb.#", "##...##" }, new[] { "...", "..2", "..." }, new[] { "3..", "...", "..." }, new[] { "...", ".4.", "..." }, new[] { "...", ".x.", "..." } }, par = 16, solution = "RULLLLLLLDLUUUUU" },
+            new LevelDef { name = "The Last Room", rooms = new[] { new[] { "#.....#", ".Pb....", "###1###", ".......", "#...b.#" }, new[] { "...", ".2.", "..." }, new[] { "...", "..3", "..." }, new[] { "...", "4..", "..." }, new[] { "...", ".x.", "..." } }, par = 17, solution = "RRDDRRDLLLLLLLLLL" },
+            new LevelDef { name = "Singularity", rooms = new[] { new[] { "#..P..#", "...#...", ".......", ".b.1...", "#.b...#" }, new[] { "...", ".2.", "..." }, new[] { "...", "..3", "..." }, new[] { "...", ".4.", "..." }, new[] { "...", ".x.", "..." } }, par = 18, solution = "RDDLDLLDRRRRRRRRRR" },
+            new LevelDef { name = "Parabox", rooms = new[] { new[] { "#P....#", ".....b.", "......b", ".......", "#...1.#" }, new[] { "...", "...", ".2." }, new[] { "...", ".3.", "..." }, new[] { "...", "...", ".4." }, new[] { "...", ".x.", "..." } }, par = 19, solution = "RRRRDRDLULDDDDDDDDD" },
+        };
+
+        // Kept only as a migration reference for old serialized prefabs. The live generator never
+        // reads this list; all newly regenerated campaign prefabs use AuthoredLevels above.
+        static LevelDef[] LegacyAuthoredLevels() => new[]
+        {
+            // Starter designs. Levels() ranks these together with the complete authored set so the
+            // final chapter divisions are determined by real complexity rather than source order.
+            new LevelDef { name = "The Right Way", rooms = new[] { new[] { "#######", "#.....#", "#P>.p.#", "#.....#", "#######" } }, par = 3, solution = "RRR" },
+            new LevelDef { name = "First Push", rooms = new[] { new[] { "########", "#....p.#", "#P.bx..#", "#......#", "########" } }, par = 5, solution = "RRURR" },
+            // L3: the first crate is taught in L2; this board now asks the player to get behind it
+            // before pushing, then finish a route. It is a real practice step, not an easier walk.
+            new LevelDef { name = "Set Up the Push", rooms = new[] { new[] { "########", "#....p.#", "#..x...#", "#..b...#", "#P.....#", "########" } }, par = 7, solution = "RRURRUU" },
+            // L12: enter the inner board, use the ice, then route around a wall bank. The mechanic
+            // is demonstrated cleanly, but the outer-to-inner dependency makes it deeper than L11.
+            new LevelDef { name = "Ice Inside", rooms = new[] { new[] { "#########", "#....#..#", "#....#..#", "###..#..#", "#.P.Q...#", "#.......#", "#....##.#", "#....#..#", "#########" }, new[] { "#########", "#......p#", "#..###..#", ".__.....#", "#.......#", "#.......#", "#########" } }, par = 11, solution = "RRRDRRRRUUU" },
+            // L16: the crate first fills the trench; the player must then cross that bridge and
+            // plan a second route around the inner wall bank.
+            new LevelDef { name = "Bridge the Gap", rooms = new[] { new[] { "#########", "#....#..#", "#....#..#", "###..#..#", "#.P.Q...#", "#.......#", "#....##.#", "#....#..#", "#########" }, new[] { "#########", "#......p#", "#..###..#", ".b~.....#", "#.......#", "#..###..#", "#########" } }, par = 13, solution = "RRRRRDRRRRUUU" },
+            new LevelDef { name = "Open the Gate", rooms = new[] { new[] { "#########", "#P.b...B#", "#####G###", "#...p...#", "#########" } }, par = 9, solution = "RRRRRLDDL" },
+            new LevelDef { name = "Weight Matters", rooms = new[] { new[] { "##########", "#P.......#", "#.########", "#...b.Wp##", "#......H##", "##########" } }, par = 10, solution = "DDRRRRDRRU" },
+            new LevelDef { name = "Deep Crossing", rooms = new[] { new[] { "#######", "#..P..#", "#..b..#", "#,.,,,#", "#...x.#", "#######" } }, par = 11, solution = "RDLULDDLDRR" },
+            new LevelDef { name = "Pearl Lock", rooms = new[] { new[] { "#########", "#P....k.#", "#.#####.#", "#.......#", "####K####", "###.p.###", "#########" } }, par = 13, solution = "RRRRRRDDLLLDD" },
+            new LevelDef { name = "Recursive Turn", rooms = new[] { new[] { "#########", "#.....#.#", "#.....#.#", "###...#.#", "#P.1..#.#", "#.......#", "#....##.#", "#....#..#", "#########" }, new[] { "#######", "#.....#", ".....U#", "#.....#", "#######" }, new[] { "#######", "#.....#", "#.....#", "....b.#", "#.....#", "#...x.#", "#######" } }, par = 16, solution = "RRRRRRRRRRRRURDD" },
+            // L11 — familiar cargo, but now with a forced change of pushing side. The wall below
+            // the crate prevents the short vertical solution; the exit is taken only after cargo
+            // has turned the corner onto its target.
+            new LevelDef { name = "The Drift", rooms = new[] { new[] { "###########", "#x.....p..#", "#.........#", "#...b.....#", "#...##....#", "#P........#", "###########" } }, par = 22, solution = "" },
+
+            // L12 — the opening P*~ strip demonstrates the two-cell geyser launch immediately.
+            // The landing then feeds a familiar corner-delivery problem rather than another walk.
+            new LevelDef { name = "The Geyser", rooms = new[] { new[] { "#############", "#x.........p#", "#...........#", "#...b.......#", "#...#.......#", "#...........#", "#P*~........#", "#############" } }, par = 23, solution = "" },
+
+            // L13 — cargo visibly holds the light button. The open gate drops the diver beside an
+            // opposing arrow, making the long lower detour a readable consequence of that rule.
+            new LevelDef { name = "Against the Arrow", rooms = new[] { new[] { "###########", "#P.b...B..#", "#####G#####", "#.....<..p#", "#.#######.#", "#.........#", "###########" } }, par = 24, solution = "" },
+
+            // L14 — one cargo piece must remain on the heavy plate while the diver takes the only
+            // open lower route. The dependency is unchanged from Chapter I, but the route is not.
+            new LevelDef { name = "Dead Weight", rooms = new[] { new[] { "###########", "#P.b.....W#", "#####H#####", "#.........#", "#.#########", "#........p#", "###########" } }, par = 26, solution = "" },
+
+            // L15 — the crate must use the one dry break in the water line. Once it is delivered,
+            // the diver swims across the water and takes the separate lower exit.
+            new LevelDef { name = "Deep Water", rooms = new[] { new[] { "#############", "#..P........#", "#..b........#", "#,.,,,,,,,..#", "#....x......#", "###########.#", "#......p....#", "#############" } }, par = 27, solution = "" },
+
+            // L16 — both pearls are exposed at opposite ends of one corridor. The central lock
+            // cannot open until the player has deliberately visited both sides.
+            new LevelDef { name = "Pearl Pair", rooms = new[] { new[] { "###############", "#k.....P.....k#", "#.###########.#", "#.............#", "#######K#######", "#######p#######", "###############" } }, par = 28, solution = "" },
+
+            // L17 — first hold the button, then take the long route to the toggle. The latch and
+            // light gate form two consecutive, visibly matched checkpoints before the exit.
+            new LevelDef { name = "The Shell Switch", rooms = new[] { new[] { "#############", "#P.b....B...#", "#.#########.#", "#.....T.....#", "######L######", "######G######", "#...........#", "#.#########.#", "#..........p#", "#############" } }, par = 29, solution = "" },
+
+            // L18 — cargo must travel around the long kelp bank, while the diver takes the direct
+            // route back through it. The contrast teaches exactly what kelp blocks.
+            new LevelDef { name = "Through the Kelp", rooms = new[] { new[] { "###############", "#P...p........#", "#..b..........#", "#.%%%%%%%%%%..#", "#..x..........#", "#.............#", "###############" } }, par = 30, solution = "" },
+
+            // L19 — the downward arrow is the safe entrance. After delivering cargo, the cracked
+            // tile is the only return, so crossing it early makes the mistake immediately legible.
+            new LevelDef { name = "No Way Back", rooms = new[] { new[] { "###########", "#Pp.......#", "#####c###v#", "#.........#", "#.b.....x.#", "#.........#", "###########" } }, par = 35, solution = "" },
+
+            // L20 — route cargo around the kelp bank to hold the button, then step onto the current.
+            // Its uninterrupted line carries the diver to the opened gate and the chapter exit.
+            new LevelDef { name = "Undertow", rooms = new[] { new[] { "##################", "#................#", "#P.b.............#", "#%%%%%%%%%%%%%%..#", "#B...............#", "#.ddddddddddddd..#", "###############G##", "#..............p.#", "##################" } }, par = 36, solution = "RRRRRRRRRRRRRURDDRDLLLLLLLLLLLLLLDDD" },
             new LevelDef { name = "Too Narrow", rooms = new[] { new[] { "###########", "#P.b=x....#", "#.#######.#", "#.........#", "#.#######.#", "#p........#", "###########" } }, par = 8, solution = "RRLLDDDD" },
             new LevelDef { name = "Slippery Cargo", rooms = new[] { new[] { "##########", "#........#", "#P.i....x#", "#.######.#", "#........#", "#..p.....#", "##########" } }, par = 9, solution = "RRLLDDRRD" },
-            new LevelDef { name = "Break Through", rooms = new[] { new[] { "#############", "#P...b...R.p#", "#############" } }, par = 10, solution = "RRRRRRRRRR" },
+            // L8 asks for two deliberate rock breaks before the exit route. Repeating the rule in
+            // one board turns L7's single interaction into practice and removes the old difficulty
+            // drop without adding an unexplained mechanic.
+            new LevelDef { name = "Break Through", rooms = new[] { new[] { "############", "#.........p#", "#..######..#", "#P.bR.bR...#", "#..........#", "############" } }, par = 13, solution = "RRRRRDRRRRUUU" },
             new LevelDef { name = "Throw the Switch", rooms = new[] { new[] { "############", "#P.........#", "#.########.#", "#.....T....#", "#####L######", "#....p.....#", "############" } }, par = 10, solution = "DDRRRRRLDD" },
             new LevelDef { name = "Off Beat", rooms = new[] { new[] { "#############", "#P...:.....p#", "#.###########", "#.###########", "#############" } }, par = 12, solution = "RRRLRRRRRRRR" },
-            new LevelDef { name = "Get a Run-Up", rooms = new[] { new[] { "###########", "#.........#", "#..P......#", "#..O......#", "#..x......#", "#.........#", "#........p#", "###########" } }, par = 12, solution = "UDDRRRRRRDDD" },
+            // L17: teach the run-up in one readable action, then make the player route around the
+            // wall bank. It follows L16 without dropping back to a trivial straight finish.
+            new LevelDef { name = "Get a Run-Up", rooms = new[] { new[] { "############", "#.........p#", "#..######.##", "#...x......#", "#...O......#", "#...P......#", "#..........#", "############" } }, par = 14, solution = "DUUDRRRRRUUUUR" },
             new LevelDef { name = "Down the Well", rooms = new[] { new[] { "###########", "#P........#", "#.#######.#", "#..b.....g#", "#########g#", "#########g#", "#.#######.#", "#........x#", "###########" } }, par = 13, solution = "DDRRRRRRRRDDD" },
             new LevelDef { name = "Your Shadow", rooms = new[] { new[] { "##########", "#P......p#", "#..####..#", "#E.#....e#", "#...##...#", "#........#", "#........#", "##########" } }, par = 17, solution = "RDDDRDRRRRRUUUUDU" },
             new LevelDef { name = "Colour Coded", rooms = new[] { new[] { "##########", "#........#", "#P.J.N...#", "#........#", "#..n....j#", "##########" } }, par = 21, solution = "RRRURDDLDRRRUULLLULDD" },
@@ -683,12 +2470,21 @@ namespace Parabox.EditorTools
             new LevelDef { name = "Facing Away", rooms = new[] { new[] { "##########", "#p......P#", "#........#", "#M...#..m#", "##########" } }, par = 13, solution = "LLLLLDLLURRLL" },
             new LevelDef { name = "One Way In", rooms = new[] { new[] { "##########", "#........#", "#P.b[..x.#", "#........#", "#........#", "##########" } }, par = 13, solution = "RURDLDRRRRDRU" },
             new LevelDef { name = "Carried Past", rooms = new[] { new[] { "########", "###x####", "###b####", "#P;p;..#", "###.##.#", "###....#", "########" } }, par = 14, solution = "RRRRRDDLLLUUUD" },
-            new LevelDef { name = "Drawn In", rooms = new[] { new[] { "#############", "#...........#", "#P...b......#", "#.#########.#", "#.#########.#", "#...........#", "#......x#Y..#", "#############" } }, par = 17, solution = "RRRURRDLLLLULDDDD" },
+            // L30 is transformed at parse time into the Chapter III synthesis arena: eight
+            // solution-validated wall masses, three direction commitments and two cargo
+            // dependencies are layered around this magnetic core. Keeping the concise authored
+            // route makes the transformation reproducible while the played board is fully distinct.
+            new LevelDef { name = "Magnetic Relay", rooms = new[] { new[] { "#############", "#...........#", "#P...b......#", "#.#########.#", "#.#########.#", "#...........#", "#......x#Y..#", "#############" } }, par = 17, solution = "RRRURRDLLLLULDDDD" },
             new LevelDef { name = "Set in Stone", rooms = new[] { new[] { "#########", "####...P#", "####..q.#", "##.bx#..#", "##......#", "####x####", "#########" } }, par = 18, solution = "LDDRDLLRUULLDDLLUR" },
-            new LevelDef { name = "Nothing to Brace", rooms = new[] { new[] { "###############", "#.............#", "#.............#", "#P-b...-.....x#", "#.............#", "#.............#", "###############" } }, par = 19, solution = "RURDLDRRRRRRRRRRDRU" },
-            new LevelDef { name = "Opposite Numbers", rooms = new[] { new[] { "##################", "#p..............P#", "#.......[........#", "#M.......#......m#", "#................#", "##################" } }, par = 21, solution = "LLLLLLLLLDLLURRLLLLLL" },
+            // Sand is a spatial constraint rather than a speed bump in a hallway. The central
+            // pillar and sand bank force a dry-ground re-approach before the final delivery.
+            new LevelDef { name = "Nothing to Brace", rooms = new[] { new[] { "#########", "#.......#", "#...#..P#", "#-b.#...#", "#-..#...#", "#-.x....#", "#########" } }, par = 18, solution = "ULLLLDDDLULURURDDD" },
+            // The mirror still inverts every input, but the two wall banks create short alternating
+            // commitments instead of a nine-command opening. The cage is crossed during setup,
+            // reusing its visual language without turning the board into a long corridor.
+            new LevelDef { name = "Opposite Numbers", rooms = new[] { new[] { "#########", "#...p...#", "##.##...#", "#...#...#", "#.m.#...#", "###.[MP.#", "#########" } }, par = 20, solution = "UUUULLLRRRRDLRULLLLR" },
             new LevelDef { name = "Two of Us", rooms = new[] { new[] { "############", "#P........p#", "#..####....#", "#E.#..[...e#", "#...##.....#", "#..........#", "############" } }, par = 23, solution = "RRLDDDRDRRRRUUURULRRRDU" },
-            new LevelDef { name = "The Undertow", rooms = new[] { new[] { "##############", "#P..........p#", "#..####......#", "#E.#..[.....e#", "#...##.......#", "#....##......#", "#-...........#", "##############" } }, par = 25, solution = "RRLDDDRDRDRRRUURULRRRRRUU" },
+            new LevelDef { name = "The Undertow", rooms = new[] { new[] { "##############", "#P..........p#", "#..####......#", "#E.#..[.....e#", "#...##.......#", "#....##......#", "#-..;........#", "##############" } }, par = 25, solution = "RRLDDDRDRDRRRUURULRRRRRUU" },
             new LevelDef { name = "Undertow Chamber", rooms = new[] { new[] { "###########", "#.........#", "#P.b......#", "#%%%%%%%..#", "#B........#", "#.dddddd..#", "########G##", "#.......Q.#", "###########" }, new[] { "####.####", "#.......#", "#..b....#", "...###..#", "#...x...#", "#......p#", "#########" } }, par = 38, solution = "RRRRRRURDDRDLLLLLLLDDDDDLULDDLDRRDRRRR" },
             new LevelDef { name = "Pulse Chamber", rooms = new[] { new[] { "#############", "#P...:.....Q#", "#.###########", "#.###########", "#############" }, new[] { "#########", "#...x...#", "#..###..#", "..b.....#", "#.......#", "#......p#", "#########" } }, par = 31, solution = "DURRRRRRRRRRRDRUULURRLDDDDRRRRR" },
             new LevelDef { name = "Boulder Chamber", rooms = new[] { new[] { "###########", "#.........#", "#..P......#", "#..O......#", "#..x......#", "#.........#", "#........Q#", "###########" }, new[] { "####.####", "#.......#", "#..b....#", "...###..#", "#...x...#", "#......p#", "#########" } }, par = 28, solution = "UDDRDDRRRRRDDDLULDDLDRRDRRRR" },
@@ -696,9 +2492,13 @@ namespace Parabox.EditorTools
             new LevelDef { name = "Pearl Chamber", rooms = new[] { new[] { "#########", "#P....k.#", "#.#####.#", "#.......#", "####K####", "###.Q.###", "#########" }, new[] { "####.####", "#.......#", "#..b....#", "#..###..#", "#...x...#", "#......p#", "#########" } }, par = 29, solution = "RRRRRRDDLLLDDDDLULDDLDRRDRRRR" },
             new LevelDef { name = "Coral Chamber", rooms = new[] { new[] { "#######", "#PQ...#", "###c#.#", "#.....#", "#.b.x.#", "#.....#", "#######" }, new[] { "#########", "#...x...#", "#..###..#", "..b......", "#.......#", "#......p#", "#########" } }, par = 38, solution = "RRDRUULURRLDDRRRRRRRDDLLDRRURRUULLLLDD" },
             new LevelDef { name = "Weight Chamber", rooms = new[] { new[] { "##########", "#P.b....W#", "#####H####", "#....Q...#", "##########" }, new[] { "####.####", "#p......#", "#.#####.#", "#.......#", "#..b....#", "#..###..#", "#...x...#", "#.......#", "#########" } }, par = 36, solution = "RRRRRRLLDDDLLLDDRRRDLULDDLDRRLUUULUU" },
-            new LevelDef { name = "Switch Chamber", rooms = new[] { new[] { "#########", "#P.b...B#", "#####G###", "#...Q...#", "#########" }, new[] { "#########", "#...x...#", "#..###..#", "#.....b..", "#.......#", "#p......#", "#########" } }, par = 28, solution = "RRRRRLDDLLDLUURULLRDDDDLLLLL" },
-            new LevelDef { name = "One-Way Chamber", rooms = new[] { new[] { "#######", "#Q.<.P#", "#.###.#", "#.....#", "#######" }, new[] { "#########", "#.......#", "#...x...#", "#..###..#", "#....b..#", "#.......#", "#.#####.#", "#......p#", "####.####" } }, par = 34, solution = "DDLLLLUUULLLUUURRRRDRUURULLRDDDRDD" },
-            new LevelDef { name = "The Machine Within", rooms = new[] { new[] { "############", "#P..b..R...#", "##########.#", "#....T.....#", "######L#####", "#.....O....#", "#.....x....#", "#.##########", "#Q.........#", "############" }, new[] { "####.####", "#.......#", "#..b....#", "#..###..#", "#...x...#", "#......p#", "#########" } }, par = 43, solution = "RRRRRRRRRDDLLLLLRDDLDLLLLDDDDLULDDLDRRDRRRR" },
+            new LevelDef { name = "Switch Chamber", rooms = new[] { new[] { "#########", "#P.b...B#", "#####G###", "#...Q...#", "#########" }, new[] { "#########", "#.Y#x...#", "#..###..#", "#.....b..", "#.......#", "#p...c..#", "#########" } }, par = 22, solution = "RRRRRLDDLLDLUUDDDLLLLL" },
+            new LevelDef { name = "One-Way Chamber", rooms = new[] { new[] { "#######", "#Q.<.P#", "#.###.#", "#.....#", "#######" }, new[] { "#########", "#.......#", "#...x...#", "#..###u.#", "#....b..#", "#.......#", "#.#####.#", "#......p#", "####.####" } }, par = 34, solution = "DDLLLLUUULLLUUURRRRDRUURULLRDDDRDD" },
+            // FINAL SYNTHESIS: the outer machine still checks break -> toggle -> charged boulder
+            // before revealing the player-shaped chamber. Inside, two crates share one turning
+            // lane around a central divider. The tempting near-side deliveries deadlock the far
+            // target, so assignment and order—not corridor length—create the finale difficulty.
+            new LevelDef { name = "The Machine Within", rooms = new[] { new[] { "############", "#P..b..R...#", "##########.#", "#....T.....#", "######L#####", "#.....O....#", "#.....x....#", "#.##########", "#Q.........#", "############" }, new[] { "####.####", "#.......#", "#..b#b..#", "#.......#", "#.x.#.x.#", "#......p#", "#########" } }, par = 53, solution = "RRRRRRRRRDDLLLLLRDDLDLLLLDDDRDRDLLLRRUULLDLDRRRURDRDD" },
         };
 
         // ================================================= level prefabs
@@ -711,13 +2511,23 @@ namespace Parabox.EditorTools
             return result;
         }
 
-        static GameObject BuildLevelPrefab(int index, LevelDef def, Tiles t)
+        static GameObject BuildLevelPrefab(int index, LevelDef def, Tiles t,
+                                           string outputPath = null)
         {
             var root = new GameObject("Level_" + (index + 1));
             var levelInfo = root.AddComponent<ParaboxLevel>();
             levelInfo.levelName = def.name;
             levelInfo.par = def.par;   // the move limit is derived from this at runtime
-            levelInfo.solution = def.solution;   // the tutorial replays this on the real board
+            var progression = CampaignProgression.ForLevel(index);
+            levelInfo.difficultyRating = progression.rating;
+            levelInfo.designComplexity = def.designComplexity;
+            levelInfo.chapter = progression.chapter;
+            levelInfo.chapterName = progression.chapterName;
+            levelInfo.chapterPhilosophy = progression.philosophy;
+            levelInfo.progressionRole = progression.role;
+            levelInfo.mechanicFocus = progression.mechanicFocus;
+            levelInfo.introducesMechanic = progression.introducesMechanic;
+            levelInfo.solution = def.solution;   // solver proof / par validation; never exposed by tutorials
 
             float offsetX = 0f;
             for (int r = 0; r < def.rooms.Length; r++)
@@ -829,6 +2639,21 @@ namespace Parabox.EditorTools
                                 mk.x = x; mk.y = y; mk.heavy = ch == 'H';
                             }
                         }
+                        else if (ColourCargoOnGoals.TryGetValue(ch, out var placedColour))
+                        {
+                            // Compact authoring symbol for a coloured cargo piece already resting
+                            // on its matching mark. Chapter V uses these as a staging line: the
+                            // incoming piece shifts every staged cargo before all marks are filled,
+                            // so none of these are decorative pre-solved objects.
+                            var goal = Place(t.boxGoal, roomGO.transform, pos);
+                            var goalMarker = goal.AddComponent<GoalMarker>();
+                            goalMarker.x = x; goalMarker.y = y; goalMarker.colour = placedColour;
+
+                            var cargo = Place(t.box, roomGO.transform, pos);
+                            var cargoMarker = cargo.AddComponent<BoxMarker>();
+                            cargoMarker.x = x; cargoMarker.y = y;
+                            cargoMarker.containsRoomId = -1; cargoMarker.colour = placedColour;
+                        }
                         else if (CrateKinds.TryGetValue(ch, out var crate))
                         {
                             var go = Place(t.box, roomGO.transform, pos);
@@ -845,6 +2670,10 @@ namespace Parabox.EditorTools
                             var mk = go.AddComponent<BoxMarker>();
                             mk.x = x; mk.y = y; mk.containsRoomId = inner;
                             mk.anchored = AnchoredBoxes.ContainsKey(ch);
+                            // Every recursive room keeps a depth-coloured miniature. The former
+                            // pink player silhouette made anchored chambers indistinguishable and
+                            // hid the blue/indigo/violet nesting hierarchy.
+                            mk.playerContainer = false;
                             Color inC = RoomColors[inner % RoomColors.Length];
                             var back = go.transform.Find("Backing"); if (back) back.GetComponent<SpriteRenderer>().color = Darken(inC, 0.5f);
                             var frame = go.transform.Find("Frame"); if (frame) frame.GetComponent<SpriteRenderer>().color = Lighten(inC, 0.3f);
@@ -877,7 +2706,11 @@ namespace Parabox.EditorTools
                 }
             }
 
-            return SavePrefab(root, LevelDir + "/Level_" + (index + 1) + ".prefab");
+            if (index >= 40)
+                levelInfo.designComplexity =
+                    ChapterFiveDifficultyEvidence.Evaluate(root, levelInfo.solution).score;
+
+            return SavePrefab(root, outputPath ?? LevelDir + "/Level_" + (index + 1) + ".prefab");
         }
 
         // Level-string chars for the directional mechanics. WASD reads as "carried this way";
@@ -931,6 +2764,14 @@ namespace Parabox.EditorTools
         static readonly Dictionary<char, int> ColourGoals = new Dictionary<char, int>
         {
             { 'j', 1 }, { 'n', 2 },
+        };
+
+        // A/C mean cargo-on-matching-goal for compact multi-cargo staging. They create TWO
+        // markers at one cell (goal first, cargo above it) and are intentionally kept separate
+        // from CrateKinds so object and target evidence both count them.
+        static readonly Dictionary<char, int> ColourCargoOnGoals = new Dictionary<char, int>
+        {
+            { 'A', 1 }, { 'C', 2 },
         };
 
         static string MechName(char ch)
@@ -1040,13 +2881,15 @@ namespace Parabox.EditorTools
             {
                 bd.bgPhoto = MakeWorldSprite(backdrop.transform, "GamePhoto", gamePhoto, -206);
                 bd.bgPhoto.transform.localScale = new Vector3(30f, 18f, 1f);   // editor preview; view-fit at runtime
-                // subtle dark wash so the puzzle stays readable over the artwork
+                // The selected arcade-chamber art already has a restrained vignette; keep only a
+                // near-transparent wash so the authored cyan seams remain visible.
                 var photoWash = MakeWorldSprite(backdrop.transform, "PhotoWash", spr.fill, -205);
-                photoWash.color = new Color(0.02f, 0.05f, 0.09f, 0.30f);
+                photoWash.color = new Color(0.02f, 0.05f, 0.09f, 0.08f);
                 photoWash.transform.localScale = new Vector3(200f, 200f, 1f);
             }
 
-            // Ambient particles per ocean region (calm coastal bubbles / reef bubble field / abyss bioluminescence).
+            // Small sprite templates for the five chapter identities. AmbientParticles derives the
+            // restrained chapter-specific palette/motion at runtime, including Chapters IV and V.
             var ambientGO = new GameObject("Ambient");
             ambientGO.transform.SetParent(cam.transform, false);
             ambientGO.transform.localPosition = new Vector3(0f, 0f, 15f);
@@ -1073,6 +2916,9 @@ namespace Parabox.EditorTools
                     driftY = 0.40f, swayAmp = 0.18f, swaySpeed = 0.9f, spin = 0f, baseAlpha = 0.60f, flicker = true,
                 },
             };
+            // Particles render behind the board and remain deliberately sparse, so they add chapter
+            // identity without competing with puzzle symbols.
+            ambientGO.SetActive(true);
 
             CreateEventSystem();
             CreateMusicPlayer();
@@ -1150,9 +2996,9 @@ namespace Parabox.EditorTools
             hudReveal.slide = bar;
 
             // ---- level-1 cinematic onboarding (raised video panel) -----------------------
-            // The tutorial "video" is the real board rendered into a RenderTexture and shown inside a
-            // premium raised card: a soft drop shadow + a polished frame, floating over a dimmed
-            // background so it reads as elevated, with the video as the clear focus. Its OWN canvas
+            // The tutorial video is a prebuilt, spoiler-free mechanic vignette shown inside a
+            // premium raised card: a soft drop shadow + polished frame over a dimmed background.
+            // It uses its OWN canvas
             // (above the HUD, own raycaster) so hiding the gameplay HUD never touches it. Built inert
             // (scrim + panel invisible, choice non-interactive) so levels 2-50 show nothing.
             var cineTf = CreateCanvas("CinematicCanvas");
@@ -1180,7 +3026,7 @@ namespace Parabox.EditorTools
             // card body
             var cardImg = UIImage(videoPanelRT, "Card", spr.fill, Hex("0C2036"), Vector2.zero, new Vector2(cardW, cardH));
             cardImg.type = Image.Type.Sliced;
-            // the video (RenderTexture assigned at runtime; white so the texture shows untinted)
+            // dark video backing; PrebuildStaticUi serializes the mechanic vignette above it
             var vidRT = MakeRect(videoPanelRT, "Video", Vector2.zero, new Vector2(vidW, vidH));
             var videoImg = vidRT.gameObject.AddComponent<RawImage>();
             videoImg.color = Color.white;
@@ -1198,7 +3044,46 @@ namespace Parabox.EditorTools
             capOutline.effectColor = new Color(0f, 0.05f, 0.09f, 0.9f);
             capOutline.effectDistance = new Vector2(2f, -2f);
 
-            // the three options, below the card
+            // Compact first-appearance lessons use their own serialized card. The cinematic
+            // caption lives under an invisible video panel, so reusing it made World-1 lessons
+            // appear only after the player had already encountered their obstacles.
+            var briefRT = MakeRect(cine, "MechanicBriefingPanel", new Vector2(0, 285),
+                new Vector2(1040, 164));
+            var briefImage = briefRT.gameObject.AddComponent<Image>();
+            briefImage.sprite = spr.fill;
+            briefImage.type = Image.Type.Sliced;
+            briefImage.color = Color.white;
+            briefImage.raycastTarget = false;
+            var briefGradient = briefRT.gameObject.AddComponent<UIGradient>();
+            briefGradient.top = Hex("18375A");
+            briefGradient.bottom = Hex("040B17");
+            var briefOutline = briefRT.gameObject.AddComponent<Outline>();
+            briefOutline.effectColor = WithAlpha(Hex("46CEE0"), 0.88f);
+            briefOutline.effectDistance = new Vector2(2f, -2f);
+            var briefShadow = briefRT.gameObject.AddComponent<Shadow>();
+            briefShadow.effectColor = new Color(0f, 0f, 0.02f, 0.78f);
+            briefShadow.effectDistance = new Vector2(0f, -9f);
+            var briefGroup = briefRT.gameObject.AddComponent<CanvasGroup>();
+            briefGroup.alpha = 0f;
+            briefGroup.interactable = false;
+            briefGroup.blocksRaycasts = false;
+            UIImage(briefRT, "LeftAccent", spr.fill, Hex("B76CFF"), new Vector2(-504, 0),
+                new Vector2(8, 126));
+            var briefTitle = MakeText(briefRT, "BriefingTitle", "NEW MECHANIC", 22,
+                Hex("83EDFF"), new Vector2(0, 45), new Vector2(970, 36), FontStyle.Bold);
+            var briefText = MakeText(briefRT, "BriefingText", string.Empty, 27, Color.white,
+                new Vector2(0, -17), new Vector2(970, 82), FontStyle.Bold);
+            briefText.resizeTextForBestFit = true;
+            briefText.resizeTextMinSize = 18;
+            briefText.resizeTextMaxSize = 27;
+            briefText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            briefText.verticalOverflow = VerticalWrapMode.Truncate;
+            var briefHint = MakeText(briefRT, "SkipHint", "PURPLE / RB  •  SKIP", 16,
+                Hex("B76CFF"), new Vector2(390, -63), new Vector2(190, 24), FontStyle.Bold);
+            briefHint.alignment = TextAnchor.MiddleRight;
+
+            // Repeat/Try live below the card. Skip is a separate top-right action so it remains
+            // available throughout the entire demonstration and not only when the choices appear.
             var choiceRT = MakeRect(cine, "CineChoice", new Vector2(0, -410), new Vector2(900, 120),
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
             var choiceGroup = choiceRT.gameObject.AddComponent<CanvasGroup>();
@@ -1206,7 +3091,14 @@ namespace Parabox.EditorTools
             var againBtn = MakeButton(choiceRT, "TutAgain", "Watch Again", new Vector2(-290, 0), new Vector2(232, 64), 21, Hex("2A5570"));
             MenuButtonGlow(choiceRT, new Vector2(0, 0), new Vector2(272, 80), Hex("46D8C0"), spr);
             var tryBtn = MakeButton(choiceRT, "TutTry", "Try It Yourself", new Vector2(0, 0), new Vector2(272, 80), 25, Hex("4CE2C8"), Hex("2AA890"));
-            var skipBtn = MakeButton(choiceRT, "TutSkip", "Skip Tutorial", new Vector2(290, 0), new Vector2(232, 64), 21, Hex("24405C"));
+            var skipBtn = MakeButton(cine, "TutorialSkip", "SKIP [PURPLE]", Vector2.zero,
+                new Vector2(250, 64), 20, Hex("B76CFF"), Hex("5A2297"));
+            var skipRT = (RectTransform)skipBtn.transform;
+            skipRT.anchorMin = skipRT.anchorMax = Vector2.one;
+            skipRT.pivot = Vector2.one;
+            skipRT.anchoredPosition = new Vector2(-38f, -32f);
+            skipBtn.navigation = new Navigation { mode = Navigation.Mode.None };
+            skipBtn.gameObject.SetActive(false);
 
             var tutFx = cine.gameObject.AddComponent<TutorialFx>();
             tutFx.scrimGroup = scrimGroup;
@@ -1215,6 +3107,10 @@ namespace Parabox.EditorTools
             tutFx.videoImage = videoImg;
             tutFx.captionGroup = capGroup;
             tutFx.captionText = capText;
+            tutFx.briefingGroup = briefGroup;
+            tutFx.briefingRT = briefRT;
+            tutFx.briefingTitleText = briefTitle;
+            tutFx.briefingText = briefText;
             tutFx.choiceGroup = choiceGroup;
             tutFx.choiceRT = choiceRT;
             tutFx.againButton = againBtn;
@@ -1325,19 +3221,6 @@ namespace Parabox.EditorTools
             loseBurst.baseAlpha = 0.7f;
             burstRT.gameObject.SetActive(false);   // LoseFx enables it on the beat
 
-            // Each option animates on its own timing, so they arrive one after the other.
-            // Colours come from the game's OWN ocean palette rather than the generic room colours:
-            // Restart was RoomColors[3] — a grass green — sitting on a dark ocean-navy scrim, which
-            // belonged to no part of this game. Teal reads as the primary action against the navy;
-            // the slate recedes without disappearing.
-            var retryHolder = MakeRect(tuGO.transform, "RestartHolder", new Vector2(-124f, -132f), new Vector2(232f, 72f));
-            var retryCG = retryHolder.gameObject.AddComponent<CanvasGroup>();
-            var retryBtn = MakeButton(retryHolder, "RetryButton", "Restart", Vector2.zero, new Vector2(232f, 72f), 26, Hex("2F93AD"));
-
-            var levelsHolder = MakeRect(tuGO.transform, "LevelsHolder", new Vector2(124f, -132f), new Vector2(232f, 72f));
-            var levelsCG = levelsHolder.gameObject.AddComponent<CanvasGroup>();
-            var toLevelsBtn = MakeButton(levelsHolder, "ToLevelsButton", "Level Select", Vector2.zero, new Vector2(232f, 72f), 26, Hex("2A5570"));
-
             // full-screen impact flash, ABOVE the dim but below the text
             var pulseRT = MakeRect(tuGO.transform, "Pulse", Vector2.zero, Vector2.zero, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
             var pulseImg = pulseRT.gameObject.AddComponent<Image>();
@@ -1353,10 +3236,7 @@ namespace Parabox.EditorTools
             loseFx.titleText = loseTitle;
             loseFx.subText = loseSub;
             loseFx.burst = burstRT.gameObject;
-            loseFx.restartGroup = retryCG;
-            loseFx.restartRT = retryHolder;
-            loseFx.levelsGroup = levelsCG;
-            loseFx.levelsRT = levelsHolder;
+            loseFx.leaderboardPanelSprite = spr.fill;
             loseFx.shakeTarget = follow;   // the board jolts via the gameplay camera
             tuGO.SetActive(false);
 
@@ -1400,8 +3280,6 @@ namespace Parabox.EditorTools
             // blue gradient-ish floor, bright cyan neon frame, orange box / yellow player.
             gm.levelThemes = ChapterThemes();   // 3 evolving chapters (Levels 1-10 / 11-20 / 21-30)
             gm.timeUpPanel = tuGO;
-            gm.retryButton = retryBtn;
-            gm.backToLevelsButton = toLevelsBtn;
             gm.loseFx = loseFx;
 
             // on-screen control bar
@@ -1413,6 +3291,7 @@ namespace Parabox.EditorTools
             gm.screenFade = gameFade;   // ...and fades back OUT to it when the level is done
 
             string path = SceneDir + "/Game.unity";
+            LuxoddArcadeUiSceneBaker.BakeScene(scene);
             EditorSceneManager.SaveScene(scene, path);
             return path;
         }
@@ -1492,6 +3371,7 @@ namespace Parabox.EditorTools
 
             var canvas = CreateCanvas("MenuCanvas");
             var ui = canvas.gameObject.AddComponent<MainMenuUI>();
+            ui.unlockAllForTesting = false;
 
             // the drifting squares sit in their OWN group, behind everything: the home text has to hide
             // when the level board opens, but this ambience should survive it.
@@ -1548,11 +3428,12 @@ namespace Parabox.EditorTools
             // credits, like the reference
             AddTextShadow(MakeText(homeRoot, "Credit1", "a game by Nurhayot", 28, Hex("D6E8F4"),
                 new Vector2(0, 74), new Vector2(1100, 38), FontStyle.Bold));
-            // big keycap-style buttons — Start game / Menu (clickable + keyboard)
-            ui.playButton   = MakePrompt(homeRoot, "PlayPrompt", "Start game", new Vector2(-135, -150), new Vector2(300, 92), spr);
+            // The scene baker below stores the Luxodd colours and final layout directly in the
+            // generated scene, so these controls already look correct before entering Play Mode.
+            ui.playButton   = MakePrompt(homeRoot, "PlayPrompt", "PLAY", new Vector2(-195, -150), new Vector2(350, 88), spr);
             // "Levels", not "Menu": it opens the progression map. The field has always been called
             // levelsButton and has always called OpenLevelBoard — only the label was lying.
-            ui.levelsButton = MakePrompt(homeRoot, "LevelsPrompt", "Levels",   new Vector2(185, -150),  new Vector2(200, 92), spr);
+            ui.levelsButton = MakePrompt(homeRoot, "LevelsPrompt", "LEVEL SELECT", new Vector2(195, -150), new Vector2(350, 88), spr);
             // no Quit on the title screen (matches the reference); MainMenuUI guards the null.
 
             BuildProgressionMap(canvas, spr, ui, levelCount);
@@ -1560,6 +3441,7 @@ namespace Parabox.EditorTools
             CreateFade(canvas);
 
             string path = SceneDir + "/MainMenu.unity";
+            LuxoddArcadeUiSceneBaker.BakeScene(scene);
             EditorSceneManager.SaveScene(scene, path);
             return path;
         }
@@ -1719,73 +3601,21 @@ namespace Parabox.EditorTools
                 int c = i / per;
                 var th = themes[Mathf.Clamp(c, 0, themes.Length - 1)];
                 Vector2 p = MapPos(c, i % per, per, baseY[Mathf.Clamp(c, 0, baseY.Length - 1)], halfSpan);
-                // the last level is the destination — it earns extra presence
-                float size = (i == levelCount - 1) ? nodeSize * 1.22f : nodeSize;
-                bool isFinal = i == levelCount - 1;
-
-                // The destination is marked BEFORE you can reach it: a standing gold aura burning
-                // at the end of the route from the first time you open the map. Every other node
-                // is a stop; this one is the thing you are walking toward.
-                if (isFinal)
-                    UIImage(glowLayers[Mathf.Clamp(c, 0, chapters - 1)], "FinalAura", spr.glow,
-                        WithAlpha(th.player, 0.42f), p, new Vector2(size * 2.4f, size * 2.4f))
-                        .gameObject.AddComponent<UIPulse>();
+                float size = nodeSize;
 
                 ui.levelButtons[i] = MakeMapNode(nodeLayers[Mathf.Clamp(c, 0, chapters - 1)],
                     glowLayers[Mathf.Clamp(c, 0, chapters - 1)], "Level" + (i + 1), i + 1, th, spr, p, size,
                     out ui.levelFills[i], out ui.levelBorders[i], out ui.levelNumbers[i],
                     out ui.levelLocks[i], out ui.levelChecks[i], out ui.levelHighlights[i], out ui.levelStars[i]);
 
-                if (isFinal)
-                {
-                    // gold outer ring + a label, so it reads as the final challenge even at a glance
-                    AddRing(ui.levelButtons[i].transform, "FinalRing",
-                        new Vector2(size + 18f, size + 18f), spr.cellRing, th.player);
-                    AddTextShadow(MakeText(ui.levelButtons[i].transform, "FinalLabel", "FINAL", 15,
-                        WithAlpha(Lighten(th.player, 0.25f), 0.95f),
-                        new Vector2(0f, -size * 0.5f - 18f), new Vector2(160f, 22f), FontStyle.Bold));
-                }
             }
 
-            // ---- the gates -------------------------------------------------------------
-            // A shut barrier straddling the route at each chapter boundary. It is visible from the
-            // first time you open the map, so by the time it breaks it has been in your way for
-            // ten levels — you cannot celebrate removing an obstacle nobody knew existed.
+            // Chapter locking is already clear from dim, disabled nodes. Keep these compatibility
+            // arrays for MainMenuUI, but do not add the old bar-and-padlock gate decoration.
             ui.chapterGates = new GameObject[chapters];
             ui.gateLeft = new RectTransform[chapters];
             ui.gateRight = new RectTransform[chapters];
             ui.gateLocks = new RectTransform[chapters];
-            for (int c = 1; c < chapters; c++)
-            {
-                var th = themes[Mathf.Clamp(c, 0, themes.Length - 1)];
-                Vector2 a = MapPos(c - 1, per - 1, per, baseY[Mathf.Clamp(c - 1, 0, baseY.Length - 1)], halfSpan);
-                Vector2 b = MapPos(c, 0, per, baseY[Mathf.Clamp(c, 0, baseY.Length - 1)], halfSpan);
-                // the route bows outward on the hand-off, so meet it where it actually is
-                Vector2 mid = (a + b) * 0.5f + new Vector2(Mathf.Sign(a.x) * 45f, 0f);
-
-                var gate = MakeRect(mapCam, "Gate" + c, mid, new Vector2(240f, 60f));
-                ui.chapterGates[c] = gate.gameObject;
-
-                // the route here runs vertically, so the barrier lies across it
-                var gl = MakeRect(gate, "GateL", new Vector2(-58f, 0f), new Vector2(112f, 26f));
-                var glImg = gl.gameObject.AddComponent<Image>();
-                glImg.sprite = spr.fill; glImg.type = Image.Type.Sliced;
-                glImg.color = Darken(th.frame, 0.55f); glImg.raycastTarget = false;
-                AddRing(gl, "GLEdge", new Vector2(112f, 26f), spr.ringThin, WithAlpha(th.frame, 0.7f));
-                ui.gateLeft[c] = gl;
-
-                var gr = MakeRect(gate, "GateR", new Vector2(58f, 0f), new Vector2(112f, 26f));
-                var grImg = gr.gameObject.AddComponent<Image>();
-                grImg.sprite = spr.fill; grImg.type = Image.Type.Sliced;
-                grImg.color = Darken(th.frame, 0.55f); grImg.raycastTarget = false;
-                AddRing(gr, "GREdge", new Vector2(112f, 26f), spr.ringThin, WithAlpha(th.frame, 0.7f));
-                ui.gateRight[c] = gr;
-
-                var lk = MakeRect(gate, "GateLock", Vector2.zero, new Vector2(44f, 44f));
-                UIImage(lk, "GateLockGlow", spr.glow, WithAlpha(th.frame, 0.45f), Vector2.zero, new Vector2(76f, 76f));
-                UIImage(lk, "GateLockIcon", spr.lockIcon, Lighten(th.frame, 0.35f), Vector2.zero, new Vector2(38f, 38f));
-                ui.gateLocks[c] = lk;
-            }
 
             ui.progressFx = panel.gameObject.AddComponent<MapProgressFx>();
             ui.progressFx.burstGlow = spr.glow;
@@ -1899,15 +3729,11 @@ namespace Parabox.EditorTools
             highlightGO = hi.gameObject;
             highlightGO.SetActive(false);
 
-            var chk = MakeRect(rt, "Check", new Vector2(size * 0.5f - 13f, size * 0.5f - 13f), new Vector2(26f, 26f));
-            var chkImg = chk.gameObject.AddComponent<Image>();
-            chkImg.sprite = spr.disc; chkImg.type = Image.Type.Simple;
-            chkImg.color = th.wall; chkImg.raycastTarget = false;
-            MakeText(chk, "Tick", "✓", 16, th.box, Vector2.zero, new Vector2(26f, 26f), FontStyle.Bold);
-            checkGO = chk.gameObject;
-            checkGO.SetActive(false);
+            // Completion is shown by the node's chapter colour. A second circular check badge made
+            // the compact tile look crowded, so newly generated maps intentionally omit it.
+            checkGO = null;
 
-            // perfect = solved at par. Opposite corner from the tick so both can show at once.
+            // Perfect = solved at par. This is the only corner badge on a level tile.
             var st = MakeRect(rt, "Perfect", new Vector2(-size * 0.5f + 13f, size * 0.5f - 13f), new Vector2(30f, 30f));
             UIImage(st, "PerfectGlow", spr.glow, WithAlpha(th.player, 0.75f), Vector2.zero, new Vector2(46f, 46f));
             UIImage(st, "PerfectStar", spr.star, th.player, Vector2.zero, new Vector2(26f, 26f));
@@ -1972,14 +3798,11 @@ namespace Parabox.EditorTools
                 bd.rays[i].transform.localPosition = new Vector3((i - 1) * 7f, 4f, 0.05f);
                 bd.rays[i].transform.localEulerAngles = new Vector3(0f, 0f, (i - 1) * 10f + 6f);
             }
-            var gamePhoto = LoadGameBgImage();
-            if (gamePhoto != null)
+            var menuPhoto = LoadMenuBgImage();
+            if (menuPhoto != null)
             {
-                bd.bgPhoto = MakeWorldSprite(backdrop.transform, "GamePhoto", gamePhoto, -206);
+                bd.bgPhoto = MakeWorldSprite(backdrop.transform, "MenuPhoto", menuPhoto, -206);
                 bd.bgPhoto.transform.localScale = new Vector3(30f, 18f, 1f);
-                var photoWash = MakeWorldSprite(backdrop.transform, "PhotoWash", spr.fill, -205);
-                photoWash.color = new Color(0.02f, 0.05f, 0.09f, 0.30f);
-                photoWash.transform.localScale = new Vector3(200f, 200f, 1f);
             }
             return bd;
         }
@@ -2077,16 +3900,26 @@ namespace Parabox.EditorTools
             return null;
         }
 
-        // Optional background music. The bundled CC0 puzzle track is preferred, while Music.*
-        // remains available as a simple replacement name for future customization.
+        // Optional background music. The generated neon arcade loop is preferred, while Music.*
+        // and the older bundled tracks remain available as safe authoring fallbacks.
         static AudioClip LoadMusicClip()
         {
             // preferred names first
-            string[] names = { "Sci-Fi Puzzle In-Game 1 - MintoDog", "Music", "music" };
+            string[] names =
+            {
+                "Resources/Music/NeonPuzzleParty",
+                "NeonPuzzleParty",
+                "Music",
+                "music",
+                "Flowerbed Fields - Zane Little Music",
+                "Sci-Fi Puzzle In-Game 1 - MintoDog"
+            };
             foreach (var n in names)
                 foreach (var ext in new[] { ".ogg", ".mp3", ".wav" })
                 {
-                    string path = Root + "/Audio/" + n + ext;
+                    string path = n.StartsWith("Resources/")
+                        ? Root + "/" + n + ext
+                        : Root + "/Audio/" + n + ext;
                     string abs = Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
                     if (File.Exists(abs))
                     {

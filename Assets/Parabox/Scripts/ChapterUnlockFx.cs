@@ -44,6 +44,15 @@ namespace Parabox
             CanvasGroup newRegion, IList<Image> newRoad, Color roadLit, RectTransform firstNode, GameObject firstRing,
             float doneY, float newY)
         {
+            // The approved map is one wide five-panel composition.  The legacy chapter ceremony
+            // was authored for a tall route and zoomed the map to 1.28x while focusing only its Y
+            // coordinate.  On the five-panel layout that necessarily cuts off Chapter I and V.
+            // Keep the wave, node punches, chapter reveal and activation effects, but hold the
+            // complete journey in frame for every 10->11 / 20->21 / 30->31 / 40->41 transition.
+            bool preserveWholeJourney = mapCam != null
+                && mapCam.Find("ApprovedFiveChapterMap") != null;
+            if (preserveWholeJourney) SetWholeJourneyPose(mapCam);
+
             // the new region must not be on screen before we open the gate
             if (newRegion != null) { newRegion.alpha = 0f; }
             if (firstRing != null) firstRing.SetActive(false);
@@ -53,7 +62,10 @@ namespace Parabox
             while (t < freeze) { t += Time.unscaledDeltaTime; yield return null; }
 
             // ---- 1. push in on the chapter you just finished ---------------------------
-            yield return MoveCam(mapCam, Focus(doneY), zoom, focusDur);
+            if (preserveWholeJourney)
+                yield return HoldWholeJourney(mapCam, focusDur);
+            else
+                yield return MoveCam(mapCam, Focus(doneY), zoom, focusDur);
 
             // ---- 2. a wave of light runs the length of the region, toward the gate ------
             Sfx.Ding();
@@ -131,7 +143,10 @@ namespace Parabox
             if (newRegion != null) newRegion.alpha = 1f;
 
             // ---- 6. travel into it ------------------------------------------------------
-            yield return MoveCam(mapCam, Focus(newY), zoom, travelDur);
+            if (preserveWholeJourney)
+                yield return HoldWholeJourney(mapCam, travelDur);
+            else
+                yield return MoveCam(mapCam, Focus(newY), zoom, travelDur);
 
             // ---- 7. its road lights, and the first level of the new area wakes ----------
             if (newRoad != null)
@@ -152,6 +167,25 @@ namespace Parabox
 
             // ---- 8. pull back so the whole journey is visible again ---------------------
             yield return MoveCam(mapCam, Vector2.zero, 1f, settleDur);
+        }
+
+        static void SetWholeJourneyPose(RectTransform cam)
+        {
+            if (cam == null) return;
+            cam.anchoredPosition = Vector2.zero;
+            cam.localScale = Vector3.one;
+        }
+
+        IEnumerator HoldWholeJourney(RectTransform cam, float dur)
+        {
+            float t = 0f;
+            while (t < dur)
+            {
+                t += Time.unscaledDeltaTime;
+                SetWholeJourneyPose(cam);
+                yield return null;
+            }
+            SetWholeJourneyPose(cam);
         }
 
         // The map camera: the map lives under one rect, so scaling and offsetting it IS a camera.

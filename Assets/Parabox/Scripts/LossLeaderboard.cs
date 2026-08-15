@@ -29,19 +29,38 @@ namespace Parabox
     {
         public const int Capacity = 10;
 
-        public CanvasGroup Group { get; private set; }
-        public RectTransform Rect => (RectTransform)transform;
+        [SerializeField] CanvasGroup group;
+        [SerializeField] Text[] rankLabels = new Text[Capacity];
+        [SerializeField] Text[] playerLabels = new Text[Capacity];
+        [SerializeField] Text[] scoreLabels = new Text[Capacity];
+        [SerializeField] Image[] rowBackings = new Image[Capacity];
+        [SerializeField] Text titleLabel;
+        [SerializeField] Text columnLabel;
+        [SerializeField] Image panel;
+        [SerializeField] Outline outline;
 
-        readonly Text[] rankLabels = new Text[Capacity];
-        readonly Text[] playerLabels = new Text[Capacity];
-        readonly Text[] scoreLabels = new Text[Capacity];
-        readonly Image[] rowBackings = new Image[Capacity];
-        Text titleLabel;
-        Text columnLabel;
-        Image panel;
-        Outline outline;
+        public CanvasGroup Group => group;
+        public RectTransform Rect => (RectTransform)transform;
         Color accent;
         Color backing;
+
+        public bool IsFullyPrebuilt
+        {
+            get
+            {
+                if (group == null || panel == null || outline == null || titleLabel == null
+                    || columnLabel == null || rankLabels == null || playerLabels == null
+                    || scoreLabels == null || rowBackings == null
+                    || rankLabels.Length != Capacity || playerLabels.Length != Capacity
+                    || scoreLabels.Length != Capacity || rowBackings.Length != Capacity)
+                    return false;
+                for (int i = 0; i < Capacity; i++)
+                    if (rankLabels[i] == null || playerLabels[i] == null
+                        || scoreLabels[i] == null || rowBackings[i] == null)
+                        return false;
+                return true;
+            }
+        }
 
         public static LossLeaderboard Create(Transform parent, Font font, Sprite panelSprite,
             Color accent, Color backing)
@@ -68,16 +87,21 @@ namespace Parabox
             shadow.effectDistance = new Vector2(0f, -7f);
             board.outline = go.AddComponent<Outline>();
             board.outline.effectDistance = new Vector2(2f, -2f);
-            board.Group = go.GetComponent<CanvasGroup>();
-            board.Group.alpha = 0f;
-            board.Group.interactable = false;
-            board.Group.blocksRaycasts = false;
+            board.group = go.GetComponent<CanvasGroup>();
+            board.group.alpha = 0f;
+            board.group.interactable = false;
+            board.group.blocksRaycasts = false;
 
             board.Build(font != null ? font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
             board.ApplyTheme(accent, backing);
             board.SetEntries(null);
-            LuxoddGameService.RegisterLeaderboard(board);
             return board;
+        }
+
+        void Awake()
+        {
+            if (group == null) group = GetComponent<CanvasGroup>();
+            LuxoddGameService.RegisterLeaderboard(this);
         }
 
         void OnDestroy()
@@ -186,6 +210,7 @@ namespace Parabox
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
+            CrispUiTypography.Polish(text);
             return text;
         }
     }

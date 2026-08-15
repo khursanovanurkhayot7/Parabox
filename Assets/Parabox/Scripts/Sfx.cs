@@ -3,8 +3,9 @@ using UnityEngine.UI;
 
 namespace Parabox
 {
-    // Shared sound layer. Important UI/result cues use bundled CC0 recordings; tiny movement and
-    // hover sounds remain procedural so they stay light and responsive. Press M to mute everything.
+    // Shared sound layer. The shipped movement voices, push voice, hover tick and arcade button
+    // press are prebuilt by ParaboxFunAudioBaker; gameplay only selects and plays those assets.
+    // Press M to mute everything.
     public static class Sfx
     {
         const string MuteKey = "Parabox.Muted";
@@ -12,10 +13,14 @@ namespace Parabox
 
         static AudioSource src;
         static bool muted;
-        static AudioClip move, push, blocked, ding, win, death, hover, click;
+        static AudioClip[] moveVoices;
+        static AudioClip push, blocked, ding, win, death, hover, click;
         static AudioClip undo, roomShift, impact, mechanic, timerWarning;
+        static float pushGain = 1f, moveGain = 1f, hoverGain = 1f;
         static float blockedGain = 1f, dingGain = 1f, winGain = 1f, deathGain = 1f, clickGain = 1f;
         static float undoGain = 1f, roomShiftGain = 1f, impactGain = 1f, mechanicGain = 1f, warningGain = 1f;
+        static int moveVoiceIndex;
+        static float lastMoveVoiceAt = -10f;
 
         public static bool Muted => muted;
 
@@ -34,9 +39,22 @@ namespace Parabox
 
                 muted = PlayerPrefs.GetInt(MuteKey, 0) == 1;
 
-                move = Tone(320f, 0.06f, 0.16f);
-                push = Tone(190f, 0.09f, 0.18f);
-                hover = Tone(880f, 0.025f, 0.05f); // soft UI tick on hover
+                moveVoices = new[]
+                {
+                    Recorded("Sfx/MoveVoice_01"),
+                    Recorded("Sfx/MoveVoice_02"),
+                    Recorded("Sfx/MoveVoice_03"),
+                    Recorded("Sfx/MoveVoice_04")
+                };
+                push = Recorded("Sfx/PushVoice");
+                hover = Recorded("Sfx/HoverFun");
+                if (AllMissing(moveVoices))
+                    Debug.LogError("[Parabox] Prebuilt movement voices are missing. Run Tools/Parabox/Build Fun Audio Pack (Run This).");
+                if (push == null || hover == null)
+                    Debug.LogError("[Parabox] Prebuilt push/hover audio is missing. Run Tools/Parabox/Build Fun Audio Pack (Run This).");
+                moveGain = 0.72f;
+                pushGain = 0.76f;
+                hoverGain = 0.46f;
 
                 // These four short OGG files are CC0 and live under Resources/Sfx. The generated
                 // fallbacks keep the game audible if somebody removes the asset folder later.
@@ -62,8 +80,9 @@ namespace Parabox
                 }
                 else death = FallingImpact();
 
-                click = Recorded("Sfx/ButtonClick");
-                if (click != null) clickGain = 0.52f;
+                click = Recorded("Sfx/ButtonFun");
+                if (click == null) click = Recorded("Sfx/ButtonClick");
+                if (click != null) clickGain = 0.68f;
                 else click = Arp(new[] { 720f, 520f }, 0.028f, 0.18f);
 
                 blocked = Recorded("Sfx/Blocked");
@@ -93,16 +112,24 @@ namespace Parabox
 
             // Sfx survives scene loads, but UI buttons do not. Re-scan every time a scene's
             // controller calls Init so pointer, keyboard and controller activation all sound.
-            foreach (var button in Object.FindObjectsByType<Button>(
-                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            foreach (var button in Object.FindObjectsByType<Button>(FindObjectsInactive.Include))
                 AttachButton(button);
         }
 
-        // Runtime-created buttons (the finale screen) use this immediately after construction.
+        // Editor prebuilders use this while authoring scenes. During Play Mode, missing components
+        // are reported instead of being generated so every static button remains scene-backed.
         public static void AttachButton(Button button)
         {
-            if (button != null && button.GetComponent<UIButtonSfx>() == null)
+            if (button == null || button.GetComponent<UIButtonSfx>() != null) return;
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
                 button.gameObject.AddComponent<UIButtonSfx>();
+                return;
+            }
+#endif
+            Debug.LogError("[Parabox] UIButtonSfx is not prebuilt on " + button.name
+                + ". Run Tools/Parabox/Generate Prebuilt UI (Run This).");
         }
 
         public static void ToggleMute()
@@ -114,8 +141,22 @@ namespace Parabox
             if (!muted) Play(click, clickGain);
         }
 
-        public static void Move() => Play(move);
-        public static void Push() => Play(push);
+        // A previous local build could leave the cabinet permanently muted in PlayerPrefs, which
+        // made a valid replacement music clip appear broken. Each music upgrade may call this
+        // once with a new version key; normal player mute choices work normally after that run.
+        public static void EnsureAudibleForMusicUpgrade(string versionKey)
+        {
+            if (string.IsNullOrEmpty(versionKey) || PlayerPrefs.GetInt(versionKey, 0) == 1) return;
+
+            muted = false;
+            PlayerPrefs.SetInt(MuteKey, 0);
+            PlayerPrefs.SetInt(versionKey, 1);
+            PlayerPrefs.Save();
+            if (src != null) src.mute = false;
+        }
+
+        public static void Move() => PlayMovementVoice(moveGain);
+        public static void Push() => Play(push, pushGain);
         public static void Blocked() => Play(blocked, blockedGain);
         public static void Ding() => Play(ding, dingGain);
         public static void Win() => Play(win, winGain);
@@ -127,13 +168,37 @@ namespace Parabox
             // the music and the board-break animation without replacing the actual loss sound.
             Play(impact, Mathf.Max(0.72f, impactGain));
         }
-        public static void Hover() => Play(hover);
+        public static void Hover() => Play(hover, hoverGain);
         public static void Click() => Play(click, clickGain);
         public static void Undo() => Play(undo, undoGain);
         public static void RoomShift() => Play(roomShift, roomShiftGain);
         public static void Impact() => Play(impact, impactGain);
         public static void Mechanic() => Play(mechanic, mechanicGain);
         public static void TimerWarning() => Play(timerWarning, warningGain);
+
+        static void PlayMovementVoice(float gain)
+        {
+            Init();
+            // Successful held-repeat movement is intentionally allowed, but never stack two
+            // voices inside the same input pulse/frame if multiple input paths are accidentally live.
+            if (Time.unscaledTime - lastMoveVoiceAt < 0.045f || moveVoices == null) return;
+            lastMoveVoiceAt = Time.unscaledTime;
+
+            for (int attempts = 0; attempts < moveVoices.Length; attempts++)
+            {
+                int index = moveVoiceIndex++ % moveVoices.Length;
+                if (moveVoices[index] == null) continue;
+                Play(moveVoices[index], gain);
+                return;
+            }
+        }
+
+        static bool AllMissing(AudioClip[] clips)
+        {
+            if (clips == null || clips.Length == 0) return true;
+            for (int i = 0; i < clips.Length; i++) if (clips[i] != null) return false;
+            return true;
+        }
 
         static void Play(AudioClip c, float gain = 1f)
         {
@@ -235,28 +300,4 @@ namespace Parabox
         }
     }
 
-    // Button.onClick covers mouse/touch release as well as keyboard/controller Submit. Keeping
-    // this separate from hover animation prevents a pointer click from sounding twice.
-    [DisallowMultipleComponent]
-    [RequireComponent(typeof(Button))]
-    sealed class UIButtonSfx : MonoBehaviour
-    {
-        Button button;
-
-        void Awake()
-        {
-            button = GetComponent<Button>();
-            button.onClick.AddListener(Play);
-        }
-
-        void OnDestroy()
-        {
-            if (button != null) button.onClick.RemoveListener(Play);
-        }
-
-        void Play()
-        {
-            if (button != null && button.interactable) Sfx.Click();
-        }
-    }
 }

@@ -37,7 +37,7 @@ namespace Parabox
                 ts[i].Rotate(0f, 0f, spin[i] * dt);
                 ts[i].localScale = Vector3.one * baseScale[i] * (1f - shrink * f);
                 Color c = cols[i];
-                c.a = 1f - f * f;
+                c.a = cols[i].a * (1f - f * f);
                 srs[i].color = c;
             }
 

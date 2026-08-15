@@ -145,41 +145,48 @@ namespace Luxodd.Game
 
         private static bool GetButton_New(ArcadeButtonColor buttonColor)
         {
-            var ctrl = MapColorToButtonControl(buttonColor);
-            return ctrl != null && ctrl.isPressed;
+            var joystick = MapColorToJoystickButton(buttonColor, GetArcadeJoystick());
+            var gamepad = ColorToGamepadButton(buttonColor, Gamepad.current);
+            return (joystick != null && joystick.isPressed)
+                || (gamepad != null && gamepad.isPressed);
         }
 
         private static bool GetButtonDown_New(ArcadeButtonColor buttonColor)
         {
-            var ctrl = MapColorToButtonControl(buttonColor);
-            return ctrl != null && ctrl.wasPressedThisFrame;
+            var joystick = MapColorToJoystickButton(buttonColor, GetArcadeJoystick());
+            var gamepad = ColorToGamepadButton(buttonColor, Gamepad.current);
+            return (joystick != null && joystick.wasPressedThisFrame)
+                || (gamepad != null && gamepad.wasPressedThisFrame);
         }
 
         private static bool GetButtonUp_New(ArcadeButtonColor buttonColor)
         {
-            var ctrl = MapColorToButtonControl(buttonColor);
-            return ctrl != null && ctrl.wasReleasedThisFrame;
+            var joystick = MapColorToJoystickButton(buttonColor, GetArcadeJoystick());
+            var gamepad = ColorToGamepadButton(buttonColor, Gamepad.current);
+            return (joystick != null && joystick.wasReleasedThisFrame)
+                || (gamepad != null && gamepad.wasReleasedThisFrame);
         }
 
         private static Vector2 GetStick_New()
         {
-            // Prefer Joystick (HID/generic arcade controller)
+            // Read both device families. A development machine may have an idle HID joystick and
+            // an active standard gamepad connected at the same time; choosing Joystick.current
+            // unconditionally made the gamepad appear dead in that setup.
+            Vector2 strongest = Vector2.zero;
             var js = GetArcadeJoystick();
             if (js != null)
-            {
-                // Joystick has "stick" (Vector2)
-                return js.stick.ReadValue();
-            }
+                strongest = js.stick.ReadValue();
 
-            // Fallback to Gamepad
             var pad = Gamepad.current;
             if (pad != null)
             {
-                // Default: leftStick
-                return pad.leftStick.ReadValue();
+                Vector2 leftStick = pad.leftStick.ReadValue();
+                Vector2 dpad = pad.dpad.ReadValue();
+                Vector2 gamepad = dpad.sqrMagnitude > leftStick.sqrMagnitude ? dpad : leftStick;
+                if (gamepad.sqrMagnitude > strongest.sqrMagnitude) strongest = gamepad;
             }
 
-            return Vector2.zero;
+            return strongest;
         }
 
         private static Joystick GetArcadeJoystick()
@@ -189,30 +196,15 @@ namespace Luxodd.Game
         }
 
         /// <summary>
-        /// Maps ArcadeButtonColor to a ButtonControl.
-        /// 1) Tries Joystick button index mapping (your confirmed JoystickButtonX mapping).
-        /// 2) Falls back to common Gamepad mapping when device is recognized as Gamepad.
+        /// Returns the fixed Luxodd physical button on a HID/generic joystick.
         /// </summary>
-        private static ButtonControl MapColorToButtonControl(ArcadeButtonColor color)
+        private static ButtonControl MapColorToJoystickButton(ArcadeButtonColor color, Joystick joystick)
         {
-            var js = GetArcadeJoystick();
-            if (js != null)
-            {
-                var index = ColorToJoystickButtonIndex(color);
-                if (index >= 0)
-                {
-                    var btn = js.TryGetChildControl<ButtonControl>($"button{index}");
-                    if (btn != null) return btn;
-                }
-            }
-            
-            var pad = Gamepad.current;
-            if (pad != null)
-            {
-                return ColorToGamepadButton(color, pad);
-            }
-
-            return null;
+            if (joystick == null) return null;
+            var index = ColorToJoystickButtonIndex(color);
+            return index >= 0
+                ? joystick.TryGetChildControl<ButtonControl>($"button{index}")
+                : null;
         }
 
         /// <summary>
@@ -236,23 +228,22 @@ namespace Luxodd.Game
         }
 
         /// <summary>
-        /// Fallback mapping for Gamepad devices.
-        /// Adjust if your arcade controller maps colors differently in Gamepad mode.
+        /// Standard-gamepad fallback. It keeps the same named Parabox actions while using a
+        /// conventional, non-overlapping layout: A confirm, B back, X undo, Y restart,
+        /// Start level-select, LB mute, RB skip walkthrough, Select Luxodd help.
         /// </summary>
         private static ButtonControl ColorToGamepadButton(ArcadeButtonColor color, Gamepad pad)
         {
+            if (pad == null) return null;
             return color switch
             {
-                // Common ABXY scheme:
                 ArcadeButtonColor.Black  => pad.buttonSouth, // A / Cross
-                ArcadeButtonColor.Red    => pad.buttonEast,  // B / Circle
-                ArcadeButtonColor.Blue   => pad.buttonWest,  // X / Square
-                ArcadeButtonColor.Yellow => pad.buttonNorth, // Y / Triangle
-
-                // Optional extra buttons:
-                ArcadeButtonColor.Green  => pad.leftShoulder,
+                ArcadeButtonColor.White  => pad.buttonEast,  // B / Circle
+                ArcadeButtonColor.Red    => pad.buttonWest,  // X / Square
+                ArcadeButtonColor.Green  => pad.buttonNorth, // Y / Triangle
+                ArcadeButtonColor.Yellow => pad.startButton,
+                ArcadeButtonColor.Blue   => pad.leftShoulder,
                 ArcadeButtonColor.Purple => pad.rightShoulder,
-                ArcadeButtonColor.White  => pad.startButton,
                 ArcadeButtonColor.Orange => pad.selectButton,
 
                 _ => null

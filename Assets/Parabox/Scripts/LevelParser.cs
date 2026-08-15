@@ -232,7 +232,8 @@ namespace Parabox
                     boulder = b.boulder,
                     locking = b.locking,
                     fragile = b.fragile,
-                    anchored = b.anchored
+                    anchored = b.anchored,
+                    playerContainer = b.playerContainer
                 };
                 model.entities.Add(e);
 
@@ -240,8 +241,10 @@ namespace Parabox
                     inner.containerBox = e;
             }
 
-            // Two divers are possible now — you and your echo — so every PlayerMarker is read,
-            // not just the first one found.
+            // Multiple regular player bodies are possible in Chapter V. Prefab child traversal is
+            // not a stable authoring contract, so choose the controlled body deterministically:
+            // the last regular P in ASCII authoring order (highest room, lowest row, rightmost tie).
+            // Every other regular P remains a pushable player body and still satisfies player goals.
             foreach (var pm in levelPrefab.GetComponentsInChildren<PlayerMarker>(true))
             {
                 var d = new PEntity
@@ -255,10 +258,31 @@ namespace Parabox
                 model.entities.Add(d);
                 if (pm.isEcho) model.echo = d;
                 else if (pm.isMirror) model.mirror = d;
-                else model.player = d;
+                else if (model.player == null
+                         || d.roomId > model.player.roomId
+                         || (d.roomId == model.player.roomId && d.pos.y < model.player.pos.y)
+                         || (d.roomId == model.player.roomId && d.pos.y == model.player.pos.y
+                             && d.pos.x > model.player.pos.x))
+                    model.player = d;
             }
 
+            // Tighten the physical board after all marker data exists. The rebalancer first traces
+            // and restores the prefab's stored solution, then adds walls and directional choke
+            // points only where that route remains untouched.
+            var levelInfo = levelPrefab.GetComponent<ParaboxLevel>();
+            LevelLayoutRebalancer.Apply(model, LevelIndex(levelPrefab.name),
+                levelInfo != null ? levelInfo.solution : string.Empty);
+
             return model;
+        }
+
+        static int LevelIndex(string prefabName)
+        {
+            if (string.IsNullOrEmpty(prefabName)) return -1;
+            int end = prefabName.Length - 1;
+            while (end >= 0 && char.IsDigit(prefabName[end])) end--;
+            if (end == prefabName.Length - 1) return -1;
+            return int.TryParse(prefabName.Substring(end + 1), out int number) ? number - 1 : -1;
         }
 
         static PRoom RoomOf(LevelModel model, Component marker)

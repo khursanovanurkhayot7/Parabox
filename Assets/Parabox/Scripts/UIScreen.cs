@@ -30,6 +30,11 @@ namespace Parabox
             t = 0f;
             dir = 1;
             cg.alpha = 0f;
+            // The screen is already the active destination. Keeping it non-interactable for the
+            // first half of the fade made a quick first click disappear even though the button was
+            // visibly arriving. Accept input immediately; the transition owner still prevents
+            // duplicate scene loads.
+            cg.interactable = true;
             cg.blocksRaycasts = true;
             rt.localScale = Vector3.one * fromScale;
             enabled = true;
@@ -50,7 +55,7 @@ namespace Parabox
             float e = t * t * (3f - 2f * t); // smoothstep
 
             cg.alpha = e;
-            cg.interactable = t > 0.5f;
+            cg.interactable = dir > 0 ? t > 0f : t > 0.5f;
             cg.blocksRaycasts = t > 0.01f;
             rt.localScale = Vector3.one * Mathf.Lerp(fromScale, 1f, e);
 

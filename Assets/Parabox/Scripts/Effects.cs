@@ -61,6 +61,37 @@ namespace Parabox
             }
         }
 
+        // Four or five tiny square chips left at the push-off point of a normal grid move. They
+        // travel mostly opposite the object, live for only a fraction of a second and stay behind
+        // the piece, so movement gains a tactile edge without turning into a celebration effect.
+        public static void MoveFragments(Transform parent, Vector3 localPos, Vector2 direction,
+                                         Color color, int count, int order)
+        {
+            if (Piece == null || direction.sqrMagnitude < 0.001f || count <= 0) return;
+
+            direction.Normalize();
+            Vector2 side = new Vector2(-direction.y, direction.x);
+            var host = new GameObject("MoveFragments").AddComponent<BurstAnim>();
+            if (parent != null) host.transform.SetParent(parent, false);
+            host.transform.localPosition = localPos - (Vector3)(direction * 0.22f);
+            host.life = 0.30f;
+            host.gravity = 0f;
+            host.shrink = 0.76f;
+
+            for (int i = 0; i < count; i++)
+            {
+                Color chip = Color.Lerp(color, Color.white, i == 0 ? 0.18f : 0.04f);
+                chip.a = i == 0 ? 0.96f : 0.76f;
+                var sr = NewPiece(host.transform, Piece, chip, order);
+                float sc = Random.Range(0.075f, 0.125f);
+                sr.transform.localScale = Vector3.one * sc;
+                sr.transform.localPosition = (Vector3)(side * Random.Range(-0.20f, 0.20f));
+                Vector2 velocity = -direction * Random.Range(0.52f, 0.92f)
+                                   + side * Random.Range(-0.42f, 0.42f);
+                host.Add(sr, velocity, sc, Random.Range(-180f, 180f));
+            }
+        }
+
         // A single ring that expands and fades — the "ding" when a target is filled.
         public static void Ripple(Transform parent, Vector3 localPos, Color color, int order)
         {
