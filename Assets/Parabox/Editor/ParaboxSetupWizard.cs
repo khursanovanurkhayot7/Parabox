@@ -1253,7 +1253,15 @@ namespace Parabox.EditorTools
                 }}),
                 Tutorial("Chapter_2", MechanicCatalog.Id.Mirror, new[] { new[]
                 {
-                    "#########", "#..P...m#", "#.......#", "#p...M..#", "#########"
+                    "###########",
+                    "##P.###m.##",
+                    "###.###.###",
+                    "##..###..##",
+                    "##.#####.##",
+                    "##..###..##",
+                    "###.###.###",
+                    "##.p###.M##",
+                    "###########"
                 }}),
                 Tutorial("Mechanic_KeyLock", MechanicCatalog.Id.KeyLock, new[] { new[]
                 {
