@@ -90,11 +90,18 @@ namespace Parabox
         static readonly Color OptionOneBevel = new Color(0.065f, 0.105f, 0.285f, 1f);
         static readonly Color OptionOneCyan = new Color(0.090f, 0.760f, 1.000f, 1f);
         static readonly Color OptionOneViolet = new Color(0.510f, 0.190f, 0.950f, 1f);
+        // The level-select cards are also the chapter identity. Carry their exact colour family
+        // into the controlled diver so the player can recognise the current world immediately:
+        // cyan -> blue -> violet -> pink -> coral. Goals, eye rims, trails and landing effects all
+        // consume BoardAssets.playerColor, so this single palette stays coherent everywhere.
+        static readonly Color ChapterOnePlayer   = new Color(0.188235f, 0.890196f, 0.917647f, 1f); // #30E3EA
+        static readonly Color ChapterTwoPlayer   = new Color(0.380392f, 0.658824f, 1.000000f, 1f); // #61A8FF
+        static readonly Color ChapterThreePlayer = new Color(0.647059f, 0.423529f, 1.000000f, 1f); // #A56CFF
+        static readonly Color ChapterFourPlayer  = new Color(0.917647f, 0.380392f, 0.839216f, 1f); // #EA61D6
+        static readonly Color ChapterFivePlayer  = new Color(0.988235f, 0.443137f, 0.603922f, 1f); // #FC719A
+        // Some neutral portal ornamentation deliberately keeps the original hot-magenta accent;
+        // it is not a player body and therefore should not change identity between chapters.
         static readonly Color OptionOnePlayer = new Color(0.975f, 0.020f, 0.405f, 1f);
-        // Chapter IV deliberately separates the controlled diver from the navy/cobalt movable
-        // rooms. This bright ice-blue remains readable on every depth floor without looking like
-        // one of the room-box shells the player is trying to position.
-        static readonly Color ChapterFourPlayer = new Color(0.410f, 0.880f, 1.000f, 1f);
         static readonly Color OptionOnePlayerDark = new Color(0.105f, 0.025f, 0.090f, 1f);
         static readonly Color OptionOneBox = new Color(1.000f, 0.590f, 0.075f, 1f);
         static readonly Color OptionOneDepthBlue = new Color(0.035f, 0.145f, 0.360f, 1f);
@@ -2300,12 +2307,27 @@ namespace Parabox
             };
             a.gutterColor = OptionOneFloor;
             a.gridColor = Color.clear;
-            a.playerColor = a.chapter == 3 ? ChapterFourPlayer : OptionOnePlayer;
+            a.playerColor = PlayerColorForChapter(a.chapter);
             a.boxColor = OptionOneBox;
             a.floorVignette = 0.018f;
             a.pieceGlow = 0.035f;
             a.cellLift = 0f;
             a.floorTexTint = Color.clear;
+        }
+
+        // Public for tutorial/demo renderers: their separate mini-board must use the same world
+        // identity as the campaign board it introduces. Values outside the five-world campaign
+        // are clamped so editor previews and stale saves remain deterministic.
+        public static Color PlayerColorForChapter(int chapter)
+        {
+            switch (Mathf.Clamp(chapter, 0, 4))
+            {
+                case 0: return ChapterOnePlayer;
+                case 1: return ChapterTwoPlayer;
+                case 2: return ChapterThreePlayer;
+                case 3: return ChapterFourPlayer;
+                default: return ChapterFivePlayer;
+            }
         }
 
         static void AddRim(GameObject piece, string fillChild, Color fillColor, float scale, BoardAssets a)
