@@ -1829,159 +1829,150 @@ namespace Parabox.EditorTools
         {
             return new[]
             {
-                // TEACH: the amber cargo cannot turn in the narrow outer dock, so it must enter
-                // the cobalt room-box. Inside, the player turns it toward the upper doorway,
-                // brings it back outside, parks the room-box on its own socket, enters it again,
-                // and exits into the isolated player goal. This is the full cause/effect loop from
-                // the reference sequence without revealing any later campaign solution.
+                // TEACH: a compact horizontal relay. Cargo crosses the room, the room is lowered
+                // onto its socket, and the player uses the solved room to reach a separate exit.
                 new LevelDef
                 {
                     name = "Cargo Through the Room",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", ".......", "#.....#", "#.....#", "#######" }
+                        new[] { "#########", "#..#.#..#", "#PJ1.#..#", "#....#..#", "#...x.j.#", "#...#..p#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#.....#", "#.....#", "###.###" }
                     },
-                    par = 21,
-                    solution = "RRRRDRUUUUUDDDDRRDDRR"
+                    par = 23,
+                    solution = "RRRRRRUUUUDDDDDDRRRRDRR"
                 },
 
-                // PRACTICE: the whole transfer is mirrored and the inner brace forces a turn
-                // before the cargo can use the upper doorway. The opposite approach direction
-                // and obstacle prevent the player from repeating Level 21's command rhythm.
+                // PRACTICE: a vertical stack instead of a mirror copy. The room must move right,
+                // while the cargo leaves from the left and turns downward to its amber socket.
                 new LevelDef
                 {
                     name = "Reverse Entry",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#..#.#..#", "#.#px...#", "#..##...#", "#########" },
-                        new[] { "####.####", "#.......#", "#.......#", ".........", "#..#....#", "#.......#", "#########" }
+                        new[] { "#########", "#...P...#", "####J...#", "###.1####", "#......x#", "#...#...#", "#..j..p.#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#.#...#", "#.....#", "#######" }
                     },
-                    par = 23,
-                    solution = "LLLLLDLUUUUUDDDDDDLLLLL"
+                    par = 27,
+                    solution = "DDDDDRDLLLLRUURRUULDDURRRDD"
                 },
 
-                // PRACTICE: two offset inner braces remove the straight extraction. The player
-                // must circle the first brace, change axis twice, and approach the amber cargo
-                // from below before it can return through the top doorway.
+                // PRACTICE: the room is approached from the opposite side and its two braces
+                // force a deliberate inner loop before the cargo can leave through the roof.
                 new LevelDef
                 {
                     name = "Turn Inside",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.#...#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                        new[] { "##########", "#..j..p..#", "#..#.##..#", "#..#.1JP.#", "#..#.##..#", "#...x....#", "#........#", "##########" },
+                        new[] { "###.###", "#.....#", "#...#.#", ".......", "#.#.#.#", "#.....#", "#######" }
                     },
-                    par = 25,
-                    solution = "RRRDRULURDRUUUUDDDDRRDDRR"
+                    par = 29,
+                    solution = "LLLLLRDDLLUUUUUUDDURRRUULLLRR"
                 },
 
-                // EXPERIMENT: the whole relationship is rotated. The room travels sideways to
-                // its socket and the only route to the player goal is through its lower doorway.
+                // EXPERIMENT: a tall S-shaped outer board. Cargo enters from above, leaves from
+                // the right, and the room itself moves left before the isolated floor exit opens.
                 new LevelDef
                 {
                     name = "Side Exit",
                     rooms = new[]
                     {
-                        new[] { "########", "#......#", "#...P..#", "#..#J..#", "##x.1.j#", "##.##..#", "##p#...#", "#......#", "########" },
-                        new[] { "###.###", "#.....#", "#.....#", "#.#....", "#.....#", "#.....#", "###.###" }
+                        new[] { "########", "#......#", "#...P..#", "#..#J..#", "##x.1.j#", "##.##..#", "##.#####", "##...###", "####p###", "########" },
+                        new[] { "####.####", "#.......#", "#..#....#", "#........", "#....#..#", "#.......#", "####.####" }
                     },
-                    par = 26,
-                    solution = "DDDLDRURDLDRRRRLLLLDDLLDDD"
+                    par = 32,
+                    solution = "DDDDULLDDRRRRRRRLLLLDDLLLDDDDRRD"
                 },
 
-                // EXPERIMENT: the wider inner chamber contains a central brace. The player must
-                // turn the cargo twice before it can leave, then solve the outer room in reverse.
+                // EXPERIMENT: a wide chamber with offset gates. Its longer horizontal transfer is
+                // broken by two vertical decisions, so it cannot be solved with Level 24's rhythm.
                 new LevelDef
                 {
                     name = "Inner Pillar",
                     rooms = new[]
                     {
-                        new[] { "#########", "#..##...#", "#.#px...#", "#..#.#..#", "#..#1JP.#", "#....#..#", "#...j...#", "#########" },
-                        new[] { "#########", "#.......#", "#...#...#", ".........", "#.......#", "#.......#", "####.####" }
+                        new[] { "##########", "#...##...#", "#...x....#", "#....#...#", "#..#1JP..#", "#....#...#", "#...j#..p#", "##########" },
+                        new[] { "########.########", "#...............#", "#...............#", "#..#............#", "#...............#", ".................", "##############.##", "#...............#", "#...............#", "#####.###########", "#####.###########" }
                     },
-                    par = 27,
-                    solution = "LLLULDRDLLULDDDDUUUUUULLLLL"
+                    par = 34,
+                    solution = "LLLULDDDRDLLLLLLLLLULDDDDUUDRRRRDD"
                 },
 
-                // COMBINE: cargo now passes through a room inside the first room. It must cross
-                // four boundaries before either the room-box socket or player exit can be solved.
+                // COMBINE: the first true nested chain. A narrow throat forces the cargo through
+                // the inner room; it cannot take the outer-only shortcut used by the old layout.
                 new LevelDef
                 {
                     name = "Two Rooms Deep",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#.......#", "#.......#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "##.##", "#...#", ".....", "#...#", "#####" }
+                        new[] { "###########", "##j.#######", "#PJ1#######", "##..#######", "##..#######", "#..x.p....#", "######....#", "######....#", "###########" },
+                        new[] { "###.###", "#.....#", "####..#", "...U...", "#.....#", "#.....#", "###.###" },
+                        new[] { "##.##", "#...#", ".....", "#...#", "##.##" }
                     },
-                    par = 29,
-                    solution = "RRRRRRDRUUUUUUUUUDDDDDDRRDDRR"
+                    par = 41,
+                    solution = "RURDLDRRRDRUUULLLLLRRDRDDDLUURDDDDRRDDRRR"
                 },
 
-                // COMBINE: the entire three-room transfer is mirrored into a sealed return
-                // pocket. The player must reason about the opposite entry edge and finish by
-                // using the solved outer chamber as the only doorway into the player goal.
+                // COMBINE: a sibling relay across an outer sorting rail. The cargo leaves the
+                // movable room, crosses the root, enters an anchored room and exits below it.
                 new LevelDef
                 {
                     name = "Long Inner Relay",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#.##.#..#", "##p.x...#", "#.###...#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "..#U...", "#...#.#", "#.....#", "#######" },
-                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                        new[] { "#########", "###.##P##", "###...J.#", "###x..1.#", "###.#####", "###.#####", "#...#####", "#j.U#####", "#...#####", "#...#####", "###.#####", "#...#####", "#p..#####", "#########" },
+                        new[] { "###.###", "#.....#", "#.#...#", ".......", "#.....#", "#.....#", "###.###" },
+                        new[] { "###.###", "#.....#", "#.....#", "....#.#", "#.....#", "#.....#", "###.###" }
                     },
-                    par = 32,
-                    solution = "LLLLLLDLUURULDLUUUUUUDDDDDLLDLLL"
+                    par = 44,
+                    solution = "DDDDDRRRRLLLLLLLDDDDDDDDRDLLULDRDLLLDDRDDDLL"
                 },
 
-                // TWIST: a wide deepest chamber and offset brace create a real corner decision.
-                // The cargo must travel beyond the doorway, be approached from a second axis,
-                // and return across both parent spaces without disturbing the final room socket.
+                // TWIST: a vertical nested transfer. The deepest pillar forces a side switch;
+                // outside, the first room must be repositioned repeatedly before both goals align.
                 new LevelDef
                 {
                     name = "Deep Corner",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "#####.#####", "#.........#", "#.........#", "...........", "#....#....#", "#.........#", "###########" }
+                        new[] { "#########", "#.p..j..#", "#...#...#", "#x......#", "####1.###", "#...J####", "#...P...#", "#########" },
+                        new[] { "#######", "#.....#", "#.....#", "...U...", "###.###", "###.###", "###.###" },
+                        new[] { "#########", "#.......#", ".........", "#...#...#", "#.......#", "#.......#", "####.####" }
                     },
-                    par = 33,
-                    solution = "RRRRRRRRDRUULURDRUUUUUUDDDDRRDDRR"
+                    par = 45,
+                    solution = "UUUUUUURULLDLUURULLLLLLLULLDRRRDRUURRDLLLLLUU"
                 },
 
-                // MASTERY: the whole chain rotates ninety degrees. Every doorway, brace and exit
-                // is approached from a new axis, preventing the player from reusing the previous
-                // level's command rhythm while preserving the same learned rules.
+                // MASTERY: two movable sibling rooms must both be docked. Cargo is transferred
+                // through the first and then the second before a final two-axis delivery.
                 new LevelDef
                 {
                     name = "Return Pocket",
                     rooms = new[]
                     {
-                        new[] { "##########", "#........#", "#...P....#", "#..#J#...#", "##x.1...j#", "##p##....#", "#.#......#", "#........#", "##########" },
-                        new[] { "###.###", "#.....#", "#.#...#", "#..U...", "#..#..#", "#.....#", "###.###" },
-                        new[] { "###.###", "#.....#", "#.....#", "#..#...", "#.....#", "#.....#", "###.###" }
+                        new[] { "###########", "##p.j######", "#....######", "#....######", "##x2...x..#", "#######..##", "#######..##", "#######1JP#", "#######..##", "###########" },
+                        new[] { "###.###", "#.....#", "#...#.#", ".......", "#.....#", "#.....#", "###.###" },
+                        new[] { "######.######", "#...........#", "#...........#", "#...#.......#", "......#......", "#######..####", "#...........#", "#...........#", "######.######" }
                     },
-                    par = 35,
-                    solution = "DDDDDDLDRRURDLDRRRRRRRRLLLLLLDDLLDD"
+                    par = 51,
+                    solution = "LLLLLDDDDUUUUUUULLLLLLLLLLLLDLUUURULDLUUULURDRULURL"
                 },
 
-                // CHAPTER MASTERY: four coordinate spaces form one continuous cargo route. The
-                // amber object crosses six boundaries, the outer room-box must still reach its
-                // own socket, and the player must traverse the solved hierarchy once more to exit.
+                // CHAPTER MASTERY: a four-space hybrid relay. Cargo crosses a movable room, an
+                // anchored room and its child, while the root path changes axis between transfers.
                 new LevelDef
                 {
                     name = "Rooms Within Rooms",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "###.###", "#.....#", "#.....#", "...V#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "##.##", "#...#", "#...#", ".....", "##..#", "#...#", "#####" }
+                        new[] { "#############", "#PJ1....x####", "########.####", "########.####", "####..##..###", "#.........###", "####.########", "####U.#######", "####j.p######", "#############" },
+                        new[] { "###.###", "#.....#", "#..#..#", ".......", "#.....#", "#.....#", "###.###" },
+                        new[] { "###.###", "###.###", "###.###", "...V...", "#.....#", "#.....#", "###.###" },
+                        new[] { "####.####", "#.......#", "#.......#", "#...#...#", "#.......#", "#.......#", "####.####" }
                     },
-                    par = 36,
-                    solution = "RRRRRRRRRURRDDLUUUUUUUUUUUDDDDRRDDRR"
+                    par = 64,
+                    solution = "RRRRRRRRURDDLDRURDDDDDRDLLLLULDDDDDDDRDLULDDDLDRURDDDDDUURURRRDR"
                 },
             };
         }
@@ -2703,16 +2694,16 @@ namespace Parabox.EditorTools
             // Recursive boards compress distance: one command can move cargo across a doorway and
             // change coordinate spaces at the same time. Score their actual route decisions,
             // objects, objectives and containment depth on a calibrated scale instead of treating
-            // every extra room like hundreds of ordinary walking steps. This keeps Chapter III's
-            // first room-box lesson just above Level 20 and its four-room mastery just below the
-            // richer mixed-mechanic Chapter IV opener. Chapter V receives a stricter replay-based
-            // score after prefab generation. The constants keep route length primary while turn
-            // count resolves adjacent levels that have similar board footprints.
+            // every extra room like hundreds of ordinary walking steps. Chapter III now contains
+            // substantially longer, multi-boundary solutions, so route length uses a lower weight
+            // while decisions, objectives and containment remain explicit. This keeps its opening
+            // just above Level 20 and its four-room mastery just below Chapter IV's richer opener.
+            // Chapter V still receives its stricter replay-based score after prefab generation.
             if (level.rooms.Length > 1)
-                return 1239
-                       + level.par * 18
-                       + turns * 3
-                       + Mathf.Max(0, level.rooms.Length - 1) * 42
+                return 1473
+                       + level.par * 7
+                       + turns * 2
+                       + Mathf.Max(0, level.rooms.Length - 1) * 20
                        + objects * 10
                        + targets * 5
                        + dependencies * 15
