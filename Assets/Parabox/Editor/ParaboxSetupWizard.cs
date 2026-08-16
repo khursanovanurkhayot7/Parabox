@@ -336,6 +336,22 @@ namespace Parabox.EditorTools
             Debug.Log("Parabox: regenerated only Level 50.");
         }
 
+        // Narrow rebuild used while playtesting the Level 48 chamber socket. This deliberately
+        // bypasses the full campaign ordering table so one board can be regenerated without
+        // rewriting any of the other approved level prefabs.
+        public static void RegenerateLevel48Silent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = ChapterFiveRecursion();
+            if (defs.Length < 8) throw new System.InvalidOperationException("Parabox Level 48 definition is missing.");
+            defs[7].designComplexity = AuthoredDifficulty(defs[7]);
+            BuildLevelPrefab(47, defs[7], tiles);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated only Level 48.");
+        }
+
         // Authoring probe for Chapter V chamber iteration. It builds only the requested source
         // definition in memory, asks the exact runtime solver for a route, and never touches a
         // shipped prefab unless the designer later copies the proven route into the definition.
@@ -1982,9 +1998,9 @@ namespace Parabox.EditorTools
                     solution = "UURRRRRRRRRUURRRDDLLLLLLLLLLLLLLLLDLURULDDDLLL"
                 },
 
-                // TWIST: the indigo room is movable. Its final socket determines where the coral
-                // cargo reappears after three boundaries; the outer wall then forces one last turn
-                // onto the colour-matched target instead of accepting a straight shove.
+                // TWIST: the inner room is movable. Push it down twice and right into the lower
+                // socket. The socket column sits behind the room instead of in the orange cargo
+                // lane, so the extracted cargo has a clear, readable path through every boundary.
                 new LevelDef
                 {
                     name = "Exit Side",
@@ -2008,8 +2024,8 @@ namespace Parabox.EditorTools
                             "###.###",
                             "#.....#",
                             "#..2..#",
-                            "..#...#",
-                            "#.....#",
+                            ".......",
+                            "#....##",
                             "#.....#",
                             "#######"
                         },
@@ -2018,7 +2034,7 @@ namespace Parabox.EditorTools
                             "#####",
                             "#...#",
                             "#...#",
-                            ".....",
+                            "....#",
                             "#...#",
                             "#.V.#",
                             "#####"
@@ -2034,8 +2050,8 @@ namespace Parabox.EditorTools
                             "#####"
                         }
                     },
-                    par = 49,
-                    solution = "DLDDRDLLULDURRUULDRRRRDDDRDDLUUUURULLLLLULDRDRRRD"
+                    par = 47,
+                    solution = "DLDDDDLDRRRRDDDRDDLUUUURULLLLDLURULLLLULDRDRRRD"
                 },
 
                 // MASTERY: the reference interaction is now used as a complete original puzzle.

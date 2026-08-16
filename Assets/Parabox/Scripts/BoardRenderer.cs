@@ -320,9 +320,11 @@ namespace Parabox
 
                 if (e.interiorRoomId >= 0)
                 {
-                    Color metaMotion = Lighten(
-                        RoomColor(a.roomColors, e.interiorRoomId),
-                        UsesOptionOneSkin(a) ? 0.42f : 0.30f);
+                    Color metaMotion = !e.anchored && UsesOptionOneSkin(a)
+                        ? Lighten(OptionOneBox, 0.18f)
+                        : Lighten(
+                            RoomColor(a.roomColors, e.interiorRoomId),
+                            UsesOptionOneSkin(a) ? 0.42f : 0.30f);
                     var metaFrame = go.transform.Find("Frame");
                     if (UsesOptionOneSkin(a))
                     {
@@ -350,7 +352,15 @@ namespace Parabox
                     && nestedRooms.Add(e.interiorRoomId))
                 {
                     Color interiorC = RoomColor(a.roomColors, e.interiorRoomId);
-                    Color shellC = NestedShellColor(e.interiorRoomId);
+                    // Movable recursive rooms use the same premium amber language as pushable
+                    // cargo and its socket. Fixed rooms retain their depth colour, so players can
+                    // identify what can move without confusing the live miniature inside it.
+                    Color shellC = e.anchored
+                        ? NestedShellColor(e.interiorRoomId)
+                        : MovableNestedShellColor();
+                    Color shellAccent = e.anchored
+                        ? NestedShellAccentColor(e.interiorRoomId)
+                        : MovableNestedShellAccentColor();
                     var backing = go.transform.Find("Backing");
                     // Keep the backing: it is the coloured body of the recursive room. It renders
                     // below the live miniature and becomes the large, readable outer chamber when
@@ -383,12 +393,12 @@ namespace Parabox
                             if (e.playerContainer) frame.gameObject.SetActive(false);
                             if (!e.playerContainer)
                                 frameRenderer.color = UsesOptionOneSkin(a)
-                                    ? NestedShellAccentColor(e.interiorRoomId)
+                                    ? shellAccent
                                     : Lighten(interiorC, 0.30f);
 
                             if (!e.playerContainer && UsesOptionOneSkin(a))
                                 AddNestedShellHighlights(go, a,
-                                    NestedShellAccentColor(e.interiorRoomId),
+                                    shellAccent,
                                     frameRenderer.sortingOrder);
                         }
                     }
@@ -2085,6 +2095,12 @@ namespace Parabox
                 default: return new Color(0.105f, 0.040f, 0.220f, 1f); // deep violet
             }
         }
+
+        static Color MovableNestedShellColor()
+            => Darken(OptionOneBox, 0.46f);
+
+        static Color MovableNestedShellAccentColor()
+            => Lighten(OptionOneBox, 0.10f);
 
         static Color NestedShellAccentColor(int roomId)
         {
