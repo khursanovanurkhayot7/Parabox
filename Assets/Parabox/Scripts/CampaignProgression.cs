@@ -45,14 +45,14 @@ namespace Parabox
         static readonly string[] ChapterPhilosophies =
         {
             "Learn one readable rule at a time", "Control state and coupled pieces",
-            "Move cargo through rooms that are also boxes", "Solve multi-step dependencies", "Plan across nested spaces"
+            "Move cargo through rooms that are also boxes", "Reposition rooms that are also puzzle pieces", "Plan across nested spaces"
         };
 
         // One concise design contract for every board in final campaign order. These are not UI
         // flavour strings: the campaign validator serializes and checks them on every prefab.
         // The first two chapters establish the physical vocabulary. Chapter III teaches room-box
-        // transfer in isolation, Chapter IV combines the terrain systems, and Chapter V turns the
-        // same spatial language into the deep recursion finale.
+        // transfer in isolation, Chapter IV makes the rooms themselves the objects to reposition,
+        // and Chapter V turns the same spatial language into the deep cargo-recursion finale.
         static readonly string[] MechanicFocus =
         {
             "Read a one-way route around an ivory pillar", "Reuse the arrow and approach cargo from the useful side",
@@ -78,11 +78,16 @@ namespace Parabox
             "Use the solved room-box to enter a sealed player pocket",
             "Carry cargo across six boundaries, place the outer room, then traverse the hierarchy again",
 
-            "Use the cracked bridge for delivery, then take the geyser-assisted one-way return", "Turn cargo around the wall, hold the button and take the arrow detour",
-            "Drop one crate onto the button, then turn and deliver the second", "Send cargo through the narrow gap, collect the pearl and return through its held gate",
-            "Collect both pearls, hold the button and cross the lock-and-gate stack", "Build separate horizontal and vertical run-ups before opening the pearl lock",
-            "Collect the pearl, unlock the dry cargo channel and finish from the swimming side", "Hold the gate, toggle the latch and lock the lower delivery",
-            "Send slick cargo through ice and a narrow gap into the gravity chute", "Hold the gate, then use the side loop to control two pulse barriers",
+            "Enter the pinned room, leave from below and dock it on the visible socket",
+            "Enter from above, leave from the right and re-enter after docking on the left",
+            "Move the room down to its stop, travel through it and turn the room onto a side socket",
+            "Dock the room around the corner, then use the solved room as the only doorway to the exit",
+            "Coordinate two movable rooms whose useful exits face different directions",
+            "Finish two separated room docks in order without reusing the same approach",
+            "Dock an inner room, return through its parent and then dock the outer room",
+            "Solve a nested branch before crossing the outer rail to a separate sibling room",
+            "Dock three rooms from the deepest scale outward without swapping their order",
+            "Complete three differently oriented room docks before taking the final room passage",
 
             "Enter a pinned room and exit through a different edge", "Push a room into its socket before entering it",
             "Extract deep cargo, shift the convoy and turn the final crate upward", "Send cargo inward, finish deep, then backtrack outside",
@@ -99,7 +104,7 @@ namespace Parabox
             true, true, true, true, true, true, true, true, true, true,
             true, true, true, true, true, true, true, false, true, true,
             true, false, false, false, false, true, false, false, false, true,
-            true, false, true, true, false, true, false, false, false, true,
+            false, false, false, false, false, false, false, false, false, false,
             false, false, false, false, false, false, false, false, false, false
         };
 
@@ -161,7 +166,7 @@ namespace Parabox
             if (level <= 2) return 20f;
             if (level <= 20) return 20f + (level - 2);
             if (level <= 30) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
-            if (level <= 40) return 20f + (level - 2);
+            if (level <= 40) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
             int chapterStep = level - 41;
             return Mathf.Max(70f + chapterStep * 2f, par * 1.5f + 22f);
         }
@@ -172,7 +177,7 @@ namespace Parabox
             {
                 case 1: return "Terrain changes what a move does. Read the whole route before committing.";
                 case 2: return "Rules now interact. Plan their order before making the first move.";
-                case 3: return "One move may affect several pieces. Track the full board state.";
+                case 3: return "A room is also a movable piece. Pin it to enter, leave from another side, then dock it.";
                 case 4: return "Rooms are movable objects. Pin one to enter it, then plan how cargo crosses every boundary.";
                 default: return "Move one tile at a time and reach the bright player target.";
             }
@@ -207,7 +212,7 @@ namespace Parabox
                 case 22: return "GEYSER  Ride the launch across the trench, then finish the route.";
                 case 24: return "BOULDER  Move in the same direction first to build a pushing run-up.";
                 case 27: return "KELP  The diver can pass through it, but cargo cannot.";
-                case 30: return "CRACKED FLOOR  It collapses after you leave, so plan the return first.";
+                case 30: return "MOVABLE ROOM  If the room cannot be pushed, you enter it. Exit from another side to reposition it.";
                 case 32: return "GRAVITY WELL  Aligned cargo is pulled one cell after every move.";
                 case 33: return "NARROW GAP  Cargo fits through; the diver must find another route.";
                 case 39: return "PULSE  The barrier advances through a three-beat open-and-closed cycle.";

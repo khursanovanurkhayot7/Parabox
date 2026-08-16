@@ -433,6 +433,32 @@ namespace Parabox.EditorTools
             Debug.Log("Parabox: regenerated progressive Chapter III levels 21-30.");
         }
 
+        // Command-line safe Chapter IV rebuild. These ten boards teach the movable-room itself as
+        // the puzzle piece: pin it to enter, leave from a useful side, reposition it, then dock it.
+        // Keeping the rebuild narrow preserves every approved prefab outside Levels 31-40.
+        public static void RegenerateChapterFourSilent()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            var defs = ChapterFourRoomManeuvers();
+            for (int i = 0; i < defs.Length; i++)
+            {
+                int campaignIndex = 30 + i;
+                defs[i].designComplexity = AuthoredDifficulty(defs[i]);
+                BuildLevelPrefab(campaignIndex, defs[i], tiles);
+                if (string.IsNullOrEmpty(defs[i].solution))
+                {
+                    string path = LevelDir + "/Level_" + (campaignIndex + 1) + ".prefab";
+                    string proof = ParaboxCampaignSolver.SolveAndStore(
+                        path, 1, Mathf.Max(72, defs[i].par + 30));
+                    Debug.Log($"Parabox: solved Chapter IV L{campaignIndex + 1:00} in {proof.Length} moves ({proof}).");
+                }
+            }
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: regenerated progressive Chapter IV levels 31-40.");
+        }
+
         // Command-line safe Chapter 1 rebuild used while iterating on the mixed-mechanic onboarding.
         public static void RegenerateChapterOneSilent()
         {
@@ -1089,8 +1115,8 @@ namespace Parabox.EditorTools
             "Cargo Through the Room", "Reverse Entry", "Turn Inside", "Side Exit", "Inner Pillar",
             "Two Rooms Deep", "Long Inner Relay", "Deep Corner", "Return Pocket", "Rooms Within Rooms",
 
-            "The Last Crossing", "Arrow Relay", "Gravity Transfer", "Narrow Relay", "Twin Pearl Circuit",
-            "Corner Charge", "Dry Channel", "Latched Delivery", "Freight on Ice", "Pulse Relay"
+            "Pinned Passage", "Opposite Exit", "Turn the Room", "Dock and Re-enter", "Crossing Rooms",
+            "Two Room Relay", "Room Within a Room", "Branch and Nest", "Three Rooms Deep", "Triple Dock"
         };
 
         static LevelDef[] Levels()
@@ -1128,6 +1154,7 @@ namespace Parabox.EditorTools
             foreach (LevelDef level in ChapterOneFoundations()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterTwoSystems()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterThreeSynergy()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterFourRoomManeuvers()) candidates[level.name] = level;
             for (int i = 0; i < FirstFortyDifficultyOrder.Length; i++)
             {
                 string name = FirstFortyDifficultyOrder[i];
@@ -1703,6 +1730,164 @@ namespace Parabox.EditorTools
                     },
                     par = 36,
                     solution = "RRRRRRRRRURRDDLUUUUUUUUUUUDDDDRRDDRR"
+                },
+            };
+        }
+
+        static LevelDef[] ChapterFourRoomManeuvers()
+        {
+            return new[]
+            {
+                // TEACH: the cobalt room is pinned against the right wall, so pushing enters it.
+                // Leaving through its lower doorway reaches the far side; only then can the player
+                // circle above, push the room down onto its socket and reach the separate exit.
+                new LevelDef
+                {
+                    name = "Pinned Passage",
+                    rooms = new[]
+                    {
+                        new[] { "#######", "###...#", "#P.1#p#", "###...#", "###x###", "#######" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" }
+                    },
+                    par = 18,
+                    solution = "RRRRDDDRRUULLDDRRU"
+                },
+
+                // PRACTICE: the relationship rotates. Enter from above, leave on the right, push
+                // the room left twice, then re-enter the docked room and leave through its floor.
+                new LevelDef
+                {
+                    name = "Opposite Exit",
+                    rooms = new[]
+                    {
+                        new[] { "#######", "###P###", "#x.1..#", "#.#####", "#p#####", "#######" },
+                        new[] { "###.###", "#...#.#", "#.#...#", "#.#....", "#...#.#", "#.#...#", "###.###" }
+                    },
+                    par = 19,
+                    solution = "DDDRRDRRLLLLDDLLDDD"
+                },
+
+                // PRACTICE: push down to the staging rail, enter when the room hits its stop,
+                // leave on the left, then turn the room ninety degrees and dock it on the right.
+                new LevelDef
+                {
+                    name = "Turn the Room",
+                    rooms = new[]
+                    {
+                        new[] { "#######", "###P###", "###1###", "###.#p#", "##...x#", "#######" },
+                        new[] { "###.###", "#...###", "#.#...#", "...##.#", "#.....#", "#######", "#######" }
+                    },
+                    par = 20,
+                    solution = "DDDDLLDDLLRRRRUURRUU"
+                },
+
+                // EXPERIMENT: after the corner dock, the solved room remains the only doorway to
+                // the player pocket. A second entry is required; parking the room is not the end.
+                new LevelDef
+                {
+                    name = "Dock and Re-enter",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#..P....#", "#..1#...#", "###.#####", "#.....x##", "######.##", "######p##", "#########" },
+                        new[] { "###.###", "#...###", "#.#...#", "...##.#", "#...#.#", "#.....#", "###.###" }
+                    },
+                    par = 22,
+                    solution = "DDDDLLDDLLRRRRRRDRDDDD"
+                },
+
+                // EXPERIMENT: two independent rooms face different directions. The first becomes
+                // a vertical route; the second must be side-docked before it opens the final bay.
+                new LevelDef
+                {
+                    name = "Crossing Rooms",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#.#######", "#1.P#####", "#......##", "#x....2x#", "#######.#", "#######p#", "#########" },
+                        new[] { "##.##", "#...#", ".....", "#...#", "#####" },
+                        new[] { "###.###", "#...###", "#.#...#", "...##.#", "#...#.#", "#.....#", "###.###" }
+                    },
+                    par = 24,
+                    solution = "LLLULUUDDRRRRDRRRRDRDDDD"
+                },
+
+                // COMBINE: solve two separated docks in order. Each room is entered from one side
+                // and left from another, so neither half reuses the previous command rhythm.
+                new LevelDef
+                {
+                    name = "Two Room Relay",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "###P#####", "#x.1....#", "#.#####.#", "#.....2x#", "#######.#", "#######p#", "#########" },
+                        new[] { "##.##", "#...#", "#....", "#...#", "##.##" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" }
+                    },
+                    par = 27,
+                    solution = "DDRDRRLLLLDLDDDRRRRRRRRDDDD"
+                },
+
+                // COMBINE: the inner room is now itself movable. Dock it inside Room 1, climb back
+                // through the parent, and only then reposition the outer room on the main board.
+                new LevelDef
+                {
+                    name = "Room Within a Room",
+                    rooms = new[]
+                    {
+                        new[] { "#######", "###...#", "#P.1#p#", "###...#", "###x###", "#######" },
+                        new[] { "#######", "###x###", "###.###", "...2#.#", "###...#", "###...#", "###.###" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" }
+                    },
+                    par = 28,
+                    solution = "RRRRRRRDDDUUDDDDDRRUULLDDRRU"
+                },
+
+                // TWIST: one branch contains a nested docking task while a separate sibling room
+                // waits outside. The player must finish the inner branch, dock its parent, then
+                // cross the outer rail and enter the second room from below.
+                new LevelDef
+                {
+                    name = "Branch and Nest",
+                    rooms = new[]
+                    {
+                        new[] { "###########", "###....x.p#", "#P.1#..3###", "###.....###", "###x#######", "###########" },
+                        new[] { "##x##", "##.##", "..2#.", "##...", "##.##" },
+                        new[] { "###", "...", "#.#" },
+                        new[] { "#####", "#...#", "#....", "#...#", "##.##" }
+                    },
+                    par = 33,
+                    solution = "RRRRRDDUUDDDDRRUULLDDRRRRUUUURRRR"
+                },
+
+                // MASTERY: three movable rooms form a real containment chain. Each child is
+                // docked before the player can return one scale outward and solve its parent.
+                new LevelDef
+                {
+                    name = "Three Rooms Deep",
+                    rooms = new[]
+                    {
+                        new[] { "#######", "###...#", "#P.1#p#", "###...#", "###x###", "#######" },
+                        new[] { "#######", "###x###", "###.###", "...2#.#", "###...#", "###...#", "###.###" },
+                        new[] { "#######", "###x###", "###.###", "...3#.#", "###...#", "###...#", "###.###" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" }
+                    },
+                    par = 38,
+                    solution = "RRRRRRRRRRDDDUUDDDDDUUDDDDDRRUULLDDRRU"
+                },
+
+                // CHAPTER MASTERY: three sibling rooms occupy three distinct docking lanes. The
+                // player alternates approach sides and entry edges, finishing every room socket
+                // before the last docked room provides the only route to the player target.
+                new LevelDef
+                {
+                    name = "Triple Dock",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "###P#####", "#x.1....#", "#.#####.#", "#.....2x#", "#######.#", "#x.3....#", "#.#######", "#p#######", "#########" },
+                        new[] { "##.##", "#...#", "#....", "#...#", "##.##" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" },
+                        new[] { "#####", "#...#", ".....", "#...#", "##.##" }
+                    },
+                    par = 39,
+                    solution = "DDRDRRLLLLDLDDDRRRRRRRRDDDDLLLLLLLDLDDD"
                 },
             };
         }
@@ -2676,7 +2861,10 @@ namespace Parabox.EditorTools
                 }
             }
 
-            if (index >= 40)
+            if (index >= 30 && index < 40)
+                levelInfo.designComplexity =
+                    ChapterFourDifficultyEvidence.Evaluate(root, levelInfo.solution).score;
+            else if (index >= 40)
                 levelInfo.designComplexity =
                     ChapterFiveDifficultyEvidence.Evaluate(root, levelInfo.solution).score;
 

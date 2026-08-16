@@ -186,7 +186,7 @@ namespace Parabox
                 case 0:  Add(lessons, Id.Navigation); break;   // Level 1
                 case 10: Add(lessons, Id.Mirror); break;       // Level 11
                 case 20: Add(lessons, Id.NestedBoard); break;  // Level 21
-                case 30: Add(lessons, Id.CrackedFloor); break; // Level 31
+                case 30: Add(lessons, Id.NestedBoard); break;  // Level 31 — movable-room refresher
                 case 40: Add(lessons, Id.NestedBoard); break;  // Level 41
             }
 

@@ -20,6 +20,9 @@ namespace Parabox.EditorTools
         const string GameScene = "Assets/Parabox/Scenes/Game.unity";
         static readonly int[] ChapterThreeRoomCounts = { 2, 2, 2, 2, 2, 3, 3, 3, 3, 4 };
         static readonly int[] ChapterThreeCargoTransitions = { 2, 2, 2, 2, 2, 4, 4, 4, 4, 6 };
+        static readonly int[] ChapterFourRoomCounts = { 2, 2, 2, 2, 3, 3, 3, 4, 4, 4 };
+        static readonly int[] ChapterFourPlayerTransitions = { 2, 4, 4, 4, 4, 6, 4, 6, 6, 8 };
+        static readonly int[] ChapterFourMetaMoves = { 2, 2, 4, 5, 3, 3, 4, 5, 6, 5 };
         static readonly int[] ChapterFiveRoomCounts = { 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
         static readonly int[] ChapterFiveRequiredCargo = { 4, 4, 4, 4, 4, 5, 5, 5, 5, 5 };
         static readonly int[] ChapterFiveCargoTransitions = { 0, 0, 2, 2, 1, 3, 3, 3, 4, 8 };
@@ -656,12 +659,13 @@ namespace Parabox.EditorTools
                     chapterHasMastery[chapterIndex] = true;
 
                 int roomCount = prefab.GetComponentsInChildren<RoomMarker>(true).Length;
-                // Chapter III teaches a complete two-to-four-room transfer vocabulary. Chapter V
-                // later deepens it into the five-room endgame; the chapters between stay focused
-                // on their own single-board mechanics.
+                // Chapters III-V share the recursive vocabulary for different purposes: cargo
+                // transfer, room repositioning, then the deep cargo endgame.
                 int expectedRoomCount = index >= 20 && index < 30
                     ? ChapterThreeRoomCounts[index - 20]
-                    : index >= 40 ? ChapterFiveRoomCounts[index - 40] : 1;
+                    : index >= 30 && index < 40
+                        ? ChapterFourRoomCounts[index - 30]
+                        : index >= 40 ? ChapterFiveRoomCounts[index - 40] : 1;
                 if (roomCount != expectedRoomCount)
                     Failure(report, ref failures, index,
                         $"authored room count {roomCount} does not match Level {index + 1}'s " +
@@ -686,6 +690,23 @@ namespace Parabox.EditorTools
                 {
                     Failure(report, ref failures, index, "level has no player");
                     continue;
+                }
+                if (index >= 30 && index < 40)
+                {
+                    try
+                    {
+                        ChapterFourDifficultyEvidence.Result evidence =
+                            ChapterFourDifficultyEvidence.Evaluate(prefab, info.solution);
+                        if (info.designComplexity != evidence.score)
+                            Failure(report, ref failures, index,
+                                $"serialized complexity {info.designComplexity} does not match " +
+                                $"room-maneuver evidence {evidence.score}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Failure(report, ref failures, index,
+                            $"could not measure room-maneuver difficulty evidence: {ex.Message}");
+                    }
                 }
                 if (index >= 40)
                 {
@@ -724,6 +745,29 @@ namespace Parabox.EditorTools
                 int targets = TargetCount(model);
                 if (targets == 0)
                     Failure(report, ref failures, index, "level has no completion target");
+                if (index >= 30 && index < 40)
+                {
+                    int ordinaryCargo = 0;
+                    int movableRooms = 0;
+                    foreach (PEntity entity in model.entities)
+                    {
+                        if (!entity.IsCrate) continue;
+                        if (entity.interiorRoomId >= 0) movableRooms++;
+                        else ordinaryCargo++;
+                    }
+                    int roomSockets = 0;
+                    foreach (PRoom room in model.rooms.Values)
+                        roomSockets += room.boxGoals.Count;
+                    if (ordinaryCargo != 0)
+                        Failure(report, ref failures, index,
+                            $"Chapter IV has {ordinaryCargo} ordinary cargo object(s); the room itself must be the puzzle piece");
+                    if (movableRooms != roomCount - 1)
+                        Failure(report, ref failures, index,
+                            $"Chapter IV has {movableRooms} movable room(s); expected {roomCount - 1}");
+                    if (roomSockets != movableRooms)
+                        Failure(report, ref failures, index,
+                            $"Chapter IV has {roomSockets} room socket(s) for {movableRooms} movable room(s)");
+                }
                 if (index >= 40)
                 {
                     int chapterStep = index - 40;
@@ -787,6 +831,7 @@ namespace Parabox.EditorTools
                 int cargoRoomTransitions = 0;
                 int metaMoves = 0;
                 var movedCargo = new HashSet<PEntity>();
+                var movedMetaRooms = new HashSet<PEntity>();
                 var visitedRooms = new HashSet<int> { model.player.roomId };
                 for (int step = 0; step < info.solution.Length; step++)
                 {
@@ -828,7 +873,10 @@ namespace Parabox.EditorTools
                             cargoRoomTransitions++;
                         if (entity.interiorRoomId >= 0
                             && (changedRoom || entity.pos != beforePositions[entityIndex]))
+                        {
                             metaMoves++;
+                            movedMetaRooms.Add(entity);
+                        }
                     }
                 }
 
@@ -858,6 +906,36 @@ namespace Parabox.EditorTools
                             if (occupant == null || occupant.interiorRoomId < 0)
                                 Failure(report, ref failures, index,
                                     "the authored room socket is not occupied by a room-box");
+                        }
+                }
+                if (index >= 30 && index < 40)
+                {
+                    int chapterStep = index - 30;
+                    int movableRooms = roomCount - 1;
+                    if (movedCargo.Count != 0)
+                        Failure(report, ref failures, index,
+                            "Chapter IV route moves ordinary cargo instead of focusing on room repositioning");
+                    if (movedMetaRooms.Count != movableRooms)
+                        Failure(report, ref failures, index,
+                            $"stored solution moves {movedMetaRooms.Count}/{movableRooms} authored room-boxes");
+                    if (visitedRooms.Count != roomCount)
+                        Failure(report, ref failures, index,
+                            $"stored solution visits {visitedRooms.Count}/{roomCount} recursive rooms");
+                    if (playerRoomTransitions < ChapterFourPlayerTransitions[chapterStep])
+                        Failure(report, ref failures, index,
+                            $"player crosses {playerRoomTransitions} room boundary/boundaries; expected at least " +
+                            ChapterFourPlayerTransitions[chapterStep]);
+                    if (metaMoves < ChapterFourMetaMoves[chapterStep])
+                        Failure(report, ref failures, index,
+                            $"room boxes move {metaMoves} time(s); expected at least " +
+                            ChapterFourMetaMoves[chapterStep]);
+                    foreach (PRoom room in model.rooms.Values)
+                        foreach (Vector2Int goal in room.boxGoals)
+                        {
+                            PEntity occupant = model.EntityAt(room.id, goal);
+                            if (occupant == null || occupant.interiorRoomId < 0)
+                                Failure(report, ref failures, index,
+                                    "a room socket is not occupied by a movable room-box");
                         }
                 }
                 if (index >= 40)
@@ -967,7 +1045,7 @@ namespace Parabox.EditorTools
                     report.AppendLine($"FAIL  Chapter {chapter + 1}: curriculum must include teaching, " +
                         "combination and mastery roles");
                 }
-                int expectedNested = chapter == 2 || chapter == 4 ? 10 : 0;
+                int expectedNested = chapter >= 2 ? 10 : 0;
                 if (chapterNestedLevels[chapter] != expectedNested)
                 {
                     failures++;
@@ -1271,6 +1349,126 @@ namespace Parabox.EditorTools
                 $"portraitIntroZoom={CameraFollow.ResponsiveIntroZoom(6.7f, 9f / 16f):0.###}\n{report}");
         }
 
+    }
+
+    // Evidence-based Chapter IV difficulty. Every point comes from a solver-proven room maneuver:
+    // route decisions, real entries/exits, unique room-boxes moved, docking pushes and containment
+    // depth. The generator and release validator share this evaluator so a decorative room cannot
+    // inflate the curve and a later board cannot silently become easier than its predecessor.
+    internal static class ChapterFourDifficultyEvidence
+    {
+        internal struct Result
+        {
+            public int score;
+            public int directionChanges;
+            public int maximumDepth;
+            public int roomCount;
+            public int targetCount;
+            public int metaBoxMoves;
+            public int movedMetaBoxes;
+            public int playerBoundaryCrossings;
+        }
+
+        internal static Result Evaluate(GameObject prefab, string solution)
+        {
+            if (prefab == null) throw new ArgumentNullException(nameof(prefab));
+            if (string.IsNullOrWhiteSpace(solution))
+                throw new InvalidOperationException($"{prefab.name} has no stored Chapter IV route.");
+
+            LevelModel model = LevelParser.Parse(prefab);
+            if (model.player == null)
+                throw new InvalidOperationException($"{prefab.name} has no controlled player.");
+
+            var result = new Result
+            {
+                directionChanges = DirectionChanges(solution),
+                roomCount = model.rooms.Count,
+            };
+            foreach (PRoom room in model.rooms.Values)
+            {
+                result.maximumDepth = Mathf.Max(result.maximumDepth, ContainmentDepth(model, room.id));
+                result.targetCount += room.boxGoals.Count + room.playerGoals.Count
+                    + room.echoGoals.Count + room.mirrorGoals.Count + room.colourGoals.Count;
+            }
+
+            var movedMeta = new HashSet<PEntity>();
+            for (int step = 0; step < solution.Length; step++)
+            {
+                Vector2Int direction;
+                switch (solution[step])
+                {
+                    case 'U': direction = Vector2Int.up; break;
+                    case 'D': direction = Vector2Int.down; break;
+                    case 'L': direction = Vector2Int.left; break;
+                    case 'R': direction = Vector2Int.right; break;
+                    default:
+                        throw new InvalidOperationException(
+                            $"{prefab.name} route contains '{solution[step]}' at move {step + 1}.");
+                }
+
+                var beforeRooms = new int[model.entities.Count];
+                var beforePositions = new Vector2Int[model.entities.Count];
+                for (int i = 0; i < model.entities.Count; i++)
+                {
+                    beforeRooms[i] = model.entities[i].roomId;
+                    beforePositions[i] = model.entities[i].pos;
+                }
+
+                if (!model.TryMovePlayer(direction))
+                    throw new InvalidOperationException(
+                        $"{prefab.name} route is blocked at move {step + 1} ({solution[step]}).");
+
+                int playerIndex = model.entities.IndexOf(model.player);
+                if (playerIndex >= 0 && beforeRooms[playerIndex] != model.player.roomId)
+                    result.playerBoundaryCrossings++;
+
+                for (int i = 0; i < model.entities.Count; i++)
+                {
+                    PEntity entity = model.entities[i];
+                    if (entity.interiorRoomId < 0) continue;
+                    bool moved = beforeRooms[i] != entity.roomId || beforePositions[i] != entity.pos;
+                    if (!moved) continue;
+                    result.metaBoxMoves++;
+                    movedMeta.Add(entity);
+                }
+            }
+
+            if (!model.IsWon())
+                throw new InvalidOperationException($"{prefab.name} stored Chapter IV route does not win.");
+
+            result.movedMetaBoxes = movedMeta.Count;
+            result.score = 1300
+                + solution.Length * 28
+                + result.directionChanges * 8
+                + result.metaBoxMoves * 25
+                + result.playerBoundaryCrossings * 20
+                + result.movedMetaBoxes * 120
+                + result.targetCount * 20
+                + result.roomCount * 30
+                + result.maximumDepth * 25;
+            return result;
+        }
+
+        static int DirectionChanges(string route)
+        {
+            int turns = 0;
+            for (int i = 1; i < route.Length; i++)
+                if (route[i] != route[i - 1]) turns++;
+            return turns;
+        }
+
+        static int ContainmentDepth(LevelModel model, int roomId)
+        {
+            int depth = 0;
+            var visited = new HashSet<int>();
+            while (roomId != 0 && model.rooms.TryGetValue(roomId, out PRoom room)
+                   && room.containerBox != null && visited.Add(roomId))
+            {
+                depth++;
+                roomId = room.containerBox.roomId;
+            }
+            return depth;
+        }
     }
 
     // Evidence-based Chapter V difficulty. Unlike the legacy level-number floor, every point here

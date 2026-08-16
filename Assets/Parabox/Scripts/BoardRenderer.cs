@@ -91,6 +91,10 @@ namespace Parabox
         static readonly Color OptionOneCyan = new Color(0.090f, 0.760f, 1.000f, 1f);
         static readonly Color OptionOneViolet = new Color(0.510f, 0.190f, 0.950f, 1f);
         static readonly Color OptionOnePlayer = new Color(0.975f, 0.020f, 0.405f, 1f);
+        // Chapter IV deliberately separates the controlled diver from the navy/cobalt movable
+        // rooms. This bright ice-blue remains readable on every depth floor without looking like
+        // one of the room-box shells the player is trying to position.
+        static readonly Color ChapterFourPlayer = new Color(0.410f, 0.880f, 1.000f, 1f);
         static readonly Color OptionOnePlayerDark = new Color(0.105f, 0.025f, 0.090f, 1f);
         static readonly Color OptionOneBox = new Color(1.000f, 0.590f, 0.075f, 1f);
         static readonly Color OptionOneDepthBlue = new Color(0.035f, 0.145f, 0.360f, 1f);
@@ -2296,7 +2300,7 @@ namespace Parabox
             };
             a.gutterColor = OptionOneFloor;
             a.gridColor = Color.clear;
-            a.playerColor = OptionOnePlayer;
+            a.playerColor = a.chapter == 3 ? ChapterFourPlayer : OptionOnePlayer;
             a.boxColor = OptionOneBox;
             a.floorVignette = 0.018f;
             a.pieceGlow = 0.035f;
