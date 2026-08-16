@@ -29,6 +29,11 @@ namespace Parabox.EditorTools
         static readonly int[] ChapterFiveRequiredCargo = { 4, 4, 4, 4, 4, 5, 5, 5, 5, 5 };
         static readonly int[] ChapterFiveCargoTransitions = { 0, 0, 2, 2, 1, 3, 3, 3, 4, 8 };
         static readonly int[] ChapterFiveMetaMoves = { 0, 3, 0, 0, 2, 0, 0, 3, 2, 3 };
+        // Chapter V is the expert endgame. These are reviewed solver-proof floors, not targets
+        // produced by padding corridors: a future edit that removes decisions or shortens a
+        // multi-stage route must fail release validation instead of silently flattening the curve.
+        static readonly int[] ChapterFiveParFloors = { 21, 26, 32, 35, 40, 46, 46, 47, 55, 58 };
+        static readonly int[] ChapterFiveTurnFloors = { 7, 16, 15, 17, 12, 17, 13, 26, 12, 24 };
 
         static double nextPlayModeRequestPoll;
 
@@ -749,12 +754,21 @@ namespace Parabox.EditorTools
                 {
                     try
                     {
+                        int chapterStep = index - 40;
                         ChapterFiveDifficultyEvidence.Result evidence =
                             ChapterFiveDifficultyEvidence.Evaluate(prefab, info.solution);
                         if (info.designComplexity != evidence.score)
                             Failure(report, ref failures, index,
                                 $"serialized complexity {info.designComplexity} does not match " +
                                 $"runtime-route evidence {evidence.score}");
+                        if (info.par < ChapterFiveParFloors[chapterStep])
+                            Failure(report, ref failures, index,
+                                $"expert route {info.par} is below the reviewed Chapter V floor " +
+                                ChapterFiveParFloors[chapterStep]);
+                        if (evidence.directionChanges < ChapterFiveTurnFloors[chapterStep])
+                            Failure(report, ref failures, index,
+                                $"expert route has {evidence.directionChanges} planning turns; expected at least " +
+                                ChapterFiveTurnFloors[chapterStep]);
                     }
                     catch (Exception ex)
                     {
