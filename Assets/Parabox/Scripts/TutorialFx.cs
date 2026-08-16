@@ -7,9 +7,9 @@ namespace Parabox
 {
     // The screen-space chrome for each chapter-opening cinematic onboarding.
     //
-    // The tutorial video is a small prebuilt mechanic vignette shown inside a raised, framed panel.
-    // It never borrows the current puzzle or its solver route, so onboarding can explain a rule
-    // without revealing how that level is beaten. GameManager owns the timeline; this owns the
+    // The tutorial video is a real, separate, prebuilt mini-puzzle shown inside a raised panel.
+    // It uses the gameplay model and premium board renderer, but never borrows the current campaign
+    // puzzle or its solver route. GameManager owns the timeline; this owns the
     // FRAME: the dim scrim, the elevated card
     // (soft shadow + polished frame + the video), one short line, the two-option panel, and a
     // dedicated Skip action that remains available throughout every walkthrough. First-appearance
@@ -267,7 +267,14 @@ namespace Parabox
 
         public void SetVideo(Texture tex)
         {
-            if (videoImage != null) videoImage.texture = tex;
+            if (videoImage == null) return;
+            videoImage.texture = tex;
+            videoImage.color = tex != null
+                ? Color.white
+                : new Color(0.018f, 0.055f, 0.145f, 1f);
+            // The old abstract diagram remains serialized only so existing scenes do not lose a
+            // component reference. A real gameplay RenderTexture is now the only visible lesson.
+            if (tex != null) HideMechanicDemoImmediately();
         }
 
         public IEnumerator PlayMechanicDemo(MechanicCatalog.Id id)
@@ -442,6 +449,15 @@ namespace Parabox
         public void HideCaptionImmediately()
         {
             if (captionGroup != null) captionGroup.alpha = 0f;
+        }
+
+        public void ShowCaptionPersistent(string text)
+        {
+            if (captionText != null) captionText.text = text;
+            if (captionGroup == null) return;
+            captionGroup.alpha = 1f;
+            captionGroup.interactable = false;
+            captionGroup.blocksRaycasts = false;
         }
 
         // Unlike the cinematic caption, this panel is not a child of the hidden video card. It is

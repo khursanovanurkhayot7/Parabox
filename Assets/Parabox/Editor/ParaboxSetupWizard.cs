@@ -28,6 +28,7 @@ namespace Parabox.EditorTools
         const string SpriteDir = Root + "/Sprites";
         const string PrefabDir = Root + "/Prefabs";
         const string LevelDir = Root + "/Prefabs/Levels";
+        const string TutorialDir = Root + "/Resources/Parabox/Tutorials";
         const string SceneDir = Root + "/Scenes";
         const string SettingsDir = Root + "/Settings";
 
@@ -502,6 +503,101 @@ namespace Parabox.EditorTools
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log("Parabox: regenerated progressive Chapter II levels 11-20.");
+        }
+
+        [MenuItem("Tools/Parabox/Regenerate Real Tutorial Mini-Puzzles")]
+        public static void RegenerateTutorialMiniLevels()
+        {
+            var tiles = LoadLevelTiles();
+            if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
+            EnsureFolder(TutorialDir);
+
+            TutorialDef[] tutorials = TutorialMiniPuzzles();
+            for (int i = 0; i < tutorials.Length; i++)
+            {
+                TutorialDef tutorial = tutorials[i];
+                string path = TutorialDir + "/" + tutorial.assetName + ".prefab";
+                BuildLevelPrefab(0, tutorial.level, tiles, path);
+
+                // A non-level root name prevents campaign layout rebalancing from treating this
+                // small teaching board as Level 1 when LevelParser reads it.
+                GameObject contents = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    contents.name = "Tutorial_" + tutorial.assetName;
+                    ParaboxLevel info = contents.GetComponent<ParaboxLevel>();
+                    info.levelName = "TUTORIAL - " + MechanicCatalog.DisplayName(tutorial.mechanic);
+                    info.solution = string.Empty;
+                    info.par = 0;
+                    PrefabUtility.SaveAsPrefabAsset(contents, path);
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(contents);
+                }
+
+                string proof = ParaboxCampaignSolver.SolveAndStore(path, 1, tutorial.maxDepth);
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                var mechanics = MechanicCatalog.MechanicsIn(prefab, -1);
+                if (!mechanics.Contains(tutorial.mechanic))
+                    throw new System.InvalidOperationException(
+                        $"{tutorial.assetName} does not contain {tutorial.mechanic}.");
+
+                LevelModel model = LevelParser.Parse(prefab);
+                var visitedRooms = new HashSet<int> { model.player.roomId };
+                var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+                int metaMoves = 0;
+                int cargoBoundaryCrossings = 0;
+                foreach (char step in proof)
+                {
+                    before.Clear();
+                    foreach (PEntity entity in model.entities)
+                        before[entity] = (entity.roomId, entity.pos);
+                    Vector2Int direction = step == 'U' ? Vector2Int.up
+                        : step == 'D' ? Vector2Int.down
+                        : step == 'L' ? Vector2Int.left : Vector2Int.right;
+                    if (!model.TryMovePlayer(direction))
+                        throw new System.InvalidOperationException(
+                            $"{tutorial.assetName} proof blocks at {step} ({proof}).");
+                    visitedRooms.Add(model.player.roomId);
+                    foreach (PEntity entity in model.entities)
+                    {
+                        if (!before.TryGetValue(entity, out var start)
+                            || (start.room == entity.roomId && start.pos == entity.pos)) continue;
+                        if (entity.interiorRoomId >= 0) metaMoves++;
+                        else if (entity.IsCrate && start.room != entity.roomId) cargoBoundaryCrossings++;
+                    }
+                }
+                if (!model.IsWon())
+                    throw new System.InvalidOperationException(
+                        $"{tutorial.assetName} proof does not complete its mini-puzzle.");
+                ValidateTutorialDemonstration(tutorial, visitedRooms.Count,
+                    metaMoves, cargoBoundaryCrossings);
+                Debug.Log($"Parabox tutorial: {tutorial.assetName} = {proof.Length} moves ({proof}).");
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"Parabox: generated and solver-validated {tutorials.Length} real tutorial mini-puzzles.");
+        }
+
+        static void ValidateTutorialDemonstration(TutorialDef tutorial, int roomsVisited,
+                                                  int metaMoves, int cargoBoundaryCrossings)
+        {
+            int requiredRooms = tutorial.mechanic == MechanicCatalog.Id.ChamberChain ? 4
+                : tutorial.mechanic == MechanicCatalog.Id.MultiStageRecursion ? 3
+                : tutorial.mechanic == MechanicCatalog.Id.NestedBoard ? 2
+                : 1;
+            if (roomsVisited < requiredRooms)
+                throw new System.InvalidOperationException(
+                    $"{tutorial.assetName} contains the rule but does not demonstrate it: "
+                    + $"visited {roomsVisited}/{requiredRooms} rooms.");
+            if (tutorial.assetName == "Chapter_4" && metaMoves < 2)
+                throw new System.InvalidOperationException(
+                    "Chapter_4 tutorial must move and then enter its room-box.");
+            if (tutorial.assetName == "Chapter_5" && cargoBoundaryCrossings < 1)
+                throw new System.InvalidOperationException(
+                    "Chapter_5 tutorial must visibly extract cargo across a room boundary.");
         }
 
         // Chapter I deliberately uses only the core puzzle vocabulary. This migration removes the
@@ -1073,6 +1169,154 @@ namespace Parabox.EditorTools
             public string solution;
             public int authoredOrder;
             public int designComplexity;
+        }
+
+        class TutorialDef
+        {
+            public string assetName;
+            public MechanicCatalog.Id mechanic;
+            public LevelDef level;
+            public int maxDepth = 64;
+        }
+
+        static TutorialDef Tutorial(string assetName, MechanicCatalog.Id mechanic,
+                                    string[][] rooms, int maxDepth = 64)
+            => new TutorialDef
+            {
+                assetName = assetName,
+                mechanic = mechanic,
+                maxDepth = maxDepth,
+                level = new LevelDef
+                {
+                    name = "TUTORIAL - " + MechanicCatalog.DisplayName(mechanic),
+                    rooms = rooms,
+                    par = 0,
+                    solution = string.Empty,
+                }
+            };
+
+        // These are real puzzles, not diagrams and not copies of campaign levels. Each is small
+        // enough to read as a lesson, has a different layout/solution from the level it precedes,
+        // and is solved by the exact runtime model before the prefab is accepted. Chapter refreshers
+        // get their own asset so Levels 21, 31 and 41 never replay the same room-box demonstration.
+        static TutorialDef[] TutorialMiniPuzzles()
+        {
+            return new[]
+            {
+                Tutorial("Chapter_1", MechanicCatalog.Id.Navigation, new[] { new[]
+                {
+                    "#######", "#P#...#", "#.#.#p#", "#.....#", "#######"
+                }}),
+                Tutorial("Mechanic_OneWay", MechanicCatalog.Id.OneWay, new[] { new[]
+                {
+                    "#######", "#P>...#", "###.#p#", "#.....#", "#######"
+                }}),
+                Tutorial("Mechanic_Crate", MechanicCatalog.Id.Crate, new[] { new[]
+                {
+                    "#######", "#..x..#", "#..b..#", "#P...p#", "#######"
+                }}),
+                Tutorial("Mechanic_DeepWater", MechanicCatalog.Id.DeepWater, new[] { new[]
+                {
+                    "#######", "#P,,.p#", "#.....#", "#######"
+                }}),
+                Tutorial("Mechanic_ButtonGate", MechanicCatalog.Id.ButtonGate, new[] { new[]
+                {
+                    "########", "#P.bB###", "#...####", "###G.p##", "#.....##", "########"
+                }}),
+                Tutorial("Mechanic_BreakableRock", MechanicCatalog.Id.BreakableRock, new[] { new[]
+                {
+                    "#########", "#P.bR.p.#", "#########"
+                }}),
+                Tutorial("Mechanic_Updraft", MechanicCatalog.Id.Updraft, new[] { new[]
+                {
+                    "#######", "#..x..#", "#..u..#", "#..b..#", "#P...p#", "#######"
+                }}),
+                Tutorial("Mechanic_SlidingCargo", MechanicCatalog.Id.SlidingCargo, new[] { new[]
+                {
+                    "########", "#Pi...x#", "#....p.#", "########"
+                }}),
+                Tutorial("Mechanic_Trench", MechanicCatalog.Id.Trench, new[] { new[]
+                {
+                    "#######", "#Pb~.p#", "#######"
+                }}),
+                Tutorial("Mechanic_Ice", MechanicCatalog.Id.Ice, new[] { new[]
+                {
+                    "#######", "#P__p##", "#######"
+                }}),
+                Tutorial("Mechanic_StickyFloor", MechanicCatalog.Id.StickyFloor, new[] { new[]
+                {
+                    "########", "#P;..p.#", "########"
+                }}),
+                Tutorial("Mechanic_Cage", MechanicCatalog.Id.Cage, new[] { new[]
+                {
+                    "#######", "#Pb[..#", "#...p.#", "#######"
+                }}),
+                Tutorial("Chapter_2", MechanicCatalog.Id.Mirror, new[] { new[]
+                {
+                    "#########", "#..P...m#", "#.......#", "#p...M..#", "#########"
+                }}),
+                Tutorial("Mechanic_KeyLock", MechanicCatalog.Id.KeyLock, new[] { new[]
+                {
+                    "#######", "#PkK.p#", "#######"
+                }}),
+                Tutorial("Mechanic_Magnet", MechanicCatalog.Id.Magnet, new[] { new[]
+                {
+                    "#######", "#b.x#Y#", "#P..p.#", "#######"
+                }}),
+                Tutorial("Mechanic_Echo", MechanicCatalog.Id.Echo, new[] { new[]
+                {
+                    "#######", "#P..p.#", "#E..e.#", "#######"
+                }}),
+                Tutorial("Mechanic_Sand", MechanicCatalog.Id.Sand, new[] { new[]
+                {
+                    "########", "#....x.#", "#..b...#", "#..-...#",
+                    "#P...p.#", "#......#", "########"
+                }}),
+                Tutorial("Mechanic_LockingCargo", MechanicCatalog.Id.LockingCargo, new[] { new[]
+                {
+                    "########", "#..x...#", "#..q...#", "#P...p.#", "########"
+                }}),
+                Tutorial("Mechanic_ToggleLatch", MechanicCatalog.Id.ToggleLatch, new[] { new[]
+                {
+                    "########", "#P.TL.p#", "#......#", "########"
+                }}),
+                Tutorial("Mechanic_HeavyPlateGate", MechanicCatalog.Id.HeavyPlateGate, new[] { new[]
+                {
+                    "########", "#P.bW###", "#...####", "###H.p##", "#.....##", "########"
+                }}),
+                Tutorial("Mechanic_ColourCargo", MechanicCatalog.Id.ColourCargo, new[] { new[]
+                {
+                    "#########", "#..j.n..#", "#..J.N..#", "#P.....p#", "#########"
+                }}, 80),
+                Tutorial("Chapter_3", MechanicCatalog.Id.NestedBoard, new[]
+                {
+                    new[] { "########", "#P.Q...#", "###.p###", "#......#", "########" },
+                    new[] { "#####", "#...#", "....#", "#...#", "##.##" },
+                }),
+                Tutorial("Mechanic_MultiStageRecursion", MechanicCatalog.Id.MultiStageRecursion, new[]
+                {
+                    new[] { "########", "#P.Q...#", "###.p###", "#......#", "########" },
+                    new[] { "#######", "#######", "...U###", "###.###", "###.###" },
+                    new[] { "#####", "#...#", "....#", "#...#", "##.##" },
+                }, 80),
+                Tutorial("Mechanic_ChamberChain", MechanicCatalog.Id.ChamberChain, new[]
+                {
+                    new[] { "########", "#P.Q...#", "###.p###", "#......#", "########" },
+                    new[] { "#######", "#######", "...U###", "###.###", "###.###" },
+                    new[] { "#######", "#######", "...V###", "###.###", "###.###" },
+                    new[] { "#####", "#...#", "....#", "#...#", "##.##" },
+                }, 96),
+                Tutorial("Chapter_4", MechanicCatalog.Id.NestedBoard, new[]
+                {
+                    new[] { "########", "#P.1.x##", "#####p##", "########" },
+                    new[] { "#####", "#...#", "....#", "#...#", "##.##" },
+                }, 80),
+                Tutorial("Chapter_5", MechanicCatalog.Id.NestedBoard, new[]
+                {
+                    new[] { "########", "#x.P.Qp#", "########" },
+                    new[] { "#####", "....#", "..b..", "....#", "#####" },
+                }, 96),
+            };
         }
 
         // Explicit player-facing curriculum. A heuristic may measure an authored board, but it may

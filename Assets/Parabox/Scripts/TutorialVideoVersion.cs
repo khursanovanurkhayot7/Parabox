@@ -4,8 +4,8 @@ namespace Parabox
     // Unity asset and cannot be missed by an already-open Editor's incremental importer.
     static class TutorialVideoVersion
     {
-        // V8 moves the room-box lesson to Chapter III and demonstrates it before the new recursive
-        // campaign begins. Players receive the corrected video once even if V7 was already seen.
-        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V8.Seen.";
+        // V9 replaces the abstract mechanic card with solver-proven gameplay mini-puzzles. Players
+        // who saw the old card receive each real tutorial once without resetting campaign progress.
+        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V9.Seen.";
     }
 }

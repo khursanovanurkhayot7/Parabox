@@ -95,7 +95,7 @@ namespace Parabox
         public LoseFx loseFx;            // drives the freeze / jolt / dim / verdict / options beats
         public ScreenFade screenFade;    // used to fade OUT before leaving for the map
 
-        [Header("Tutorial (level 1, first run only)")]
+        [Header("Prebuilt tutorial mini-games")]
         public TutorialFx tutorialFx;      // the cinematic chrome (letterbox / caption / options)
         public CanvasGroup hudGroup;       // the ENTIRE gameplay HUD — hidden for the cinematic
         public HudReveal hudReveal;        // its seamless-entry reveal, suspended during the cinematic
@@ -1826,6 +1826,13 @@ namespace Parabox
         RenderTexture _rt;                      // the board renders into this; the panel shows it
         const int RTW = 1280, RTH = 720;        // 16:9 — matches the panel so the board isn't distorted
         float RTAspect => RTW / (float)RTH;
+        LevelModel tutorialModel;
+        Transform tutorialBoardRoot;
+        readonly Dictionary<int, Transform> tutorialRoomRoots = new Dictionary<int, Transform>();
+        readonly Dictionary<PEntity, EntityView> tutorialViews = new Dictionary<PEntity, EntityView>();
+        BoardTiles tutorialTiles;
+        Blinker tutorialPlayerBlinker;
+        const float TutorialStageOffset = 4096f;
 
         List<MechanicCatalog.Id> CurrentTutorialMechanics()
             => MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
@@ -1836,10 +1843,21 @@ namespace Parabox
         // read by this path.
         bool WillTutorial()
         {
-            if (tutorialFx == null || tutorialFx.mechanicDemo == null) return false;
+            if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
+            {
+                Debug.LogError("[Parabox] Real tutorial video references are missing from Game.unity.");
+                return false;
+            }
             List<MechanicCatalog.Id> lessons = CurrentTutorialMechanics();
             if (lessons.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(lessons)))
                 return false;
+            foreach (MechanicCatalog.Id lesson in lessons)
+            {
+                if (TutorialPuzzleLibrary.Exists(levelIndex, lesson)) continue;
+                Debug.LogError($"[Parabox] Missing prebuilt tutorial puzzle: "
+                    + TutorialPuzzleLibrary.ResourcePath(levelIndex, lesson));
+                return false;
+            }
             string signature = MechanicCatalog.Signature(lessons);
             return PlayerPrefs.GetString(MechanicBriefingKey(levelIndex), string.Empty) != signature;
         }
@@ -1868,12 +1886,14 @@ namespace Parabox
             mechanicSpotlightRoot = null;
         }
 
-        // The master timeline. It renders only the prebuilt rule vignette. The current board stays
-        // frozen behind the scrim and its solution is never read, replayed or even partially shown.
+        // The master timeline. Every lesson is its own small, solver-proven game. It is parsed into
+        // a separate model and rendered on an off-screen stage, so the campaign puzzle remains
+        // completely untouched and its solution is never exposed.
         System.Collections.IEnumerator TutorialCinematic()
         {
             TutorialPlaybackSerial++;
             cinematic = true;
+            CleanupTutorialPuzzle();
             if (tutorialFx != null)
             {
                 // Repeat can re-enter this timeline while the end-choice panel is still visible.
@@ -1882,15 +1902,15 @@ namespace Parabox
                 tutorialFx.HideChoice();
                 tutorialFx.HideCaptionImmediately();
                 tutorialFx.HideMechanicDemoImmediately();
-                tutorialFx.SetTitle("NEW MECHANIC");
+                tutorialFx.SetTitle("TUTORIAL");
                 tutorialFx.HideMechanicBriefingImmediately();
                 tutorialFx.ShowSkip();
             }
-            if (tutorialFx == null || tutorialFx.mechanicDemo == null)
+            if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
                 cinematic = false;
                 if (tutorialFx != null) tutorialFx.HideSkip();
-                Debug.LogError("[Parabox] The prebuilt mechanic tutorial is missing. "
+                Debug.LogError("[Parabox] The prebuilt real tutorial video is missing. "
                     + "Run Tools/Parabox/Generate Prebuilt UI (Run This).");
                 yield break;
             }
@@ -1912,22 +1932,246 @@ namespace Parabox
             for (int i = 0; i < introductions.Count; i++)
             {
                 tutorialFx.SetTitle(introductions.Count > 1
-                    ? $"NEW MECHANIC  {i + 1}/{introductions.Count}"
-                    : "NEW MECHANIC");
-                yield return tutorialFx.PlayMechanicDemo(introductions[i]);
+                    ? $"TUTORIAL  {i + 1}/{introductions.Count}"
+                    : "TUTORIAL");
+                yield return RunTutorialPuzzle(introductions[i]);
                 if (i + 1 < introductions.Count)
                 {
-                    tutorialFx.HideMechanicDemoImmediately();
-                    yield return WaitU(0.18f);
+                    CleanupTutorialPuzzle();
+                    tutorialFx.HideCaptionImmediately();
+                    yield return WaitU(0.25f);
                 }
             }
 
             yield return tutorialFx.ShowChoice();
         }
 
-        // Chosen: play the level for real. Hand the screen back to the camera (while the scrim is
-        // still opaque, so the switch is invisible), reset the board, then dissolve the panel to
-        // reveal the ready-to-play board — the panel closing IS the transition into gameplay.
+        System.Collections.IEnumerator RunTutorialPuzzle(MechanicCatalog.Id mechanic)
+        {
+            GameObject prefab = TutorialPuzzleLibrary.Load(levelIndex, mechanic);
+            if (prefab == null)
+            {
+                Debug.LogError($"[Parabox] Cannot play missing tutorial puzzle "
+                    + TutorialPuzzleLibrary.ResourcePath(levelIndex, mechanic));
+                yield break;
+            }
+
+            CleanupTutorialPuzzle();
+            tutorialModel = LevelParser.Parse(prefab);
+            tutorialTiles = new BoardTiles();
+            BoardAssets tutorialAssets = BuildAssets();
+            tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
+                tutorialRoomRoots, tutorialViews, tutorialTiles);
+            tutorialBoardRoot.name = "TutorialMiniPuzzle";
+            tutorialBoardRoot.position = new Vector3(TutorialStageOffset, TutorialStageOffset, 0f);
+            tutorialPlayerBlinker = tutorialViews.TryGetValue(tutorialModel.player, out var playerView)
+                && playerView != null
+                ? playerView.GetComponent<Blinker>()
+                : null;
+
+            EnsureRT();
+            var gameplayCamera = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
+            tutorialBgCamera.orthographic = true;
+            tutorialBgCamera.clearFlags = CameraClearFlags.SolidColor;
+            tutorialBgCamera.backgroundColor = new Color(0.005f, 0.015f, 0.055f, 1f);
+            tutorialBgCamera.cullingMask = gameplayCamera != null ? gameplayCamera.cullingMask : ~0;
+            tutorialBgCamera.targetTexture = _rt;
+            tutorialBgCamera.enabled = true;
+            tutorialFx.SetVideo(_rt);
+            tutorialFx.ShowCaptionPersistent(
+                $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
+
+            SyncTutorialViews(true);
+            SetTutorialCameraRoom(tutorialModel.player.roomId, true);
+            yield return WaitU(0.7f);
+
+            ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
+            string route = info != null ? info.solution : string.Empty;
+            if (string.IsNullOrEmpty(route))
+            {
+                Debug.LogError($"[Parabox] Tutorial {prefab.name} has no solver-validated route.");
+                yield break;
+            }
+
+            var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+            foreach (char command in route)
+            {
+                if (!cinematic || tutorialExiting || tutorialModel == null) yield break;
+
+                before.Clear();
+                foreach (PEntity entity in tutorialModel.entities)
+                    before[entity] = (entity.roomId, entity.pos);
+
+                int roomBefore = tutorialModel.player.roomId;
+                Vector2Int direction = TutorialDirection(command);
+                if (direction == Vector2Int.zero || !tutorialModel.TryMovePlayer(direction))
+                {
+                    Debug.LogError($"[Parabox] Tutorial {prefab.name} route blocked at '{command}'.");
+                    yield break;
+                }
+
+                SyncTutorialViews(false);
+                Vector2 squashDirection = new Vector2(direction.x, direction.y);
+                foreach (PEntity entity in tutorialModel.entities)
+                {
+                    if (!before.TryGetValue(entity, out var start)
+                        || start.room != entity.roomId || start.pos != entity.pos)
+                        tutorialViews[entity].Squash(squashDirection);
+                }
+                if (tutorialPlayerBlinker != null)
+                    tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
+
+                if (roomBefore != tutorialModel.player.roomId)
+                    yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId, 0.42f);
+                else
+                    yield return WaitU(0.34f);
+            }
+
+            if (!tutorialModel.IsWon())
+            {
+                Debug.LogError($"[Parabox] Tutorial {prefab.name} finished its route without winning.");
+                yield break;
+            }
+            yield return WaitU(0.9f);
+        }
+
+        static Vector2Int TutorialDirection(char command)
+        {
+            switch (command)
+            {
+                case 'U': return Vector2Int.up;
+                case 'D': return Vector2Int.down;
+                case 'L': return Vector2Int.left;
+                case 'R': return Vector2Int.right;
+                default: return Vector2Int.zero;
+            }
+        }
+
+        void SyncTutorialViews(bool instant)
+        {
+            if (tutorialModel == null) return;
+            foreach (PEntity entity in tutorialModel.entities)
+            {
+                if (!tutorialViews.TryGetValue(entity, out var view) || view == null) continue;
+                if (entity.sunk)
+                {
+                    if (view.gameObject.activeSelf)
+                    {
+                        PRoom sinkRoom = tutorialModel.rooms[entity.roomId];
+                        view.SetTarget(tutorialRoomRoots[entity.roomId], Cell(sinkRoom, entity.pos), instant);
+                        if (instant) view.gameObject.SetActive(false);
+                        else view.Sink();
+                    }
+                    continue;
+                }
+                if (!view.gameObject.activeSelf) view.gameObject.SetActive(true);
+                view.Unsink();
+                PRoom room = tutorialModel.rooms[entity.roomId];
+                view.SetTarget(tutorialRoomRoots[entity.roomId], Cell(room, entity.pos), instant);
+            }
+
+            if (tutorialTiles == null) return;
+            foreach (var kv in tutorialTiles.pits)
+            {
+                bool filled = tutorialModel.rooms.TryGetValue(kv.Key.Item1, out var room)
+                    && room.filled.Contains(kv.Key.Item2);
+                Show(kv.Value, !filled);
+            }
+            foreach (var kv in tutorialTiles.coral)
+            {
+                bool gone = tutorialModel.rooms.TryGetValue(kv.Key.Item1, out var room)
+                    && room.IsBroken(kv.Key.Item2);
+                Show(kv.Value, !gone);
+                if (tutorialTiles.rubble.TryGetValue(kv.Key, out var hole)) Show(hole, gone);
+            }
+            bool gatesOpen = tutorialModel.GatesOpen();
+            bool heavyGatesOpen = tutorialModel.HeavyGatesOpen();
+            foreach (var kv in tutorialTiles.gates) Show(kv.Value, !gatesOpen);
+            foreach (var kv in tutorialTiles.heavyGates) Show(kv.Value, !heavyGatesOpen);
+            foreach (var kv in tutorialTiles.rocks)
+            {
+                bool gone = tutorialModel.rooms.TryGetValue(kv.Key.Item1, out var room)
+                    && room.smashed.Contains(kv.Key.Item2);
+                Show(kv.Value, !gone);
+            }
+            foreach (var kv in tutorialTiles.toggleOn) Show(kv.Value, tutorialModel.latched);
+            foreach (var kv in tutorialTiles.latches) Show(kv.Value, !tutorialModel.latched);
+            foreach (var kv in tutorialTiles.pulses) Show(kv.Value, tutorialModel.beat == 0);
+            foreach (var kv in tutorialTiles.pearls)
+                Show(kv.Value, !tutorialModel.collected.Contains(kv.Key));
+            bool locksOpen = tutorialModel.LocksOpen();
+            foreach (var kv in tutorialTiles.locks) Show(kv.Value, !locksOpen);
+        }
+
+        bool TutorialCameraPose(int roomId, out Vector3 position, out float size)
+        {
+            position = Vector3.zero;
+            size = 1f;
+            if (tutorialModel == null || !tutorialModel.rooms.TryGetValue(roomId, out var room))
+                return false;
+            if (!tutorialRoomRoots.TryGetValue(roomId, out var root) || root == null)
+                return false;
+            float padding = roomId == 0 ? 1.20f : 1.34f;
+            CameraFraming.Compute(root.position, root.lossyScale.x, room.width, room.height,
+                RTAspect, padding, 0.08f, 0.08f, out position, out size);
+            return true;
+        }
+
+        void SetTutorialCameraRoom(int roomId, bool instant)
+        {
+            if (tutorialBgCamera == null
+                || !TutorialCameraPose(roomId, out var position, out var size)) return;
+            if (instant)
+            {
+                tutorialBgCamera.transform.position = position;
+                tutorialBgCamera.orthographicSize = size;
+            }
+        }
+
+        System.Collections.IEnumerator MoveTutorialCameraToRoom(int roomId, float duration)
+        {
+            if (tutorialBgCamera == null
+                || !TutorialCameraPose(roomId, out var targetPosition, out var targetSize))
+            {
+                yield return WaitU(duration);
+                yield break;
+            }
+
+            Vector3 startPosition = tutorialBgCamera.transform.position;
+            float startSize = tutorialBgCamera.orthographicSize;
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
+                tutorialBgCamera.transform.position = Vector3.Lerp(startPosition, targetPosition, t);
+                tutorialBgCamera.orthographicSize = Mathf.Lerp(startSize, targetSize, t);
+                yield return null;
+            }
+            tutorialBgCamera.transform.position = targetPosition;
+            tutorialBgCamera.orthographicSize = targetSize;
+        }
+
+        void CleanupTutorialPuzzle()
+        {
+            if (tutorialBgCamera != null)
+            {
+                tutorialBgCamera.enabled = false;
+                tutorialBgCamera.targetTexture = null;
+                tutorialBgCamera.cullingMask = 0;
+            }
+            if (tutorialBoardRoot != null) Destroy(tutorialBoardRoot.gameObject);
+            tutorialBoardRoot = null;
+            tutorialModel = null;
+            tutorialRoomRoots.Clear();
+            tutorialViews.Clear();
+            tutorialTiles = null;
+            tutorialPlayerBlinker = null;
+            if (tutorialFx != null) tutorialFx.SetVideo(null);
+        }
+
+        // Chosen: play the campaign level for real. Dispose the separate teaching board while the
+        // scrim still covers the display, then reveal the untouched campaign puzzle underneath.
         System.Collections.IEnumerator TutorialExitToPlay()
         {
             if (tutorialFx != null)
@@ -1937,6 +2181,7 @@ namespace Parabox
             }
             ClearGoalGlow();
             ClearMechanicSpotlights();
+            CleanupTutorialPuzzle();
 
             var cam = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
             if (cam != null) { cam.targetTexture = null; cam.ResetAspect(); }   // draw to the SCREEN again
@@ -2024,8 +2269,8 @@ namespace Parabox
             StartCoroutine(TutorialExitToPlay());
         }
 
-        // Put the board back exactly as it was, replaying backwards through the same undo the player's
-        // Z key uses — so the board they play cannot differ from the one they watched.
+        // The campaign model is never moved by the tutorial. This guarded rewind remains a safety
+        // net for scene upgrades and guarantees the puzzle always starts at move zero.
         bool TutorialRewind()
         {
             if (model == null) return false;
@@ -2059,6 +2304,7 @@ namespace Parabox
         {
             ClearGoalGlow();
             ClearMechanicSpotlights();
+            CleanupTutorialPuzzle();
             ReleaseRT();
             if (tutorialFx != null) tutorialFx.RevealGameplayImmediately();
             if (cameraFollow != null) cameraFollow.enabled = true;
@@ -2106,7 +2352,7 @@ namespace Parabox
 
         void ReleaseRT()
         {
-            if (tutorialBgCamera != null) tutorialBgCamera.enabled = false;
+            CleanupTutorialPuzzle();
             var cam = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
             if (cam != null && cam.targetTexture == _rt) { cam.targetTexture = null; cam.ResetAspect(); }
             if (tutorialFx != null) tutorialFx.SetVideo(null);
@@ -2117,6 +2363,7 @@ namespace Parabox
         // garbage-collected — release it explicitly so it can't leak across scene loads.
         void OnDestroy()
         {
+            CleanupTutorialPuzzle();
             if (_rt != null) { _rt.Release(); _rt = null; }
         }
 
