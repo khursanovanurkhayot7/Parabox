@@ -1831,9 +1831,9 @@ namespace Parabox.EditorTools
                     solution = "DDLDRRRRRRDURULRRDDLDRLDDR"
                 },
 
-                // PRACTICE: cargo begins two spaces deep. The player must circle inside the
-                // smallest room, push the amber crate through both room boundaries, keep pushing
-                // after following it outside, then return to the separate outer player target.
+                // PRACTICE: cargo begins two spaces deep. After extracting it through both room
+                // boundaries, the player must shift a four-crate convoy, take the lower return
+                // corridor and turn the final crate upward onto its separate goal.
                 new LevelDef
                 {
                     name = "Bring It Out",
@@ -1842,10 +1842,12 @@ namespace Parabox.EditorTools
                         new[]
                         {
                             "########",
-                            "#.p....#",
+                            "#......#",
                             "#...Q..#",
-                            "#P.....#",
-                            "#..AAAj#",
+                            "#..P..j#",
+                            "#..AAAp#",
+                            "##.###.#",
+                            "##.....#",
                             "########"
                         },
                         new[]
@@ -1865,8 +1867,8 @@ namespace Parabox.EditorTools
                             "#####"
                         }
                     },
-                    par = 29,
-                    solution = "URRRRRRRURRDLLLLLLLULDDLDRUUU"
+                    par = 32,
+                    solution = "RUUURRURRDLLLLLLLULDDLDRDDRRRRUU"
                 },
 
                 // EXPERIMENT: reverse the transfer. An outer crate is driven through two pinned

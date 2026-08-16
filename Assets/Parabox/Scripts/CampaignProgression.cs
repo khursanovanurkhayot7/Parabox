@@ -80,7 +80,7 @@ namespace Parabox
             "Send slick cargo through ice and a narrow gap into the gravity chute", "Hold the gate, then use the side loop to control two pulse barriers",
 
             "Enter a pinned room and exit through a different edge", "Push a room into its socket before entering it",
-            "Extract cargo outward through two room boundaries", "Send cargo inward, finish deep, then backtrack outside",
+            "Extract deep cargo, shift the convoy and turn the final crate upward", "Send cargo inward, finish deep, then backtrack outside",
             "Reposition a child room and re-enter it from another side", "Turn deep cargo while relaying it across three boundaries",
             "Move cargo between sibling rooms through the outer sorting bay", "Choose the child room's exit position before extracting cargo",
             "Re-enter from a new side and carry cargo through four nested boundaries", "Side-dock a deep room, extract an ordered convoy and relay it across sibling branches"
