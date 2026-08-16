@@ -174,10 +174,10 @@ namespace Parabox
             return introduced;
         }
 
-        // The campaign still teaches every rule at its first real appearance. In addition, each
-        // ten-level chapter opens with one short gameplay-style refresher so a returning player is
-        // never dropped into a new world without a readable demonstration. These are presentation
-        // mini-boards only; they do not load or replay the campaign level.
+        // Tutorials are intentionally bundled at five chapter checkpoints. A chapter mini-board
+        // demonstrates several related skills in one short solve, rather than interrupting play
+        // with a separate video every time a single tile first appears. The campaign level itself
+        // is never replayed, so the player still discovers its solution independently.
         public static List<Id> TutorialsAt(GameObject[] prefabs, int levelIndex)
         {
             var lessons = new List<Id>();
@@ -189,14 +189,39 @@ namespace Parabox
                 case 30: Add(lessons, Id.NestedBoard); break;  // Level 31 — movable-room refresher
                 case 40: Add(lessons, Id.NestedBoard); break;  // Level 41
             }
-
-            foreach (Id introduced in IntroductionsAt(prefabs, levelIndex))
-                Add(lessons, introduced);
             return lessons;
         }
 
         public static bool IsChapterTutorialCheckpoint(int levelIndex)
             => levelIndex >= 0 && levelIndex < 50 && levelIndex % 10 == 0;
+
+        // Player-facing copy for the single bundled video at each chapter opener. These are three
+        // actions demonstrated by the purpose-built mini-board, not hints for the campaign board.
+        public static string TutorialBundleName(int levelIndex)
+        {
+            switch (levelIndex)
+            {
+                case 0: return "MOVE  •  TURN  •  REACH THE GOAL";
+                case 10: return "LINK PLAYERS  •  PLAN BOTH PATHS  •  FINISH TOGETHER";
+                case 20: return "ENTER A ROOM  •  MOVE INSIDE  •  EXIT OUTSIDE";
+                case 30: return "PUSH THE ROOM  •  PIN IT  •  RE-ENTER";
+                case 40: return "ENTER THE CHAIN  •  EXTRACT CARGO  •  RETURN OUTSIDE";
+                default: return string.Empty;
+            }
+        }
+
+        public static string TutorialBundleLesson(int levelIndex)
+        {
+            switch (levelIndex)
+            {
+                case 0: return "Learn three movement skills in one small example.";
+                case 10: return "One input moves linked players; watch both routes before moving.";
+                case 20: return "Crossing a room edge changes which board the player occupies.";
+                case 30: return "A room moves when space is free and becomes enterable when pinned.";
+                case 40: return "Carry the same cargo outward through connected rooms.";
+                default: return string.Empty;
+            }
+        }
 
         public static string Signature(IReadOnlyList<Id> ids)
         {

@@ -1886,9 +1886,9 @@ namespace Parabox
             mechanicSpotlightRoot = null;
         }
 
-        // The master timeline. Every lesson is its own small, solver-proven game. It is parsed into
-        // a separate model and rendered on an off-screen stage, so the campaign puzzle remains
-        // completely untouched and its solution is never exposed.
+        // The master timeline. Each chapter gets one bundled, solver-proven mini-game instead of a
+        // sequence of single-rule interruptions. It is parsed into a separate model and rendered
+        // off-screen, so the campaign puzzle stays untouched and its solution is never exposed.
         System.Collections.IEnumerator TutorialCinematic()
         {
             TutorialPlaybackSerial++;
@@ -1978,8 +1978,11 @@ namespace Parabox
             tutorialBgCamera.targetTexture = _rt;
             tutorialBgCamera.enabled = true;
             tutorialFx.SetVideo(_rt);
-            tutorialFx.ShowCaptionPersistent(
-                $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
+            string bundleName = MechanicCatalog.TutorialBundleName(levelIndex);
+            string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex);
+            tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleName)
+                ? $"{bundleName}  •  {bundleLesson}"
+                : $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
 
             SyncTutorialViews(true);
             SetTutorialCameraRoom(tutorialModel.player.roomId, true);

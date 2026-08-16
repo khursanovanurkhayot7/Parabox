@@ -4,8 +4,8 @@ namespace Parabox
     // Unity asset and cannot be missed by an already-open Editor's incremental importer.
     static class TutorialVideoVersion
     {
-        // V10 includes the expanded Chapter II mirror slalom. Players who saw the shorter V9
-        // demonstration receive the improved tutorial once without resetting campaign progress.
-        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V10.Seen.";
+        // V11 replaces per-mechanic interruptions with one three-skill mini-game per chapter.
+        // Existing players receive each improved chapter video once without losing progress.
+        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V11.Seen.";
     }
 }

@@ -363,15 +363,15 @@ namespace Parabox
                     && nestedRooms.Add(e.interiorRoomId))
                 {
                     Color interiorC = RoomColor(a.roomColors, e.interiorRoomId);
-                    // Movable recursive rooms use the same premium amber language as pushable
-                    // cargo and its socket. Fixed rooms retain their depth colour, so players can
-                    // identify what can move without confusing the live miniature inside it.
+                    // Chapter IV's movable room is the cobalt-blue puzzle piece taught in that
+                    // world. Chapter V keeps the amber extraction-shell language, so entering and
+                    // repositioning one room never looks like the later nested-cargo chapter.
                     Color shellC = e.anchored
                         ? NestedShellColor(e.interiorRoomId)
-                        : MovableNestedShellColor();
+                        : MovableNestedShellColor(a.chapter);
                     Color shellAccent = e.anchored
                         ? NestedShellAccentColor(e.interiorRoomId)
-                        : MovableNestedShellAccentColor();
+                        : MovableNestedShellAccentColor(a.chapter);
                     var backing = go.transform.Find("Backing");
                     // Keep the backing: it is the coloured body of the recursive room. It renders
                     // below the live miniature and becomes the large, readable outer chamber when
@@ -2107,11 +2107,19 @@ namespace Parabox
             }
         }
 
-        static Color MovableNestedShellColor()
-            => Darken(OptionOneBox, 0.46f);
+        static Color MovableNestedShellColor(int chapter)
+        {
+            // Chapter indices are zero-based. Chapter IV deliberately owns cobalt rooms; the
+            // amber shell remains reserved for Chapter V's extraction and chamber-chain puzzles.
+            if (chapter == 3) return new Color(0.055f, 0.245f, 0.625f, 1f);
+            return Darken(OptionOneBox, 0.46f);
+        }
 
-        static Color MovableNestedShellAccentColor()
-            => Lighten(OptionOneBox, 0.10f);
+        static Color MovableNestedShellAccentColor(int chapter)
+        {
+            if (chapter == 3) return new Color(0.275f, 0.700f, 1.000f, 1f);
+            return Lighten(OptionOneBox, 0.10f);
+        }
 
         static Color NestedShellAccentColor(int roomId)
         {

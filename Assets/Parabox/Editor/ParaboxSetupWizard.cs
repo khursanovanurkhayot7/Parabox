@@ -1547,23 +1547,23 @@ namespace Parabox.EditorTools
                     solution = "RRRRRLDDDLLLURRRRDLDD"
                 },
 
-                // TEACH KEY — the centre wall splits the board into two readable loops. The player
-                // must take the lower opening to the pearl, return, and only then cross the lock.
+                // TEACH KEY — one visible snake route establishes the complete rule without a
+                // misleading branch: collect the pearl first, then cross its lock to reach home.
                 new LevelDef
                 {
                     name = "Pearl Crossing",
                     rooms = new[] { new[]
                     {
                         "#######",
-                        "#P.#.k#",
-                        "#..#..#",
+                        "#P...k#",
+                        "#####.#",
                         "#.....#",
-                        "###K###",
-                        "###p###",
+                        "#.#####",
+                        "#..Kp##",
                         "#######"
                     } },
-                    par = 14,
-                    solution = "RDDRRUURDDLLDD"
+                    par = 15,
+                    solution = "RRRRDDLLLLDDRRR"
                 },
 
                 // TEACH BREAK — line the cargo up with the visibly cracked rock, then sacrifice it
@@ -1603,6 +1603,33 @@ namespace Parabox.EditorTools
         {
             return new[]
             {
+                // The shipped Chapter II curriculum renamed these two proven boards. Keeping the
+                // renamed definitions in the authored library prevents a clean rebuild from
+                // depending on stale serialized prefabs.
+                new LevelDef
+                {
+                    name = "Echo Relay",
+                    rooms = new[] { new[]
+                    {
+                        "##########", "#P......p#", "#..####..#", "#E.#....e#",
+                        "#...##...#", "#........#", "#........#", "##########"
+                    } },
+                    par = 17,
+                    solution = "RDDDRDRRRRRUUUUDU"
+                },
+
+                new LevelDef
+                {
+                    name = "Colour Logistics",
+                    rooms = new[] { new[]
+                    {
+                        "##########", "#........#", "#P.J.N...#", "#........#",
+                        "#..n....j#", "##########"
+                    } },
+                    par = 21,
+                    solution = "RRRURDDLDRRRUULLLULDD"
+                },
+
                 // REORIENT: neither crate can be pushed straight at its target because the two
                 // lower pillars remove the useful pushing side. The player must move each crate
                 // sideways, circle the pillar and rebuild the upward push from open floor.
