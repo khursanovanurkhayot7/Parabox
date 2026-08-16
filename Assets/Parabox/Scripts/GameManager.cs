@@ -1833,6 +1833,12 @@ namespace Parabox
         BoardTiles tutorialTiles;
         Blinker tutorialPlayerBlinker;
         const float TutorialStageOffset = 4096f;
+        const float TutorialPlaybackRate = 0.7f;
+
+        // The tutorial is a live solver replay, not an encoded movie. Expanding every beat by the
+        // inverse rate gives a real 0.7x presentation while gameplay and UI input remain at 1x.
+        static float TutorialDuration(float seconds)
+            => seconds / TutorialPlaybackRate;
 
         List<MechanicCatalog.Id> CurrentTutorialMechanics()
             => MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
@@ -1922,8 +1928,8 @@ namespace Parabox
 
             tutorialFx.CoverInstant();
             tutorialFx.SetVideo(null);
-            tutorialFx.PanelIn(tutorialFromMainPlay ? 0.8f : 0.5f);
-            yield return WaitU(tutorialFromMainPlay ? 0.9f : 0.6f);
+            tutorialFx.PanelIn(TutorialDuration(tutorialFromMainPlay ? 0.8f : 0.5f));
+            yield return WaitU(TutorialDuration(tutorialFromMainPlay ? 0.9f : 0.6f));
 
             List<MechanicCatalog.Id> introductions = CurrentTutorialMechanics();
             if (introductions.Count == 0)
@@ -1939,7 +1945,7 @@ namespace Parabox
                 {
                     CleanupTutorialPuzzle();
                     tutorialFx.HideCaptionImmediately();
-                    yield return WaitU(0.25f);
+                    yield return WaitU(TutorialDuration(0.25f));
                 }
             }
 
@@ -1986,7 +1992,7 @@ namespace Parabox
 
             SyncTutorialViews(true);
             SetTutorialCameraRoom(tutorialModel.player.roomId, true);
-            yield return WaitU(0.7f);
+            yield return WaitU(TutorialDuration(0.7f));
 
             ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
             string route = info != null ? info.solution : string.Empty;
@@ -2025,9 +2031,10 @@ namespace Parabox
                     tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
 
                 if (roomBefore != tutorialModel.player.roomId)
-                    yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId, 0.42f);
+                    yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId,
+                        TutorialDuration(0.42f));
                 else
-                    yield return WaitU(0.34f);
+                    yield return WaitU(TutorialDuration(0.34f));
             }
 
             if (!tutorialModel.IsWon())
@@ -2035,7 +2042,7 @@ namespace Parabox
                 Debug.LogError($"[Parabox] Tutorial {prefab.name} finished its route without winning.");
                 yield break;
             }
-            yield return WaitU(0.9f);
+            yield return WaitU(TutorialDuration(0.9f));
         }
 
         static Vector2Int TutorialDirection(char command)

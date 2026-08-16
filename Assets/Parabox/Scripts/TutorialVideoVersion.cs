@@ -4,8 +4,8 @@ namespace Parabox
     // Unity asset and cannot be missed by an already-open Editor's incremental importer.
     static class TutorialVideoVersion
     {
-        // V11 replaces per-mechanic interruptions with one three-skill mini-game per chapter.
-        // Existing players receive each improved chapter video once without losing progress.
-        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V11.Seen.";
+        // V12 presents the bundled solver replay at 0.7x speed. Existing players receive each
+        // easier-to-follow chapter video once without losing campaign progress.
+        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V12.Seen.";
     }
 }
