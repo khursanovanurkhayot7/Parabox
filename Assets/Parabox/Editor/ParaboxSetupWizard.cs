@@ -1253,15 +1253,11 @@ namespace Parabox.EditorTools
                 }}),
                 Tutorial("Chapter_2", MechanicCatalog.Id.Mirror, new[] { new[]
                 {
-                    "###########",
-                    "##P.###m.##",
-                    "###.###.###",
-                    "##..###..##",
-                    "##.#####.##",
-                    "##..###..##",
-                    "###.###.###",
-                    "##.p###.M##",
-                    "###########"
+                    "#########",
+                    "#P...p..#",
+                    "#E...e..#",
+                    "#.#m..M.#",
+                    "#########"
                 }}),
                 Tutorial("Mechanic_KeyLock", MechanicCatalog.Id.KeyLock, new[] { new[]
                 {
@@ -1361,8 +1357,8 @@ namespace Parabox.EditorTools
             "Read the Route", "Arrow and Push", "Deep Route", "Cargo Holds the Route", "Line Up the Break",
             "Wrong Chimney", "Slide to Open", "Make a Bridge", "Carried Past", "One Way In",
 
-            "Facing Away", "Pearl Crossing", "Magnetic Relay", "Echo Relay", "Nothing to Brace",
-            "Set in Stone", "Foundations Circuit", "Opposite Numbers", "Two Kinds of Gate", "Colour Logistics",
+            "Facing Away", "Crossed Signals", "Shared Parcel", "Turnaround Parcel", "Side Channel",
+            "Opposite Numbers", "Double Circuit", "Vertical Relay", "Three-Way Accord", "Linked Machine",
 
             "Cargo Through the Room", "Reverse Entry", "Turn Inside", "Side Exit", "Inner Pillar",
             "Two Rooms Deep", "Long Inner Relay", "Deep Corner", "Return Pocket", "Rooms Within Rooms",
@@ -1404,7 +1400,7 @@ namespace Parabox.EditorTools
             // removes the old chapter-boundary resets while preserving every compact authored board.
             var candidates = new Dictionary<string, LevelDef>(byName, System.StringComparer.Ordinal);
             foreach (LevelDef level in ChapterOneFoundations()) candidates[level.name] = level;
-            foreach (LevelDef level in ChapterTwoSystems()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterTwoLinkedPlayers()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterThreeSynergy()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterFourRoomManeuvers()) candidates[level.name] = level;
             for (int i = 0; i < FirstFortyDifficultyOrder.Length; i++)
@@ -1599,255 +1595,158 @@ namespace Parabox.EditorTools
             };
         }
 
-        static LevelDef[] ChapterTwoSystems()
+        static LevelDef[] ChapterTwoLinkedPlayers()
         {
             return new[]
             {
-                // The shipped Chapter II curriculum renamed these two proven boards. Keeping the
-                // renamed definitions in the authored library prevents a clean rebuild from
-                // depending on stale serialized prefabs.
+                // TEACH — the player and mirror move in opposite directions. The central brace
+                // lets one actor wait while the other catches up, so reaching both goals requires
+                // deliberate desynchronisation rather than a straight run across the board.
                 new LevelDef
                 {
-                    name = "Echo Relay",
+                    name = "Facing Away",
                     rooms = new[] { new[]
                     {
-                        "##########", "#P......p#", "#..####..#", "#E.#....e#",
-                        "#...##...#", "#........#", "#........#", "##########"
+                        "##########", "#p......P#", "#........#", "#M...#..m#", "##########"
+                    } },
+                    par = 13,
+                    solution = "LLLLLDLLURRLL"
+                },
+
+                // PRACTICE — a vertical switchback replaces Level 11's horizontal staging. The
+                // two wall banks block different actors on different beats, teaching that a
+                // blocked partner is a useful timing tool rather than a failed move.
+                new LevelDef
+                {
+                    name = "Crossed Signals",
+                    rooms = new[] { new[]
+                    {
+                        "##########", "#...m....#", "#.....##.#", "#.M...##.#",
+                        "#..Pp.##.#", "#.....##.#", "#........#", "##########"
+                    } },
+                    par = 15,
+                    solution = "RRDDRRLLLLLUURR"
+                },
+
+                // APPLY — the first shared parcel adds a third objective. One linked actor must
+                // hold its lane while the other creates the pushing side, then both still need to
+                // separate and finish their own targets.
+                new LevelDef
+                {
+                    name = "Shared Parcel",
+                    rooms = new[] { new[]
+                    {
+                        "###########", "#.........#", "#..###....#", "#m.#......#",
+                        "#.####....#", "#..#...b.p#", "#.P.M....x#", "###########"
+                    } },
+                    par = 16,
+                    solution = "UDRRRURRRUUURDDD"
+                },
+
+                // REORIENT — the parcel starts above its target but the wall column removes the
+                // direct pushing side. The route has eleven direction changes: both actors must
+                // repeatedly trade which one is moving and which one is braced.
+                new LevelDef
+                {
+                    name = "Turnaround Parcel",
+                    rooms = new[] { new[]
+                    {
+                        "###########", "#.........#", "#....b.#..#", "#M..x#.#..#",
+                        "#....#P#m.#", "#....#....#", "#p........#", "###########"
                     } },
                     par = 17,
-                    solution = "RDDDRDRRRRRUUUUDU"
+                    solution = "UULLLULDLDRRLDDLD"
                 },
 
+                // OFFSET — a narrow right channel turns the same three objectives into a vertical
+                // hand-off. The player must reverse direction repeatedly without allowing the
+                // mirror to seal the parcel against the wall.
                 new LevelDef
                 {
-                    name = "Colour Logistics",
+                    name = "Side Channel",
                     rooms = new[] { new[]
                     {
-                        "##########", "#........#", "#P.J.N...#", "#........#",
-                        "#..n....j#", "##########"
+                        "###########", "#........m#", "#.......#.#", "#..p.P..#.#",
+                        "#....b.x#.#", "#..###....#", "#.....M...#", "###########"
                     } },
-                    par = 21,
-                    solution = "RRRURDDLDRRRUULLLULDD"
+                    par = 18,
+                    solution = "LDRRUUDDRULDLDDLUL"
                 },
 
-                // REORIENT: neither crate can be pushed straight at its target because the two
-                // lower pillars remove the useful pushing side. The player must move each crate
-                // sideways, circle the pillar and rebuild the upward push from open floor.
+                // CONSTRAINT — the cage is not another object to count; it removes a recovery
+                // push. The partners must cross in the correct order before either commits to its
+                // goal pocket, adding an irreversible decision after five reversible lessons.
                 new LevelDef
                 {
-                    name = "Cargo Reversal",
+                    name = "Opposite Numbers",
                     rooms = new[] { new[]
                     {
-                        "##########",
-                        "#........#",
-                        "#..x..x..#",
-                        "#........#",
-                        "#..b..b..#",
-                        "#..#.....#",
-                        "#P......p#",
-                        "##########"
+                        "#########", "#...p...#", "##.##...#", "#...#...#",
+                        "#.m.#...#", "###.[MP.#", "#########"
                     } },
-                    par = 27,
-                    solution = "RUURLDDRRUUURULDRDDRUURRDDD"
+                    par = 20,
+                    solution = "UUUULLLRRRRDLRULLLLR"
                 },
 
-                // TEACH GEYSER: the opening P*~ lane pictures the complete rule in one move—the
-                // diver lands safely beyond the trench. The landing room then asks for two cargo
-                // deliveries, including one turn around a wall, so this cannot be easier than L11.
+                // COMBINE — two parcels share one staging lane. Their targets are on opposite
+                // sides, and the extra right-hand post forces a detour before either delivery can
+                // be committed. No execution run exceeds four identical inputs.
                 new LevelDef
                 {
-                    name = "Geyser Workshop",
+                    name = "Double Circuit",
                     rooms = new[] { new[]
                     {
-                        "############",
-                        "#..x.....p.#",
-                        "#..#..###..#",
-                        "#..b.......#",
-                        "#..........#",
-                        "#P*~....b.x#",
-                        "############"
+                        "###########", "#p...x...P#", "#..###....#", "#..b...#..#",
+                        "#......b..#", "#....###..#", "#M...x...m#", "###########"
+                    } },
+                    par = 22,
+                    solution = "DDDLLLLRUURULDDLLLLUUL"
+                },
+
+                // TWIST — the two parcels now travel on different axes through offset braces. A
+                // push that helps the upper delivery changes the mirror's access to the lower one,
+                // so the player must plan both deliveries before committing either target.
+                new LevelDef
+                {
+                    name = "Vertical Relay",
+                    rooms = new[] { new[]
+                    {
+                        "#########", "#...p.P.#", "#..x....#", "#..#b...#",
+                        "#...b#..#", "#....x..#", "#M..m...#", "#########"
                     } },
                     par = 24,
-                    solution = "UURRDRUURULRDDRRDDRRUUUU"
+                    solution = "DDDDLLLUDRUURUURRLLDDULU"
                 },
 
-                // COMBINE BUTTON + ARROW: cargo must remain on the shell button. Past its gate,
-                // the opposing arrow refuses the direct approach, so the lower loop is mandatory.
+                // MASTERY — an echo joins the opposite-moving mirror. Every input now controls
+                // three actors: two copy the input relationship and one inverts it. Long wall
+                // banks make each actor stop on a different beat, with no cargo clutter and no
+                // campaign-level solution spoiler.
                 new LevelDef
                 {
-                    name = "Arrow Relay",
+                    name = "Three-Way Accord",
                     rooms = new[] { new[]
                     {
-                        "#############",
-                        "#P..........#",
-                        "#..b..###...#",
-                        "#.....###...#",
-                        "#.........B.#",
-                        "####G########",
-                        "#......<p...#",
-                        "###.######.##",
-                        "###........##",
-                        "#############"
-                    } },
-                    par = 34,
-                    solution = "RRDDLDRRRRRRRLLLLLDDLDDRRRRRRRUULL"
-                },
-
-                // COMBINE HEAVY GATE + DELIVERY: the first crate is committed to the striped
-                // plate. Only then can the second crate be turned along the lower route and lifted
-                // onto its target, making the held-open gate a real dependency rather than décor.
-                new LevelDef
-                {
-                    name = "Weight Transfer",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#P.b......W.#",
-                        "#...........#",
-                        "######H######",
-                        "#...........#",
-                        "#....J......#",
-                        "#.#######.j.#",
-                        "#..........p#",
-                        "#############"
-                    } },
-                    par = 28,
-                    solution = "RRRRRRRRDLLLDDLLDRRRRRURDRDD"
-                },
-
-                // DEEP-WATER ROUTING: the diver can cross anywhere, but cargo has exactly one dry
-                // three-cell channel. After lowering the crate through it, the player must swim
-                // back above the water to perform the final downward delivery from the useful side.
-                new LevelDef
-                {
-                    name = "Dry Channel",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#P........k.#",
-                        "#.....b.....#",
-                        "#,,,,.K.,,,,#",
-                        "#...........#",
-                        "#.x...###...#",
-                        "#..........p#",
-                        "#############"
-                    } },
-                    par = 35,
-                    solution = "RRRRRRRRRLLLLDDRDLLLLULDRRRRRRRDDRR"
-                },
-
-                // KEY + BUTTON SEQUENCE: both pearls sit at opposite ends of the upper loop. The
-                // cargo must then stay on the button; only a fully opened lock-and-gate stack leads
-                // to the exit. Every dependency is visible in one central vertical line.
-                new LevelDef
-                {
-                    name = "Twin Pearl Circuit",
-                    rooms = new[] { new[]
-                    {
-                        "###############",
-                        "#k....#....k..#",
-                        "#.....#.......#",
-                        "#..P..#.......#",
-                        "#.....#.......#",
-                        "#.....B..b....#",
-                        "#######K#######",
-                        "#######G#######",
-                        "#......p......#",
-                        "###############"
-                    } },
-                    par = 33,
-                    solution = "UULLRRRRDDDDRRUUUURRRRDDDDLLLLDDD"
-                },
-
-                // LINKED SWITCHES: leaving the crate on the upper button opens the first gate.
-                // The lower loop then reaches a toggle whose persistent state opens the latch.
-                // Solving either system alone never exposes the goal.
-                new LevelDef
-                {
-                    name = "Two-Stage Switch",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#P..........#",
-                        "#..b..###...#",
-                        "#.....###...#",
-                        "#.........B.#",
-                        "######G######",
-                        "#.....T.....#",
-                        "######L######",
-                        "#..........p#",
-                        "#############"
+                        "#########", "#......M#", "#e####P.#", "#..#..p.#",
+                        "#E.##...#", "#..m....#", "#########"
                     } },
                     par = 25,
-                    solution = "RRDDLDRRRRRRRLLLDDDDRRRRR"
+                    solution = "RDDDUUUULLLLLRRRRRDDDDULU"
                 },
 
-                // TEACH KELP: a tall, unbroken bank makes the rule obvious. The diver may shortcut
-                // through it, but cargo must travel down, around the open bottom and back up before
-                // the diver can finish on the far side.
+                // FINALE — the three actors begin on different edges and must trade which wall
+                // bank is acting as a stop. The open centre offers tempting short moves, but only
+                // the full 27-step sequence leaves all three linked targets occupied together.
                 new LevelDef
                 {
-                    name = "Kelp Detour",
+                    name = "Linked Machine",
                     rooms = new[] { new[]
                     {
-                        "###########",
-                        "#P...%....#",
-                        "#....%....#",
-                        "#..b.%..B.#",
-                        "#....%....#",
-                        "#....%....#",
-                        "#....%....#",
-                        "#.........#",
-                        "#.........#",
-                        "#####G#####",
-                        "#....p....#",
-                        "###########"
+                        "#########", "#...M..P#", "#.......#", "#....##.#",
+                        "#.p.m##.#", "#...E..e#", "#########"
                     } },
-                    par = 29,
-                    solution = "RRDDDDDLDRRRRRDRUUUUDDDDLLLDD"
-                },
-
-                // TEACH CRACKED FLOOR: the cracked bridge is the only route from left to right and
-                // collapses behind the delivery. After collecting the pearl, the one-way lower door
-                // is the only return, turning the new rule into a readable plan-before-crossing test.
-                new LevelDef
-                {
-                    name = "The Last Crossing",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#P....#...xk#",
-                        "#.....#.....#",
-                        "#..b..c.....#",
-                        "#.....#.....#",
-                        "#pK...<.*...#",
-                        "#...........#",
-                        "#############"
-                    } },
-                    par = 28,
-                    solution = "DDRRRRRRRRDRUURUDDDDLLLLLLLL"
-                },
-
-                // CHAPTER TEST: the crate cannot travel straight to the button. It must be taken
-                // below a wall, across, and back up. With the gate held, the diver collects the
-                // pearl and commits to a current corridor; gate and lock then resolve in sequence.
-                new LevelDef
-                {
-                    name = "Systems Engine",
-                    rooms = new[] { new[]
-                    {
-                        "##################",
-                        "#P...............#",
-                        "#...b...#...B....#",
-                        "#.......#........#",
-                        "#................#",
-                        "#########....#####",
-                        "############k#####",
-                        "############ddGKp#",
-                        "##################"
-                    } },
-                    par = 25,
-                    solution = "RRRDDLDRRRRRRRRDRUUDDDDRR"
+                    par = 27,
+                    solution = "DDUULLLLDRRRRRDDDUUUULDDLRD"
                 },
             };
         }
@@ -2718,6 +2617,27 @@ namespace Parabox.EditorTools
             for (int i = 1; i < level.solution.Length; i++)
                 if (level.solution[i] != level.solution[i - 1]) turns++;
 
+            // Coupled-player commands do more work than ordinary walking: a single input advances
+            // the player, echo and/or mirror together. Scoring every command as a full independent
+            // decision exaggerated Chapter II and made its three-actor boards appear harder than
+            // the recursive chapter that follows. This calibrated evidence model still rewards
+            // route length, turns, objectives and linked dependencies, while preserving the real
+            // Level 10 -> 11 teaching step and a smooth hand-off into Level 21.
+            if (mirror && mirrorGoal && level.rooms.Length == 1)
+            {
+                int irreversibleConstraint = mechanics.Contains(TerrainKind.Cage.ToString()) ? 60 : 0;
+                return 349
+                       + level.par * 37
+                       + turns * 12
+                       + objects * 25
+                       + targets * 20
+                       + mechanics.Count * 55
+                       + dependencies * 70
+                       + cognitiveLoad
+                       + irreversibleConstraint
+                       + featureTiles * 2;
+            }
+
             // Recursive boards compress distance: one command can move cargo across a doorway and
             // change coordinate spaces at the same time. Score their actual route decisions,
             // objects, objectives and containment depth on a calibrated scale instead of treating
@@ -2727,9 +2647,9 @@ namespace Parabox.EditorTools
             // just above Level 20 and its four-room mastery just below Chapter IV's richer opener.
             // Chapter V still receives its stricter replay-based score after prefab generation.
             if (level.rooms.Length > 1)
-                return 1473
-                       + level.par * 7
-                       + turns * 2
+                return 1625
+                       + level.par * 5
+                       + turns
                        + Mathf.Max(0, level.rooms.Length - 1) * 20
                        + objects * 10
                        + targets * 5

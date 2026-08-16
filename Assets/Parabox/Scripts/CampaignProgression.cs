@@ -61,11 +61,11 @@ namespace Parabox
             "Stop sliding cargo on its intended cell", "Bridge the trench, cross the ice and preserve the return route",
             "Use sticky-floor momentum without overshooting", "Commit cargo to the cage only after its route is ready",
 
-            "Move opposite the mirror and finish both targets", "Collect a pearl before crossing its lock",
-            "Plan the magnetic pull before every move", "Coordinate the diver and echo through asymmetric wall banks",
-            "Push from stable ground because sand gives no purchase", "Place locking cargo only when it can remain solved",
-            "Break, toggle and cross the latch in the correct order", "Coordinate the diver and mirror around a cage",
-            "Sequence a light gate and a heavy cargo plate", "Assign both coloured crates without blocking their shared sorting space",
+            "Move opposite the mirror and finish both targets", "Use asymmetric walls to pause one linked actor",
+            "Coordinate both actors while delivering one shared parcel", "Rebuild the pushing side without losing either linked route",
+            "Turn the parcel through a narrow side channel", "Commit both linked actors around an irreversible cage",
+            "Order two shared deliveries before occupying either target", "Coordinate two deliveries across different axes",
+            "Control the player, echo and mirror with every input", "Finish three linked routes through two independent wall banks",
 
             "Transfer cargo through a horizontal room, lower that room onto its socket, then use it as the exit",
             "Solve a vertical cargo stack, move the room right and turn the delivery down outside",
@@ -102,7 +102,7 @@ namespace Parabox
         static readonly bool[] IntroducesMechanic =
         {
             true, true, true, true, true, true, true, true, true, true,
-            true, true, true, true, true, true, true, false, true, true,
+            true, false, false, false, false, false, false, false, true, false,
             true, false, false, false, false, true, false, false, false, true,
             false, false, false, false, false, false, false, false, false, false,
             false, false, false, false, false, false, false, false, false, false

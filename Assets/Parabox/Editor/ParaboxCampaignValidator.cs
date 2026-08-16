@@ -18,6 +18,8 @@ namespace Parabox.EditorTools
         const string LevelFolder = "Assets/Parabox/Prefabs/Levels";
         const string MainMenuScene = "Assets/Parabox/Scenes/MainMenu.unity";
         const string GameScene = "Assets/Parabox/Scenes/Game.unity";
+        static readonly int[] ChapterTwoParFloors = { 13, 15, 16, 17, 18, 20, 22, 24, 25, 27 };
+        static readonly int[] ChapterTwoCargoObjectives = { 0, 0, 1, 1, 1, 0, 2, 2, 0, 0 };
         static readonly int[] ChapterThreeRoomCounts = { 2, 2, 2, 2, 2, 3, 3, 3, 3, 4 };
         static readonly int[] ChapterThreeCargoTransitions = { 2, 2, 2, 2, 2, 4, 4, 4, 4, 6 };
         static readonly int[] ChapterFourRoomCounts = { 2, 2, 2, 2, 3, 3, 3, 4, 4, 4 };
@@ -695,6 +697,36 @@ namespace Parabox.EditorTools
                 {
                     Failure(report, ref failures, index, "level has no player");
                     continue;
+                }
+                if (index >= 10 && index < 20)
+                {
+                    int chapterStep = index - 10;
+                    int mirrorGoals = 0;
+                    int echoGoals = 0;
+                    int cargoGoals = 0;
+                    foreach (PRoom room in model.rooms.Values)
+                    {
+                        mirrorGoals += room.mirrorGoals.Count;
+                        echoGoals += room.echoGoals.Count;
+                        cargoGoals += room.boxGoals.Count + room.colourGoals.Count;
+                    }
+                    if (model.mirror == null || mirrorGoals != 1)
+                        Failure(report, ref failures, index,
+                            "Chapter II must keep one opposite-moving mirror and one mirror target");
+                    if (cargoGoals != ChapterTwoCargoObjectives[chapterStep])
+                        Failure(report, ref failures, index,
+                            $"Chapter II cargo objective count {cargoGoals} does not match the " +
+                            $"intentional linked-player curve value {ChapterTwoCargoObjectives[chapterStep]}");
+                    bool expectsEcho = chapterStep >= 8;
+                    if ((model.echo != null) != expectsEcho || echoGoals != (expectsEcho ? 1 : 0))
+                        Failure(report, ref failures, index,
+                            expectsEcho
+                                ? "Chapter II mastery must coordinate one echo as the third linked actor"
+                                : "Chapter II introduces the echo only in its final two mastery boards");
+                    if (info.par < ChapterTwoParFloors[chapterStep])
+                        Failure(report, ref failures, index,
+                            $"Chapter II route {info.par} is below its reviewed difficulty floor " +
+                            ChapterTwoParFloors[chapterStep]);
                 }
                 if (index >= 30 && index < 40)
                 {

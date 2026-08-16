@@ -202,7 +202,7 @@ namespace Parabox
             switch (levelIndex)
             {
                 case 0: return "MOVE  •  TURN  •  REACH THE GOAL";
-                case 10: return "LINK PLAYERS  •  PLAN BOTH PATHS  •  FINISH TOGETHER";
+                case 10: return "COPY  •  MOVE OPPOSITE  •  FINISH TOGETHER";
                 case 20: return "ENTER A ROOM  •  MOVE INSIDE  •  EXIT OUTSIDE";
                 case 30: return "PUSH THE ROOM  •  PIN IT  •  RE-ENTER";
                 case 40: return "ENTER THE CHAIN  •  EXTRACT CARGO  •  RETURN OUTSIDE";
@@ -215,7 +215,7 @@ namespace Parabox
             switch (levelIndex)
             {
                 case 0: return "Learn three movement skills in one small example.";
-                case 10: return "One input moves linked players; watch both routes before moving.";
+                case 10: return "One input moves the echo with you and the mirror opposite to you.";
                 case 20: return "Crossing a room edge changes which board the player occupies.";
                 case 30: return "A room moves when space is free and becomes enterable when pinned.";
                 case 40: return "Carry the same cargo outward through connected rooms.";
