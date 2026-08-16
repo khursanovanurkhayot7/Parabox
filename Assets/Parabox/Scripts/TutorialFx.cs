@@ -141,8 +141,8 @@ namespace Parabox
 
         // The title sits centred ABOVE the video frame, leaving the demonstrated board completely
         // unobstructed. It remains a child of panelRT so the same entrance/exit animation carries it
-        // on chapter tutorials 1-5 and it can never leak onto ordinary gameplay. Reuse the project's
-        // Fredoka font from the caption so it belongs to the existing UI.
+        // on chapter tutorials 1-5 and it can never leak onto ordinary gameplay. It is deliberately
+        // text-only: the old dark rounded badge looked like a detached second panel.
         void EnsureTitleBadge()
         {
             if (panelRT == null) return;
@@ -152,6 +152,7 @@ namespace Parabox
             {
                 titleText = existing.GetComponentInChildren<Text>(true);
                 if (titleText != null) titleText.text = "TUTORIAL";
+                RemoveTitleBackground(existing);
                 PositionTitle((RectTransform)existing);
                 existing.SetAsLastSibling();
                 return;
@@ -164,7 +165,8 @@ namespace Parabox
 
             var badgeImage = badge.GetComponent<Image>();
             badgeImage.raycastTarget = false;
-            badgeImage.color = new Color(0.025f, 0.09f, 0.15f, 0.92f);
+            badgeImage.color = Color.clear;
+            badgeImage.enabled = false;
             var card = panelRT.Find("Card");
             if (card != null && card.TryGetComponent<Image>(out var cardImage))
             {
@@ -175,6 +177,7 @@ namespace Parabox
             var badgeShadow = badge.AddComponent<Shadow>();
             badgeShadow.effectColor = new Color(0f, 0.02f, 0.05f, 0.65f);
             badgeShadow.effectDistance = new Vector2(0f, -4f);
+            badgeShadow.enabled = false;
 
             var label = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
             var labelRT = (RectTransform)label.transform;
@@ -201,6 +204,19 @@ namespace Parabox
             CrispUiTypography.Polish(titleText);
 
             badgeRT.SetAsLastSibling();
+        }
+
+        static void RemoveTitleBackground(Transform titleRoot)
+        {
+            if (titleRoot == null) return;
+            if (titleRoot.TryGetComponent<Image>(out var background))
+            {
+                background.color = Color.clear;
+                background.raycastTarget = false;
+                background.enabled = false;
+            }
+            if (titleRoot.TryGetComponent<Shadow>(out var shadow))
+                shadow.enabled = false;
         }
 
         static void PositionTitle(RectTransform badgeRT)
