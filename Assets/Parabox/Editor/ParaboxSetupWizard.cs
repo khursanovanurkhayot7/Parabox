@@ -1567,33 +1567,34 @@ namespace Parabox.EditorTools
                     solution = "RRRRDRUUUUUDDDDRRDDRR"
                 },
 
-                // PRACTICE: the complete interaction is mirrored and the inner room is wider.
-                // The player must read entrances as directional connections rather than memorize
-                // the previous command sequence.
+                // PRACTICE: the whole transfer is mirrored and the inner brace forces a turn
+                // before the cargo can use the upper doorway. The opposite approach direction
+                // and obstacle prevent the player from repeating Level 21's command rhythm.
                 new LevelDef
                 {
                     name = "Reverse Entry",
                     rooms = new[]
                     {
                         new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#..#.#..#", "#.#px...#", "#..##...#", "#########" },
-                        new[] { "####.####", "#.......#", "#.......#", ".........", "#.......#", "#.......#", "#########" }
+                        new[] { "####.####", "#.......#", "#.......#", ".........", "#..#....#", "#.......#", "#########" }
                     },
                     par = 23,
                     solution = "LLLLLDLUUUUUDDDDDDLLLLL"
                 },
 
-                // PRACTICE: a pillar blocks the obvious push from below. Cargo must overshoot the
-                // exit, turn around the pillar, then return to the doorway from the useful side.
+                // PRACTICE: two offset inner braces remove the straight extraction. The player
+                // must circle the first brace, change axis twice, and approach the amber cargo
+                // from below before it can return through the top doorway.
                 new LevelDef
                 {
                     name = "Turn Inside",
                     rooms = new[]
                     {
                         new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                        new[] { "###.###", "#.#...#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
                     },
                     par = 25,
-                    solution = "RRRDRUULURDRUUUDDDDRRDDRR"
+                    solution = "RRRDRULURDRUUUUDDDDRRDDRR"
                 },
 
                 // EXPERIMENT: the whole relationship is rotated. The room travels sideways to
@@ -1621,7 +1622,7 @@ namespace Parabox.EditorTools
                         new[] { "#########", "#.......#", "#...#...#", ".........", "#.......#", "#.......#", "####.####" }
                     },
                     par = 27,
-                    solution = "LLLLULDDRDLULDDDUUUULLLUULL"
+                    solution = "LLLULDRDLLULDDDDUUUUUULLLLL"
                 },
 
                 // COMBINE: cargo now passes through a room inside the first room. It must cross
@@ -1631,50 +1632,20 @@ namespace Parabox.EditorTools
                     name = "Two Rooms Deep",
                     rooms = new[]
                     {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "#########", "#...j...#", "#.......#", "#.......#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
                         new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
                         new[] { "##.##", "#...#", ".....", "#...#", "#####" }
                     },
-                    par = 25,
-                    solution = "RRRRRRDRUUUUUUUDDDDRRDDRR"
+                    par = 29,
+                    solution = "RRRRRRDRUUUUUUUUUDDDDDDRRDDRR"
                 },
 
-                // COMBINE: the deepest room is wider, so the player must predict the emerging
-                // cargo position across both parent coordinate spaces before committing.
+                // COMBINE: the entire three-room transfer is mirrored into a sealed return
+                // pocket. The player must reason about the opposite entry edge and finish by
+                // using the solved outer chamber as the only doorway into the player goal.
                 new LevelDef
                 {
                     name = "Long Inner Relay",
-                    rooms = new[]
-                    {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "####.####", "#.......#", ".........", "#.......#", "#########" }
-                    },
-                    par = 27,
-                    solution = "RRRRRRRRDRUUUUUUUDDDDRRDDRR"
-                },
-
-                // TWIST: the deep brace removes the straight extraction. Cargo must be turned at
-                // the deepest scale, then carried back through both parent rooms without losing
-                // the room-box position required by the final player route.
-                new LevelDef
-                {
-                    name = "Deep Corner",
-                    rooms = new[]
-                    {
-                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
-                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
-                    },
-                    par = 31,
-                    solution = "RRRRRRDRUULURDRUUUUUUDDDDRRDDRR"
-                },
-
-                // MASTERY: a mirrored deep turn finishes in a sealed side pocket. The final move
-                // is only available after the solved room-box has become the pocket's doorway.
-                new LevelDef
-                {
-                    name = "Return Pocket",
                     rooms = new[]
                     {
                         new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#.##.#..#", "##p.x...#", "#.###...#", "#########" },
@@ -1683,6 +1654,38 @@ namespace Parabox.EditorTools
                     },
                     par = 32,
                     solution = "LLLLLLDLUURULDLUUUUUUDDDDDLLDLLL"
+                },
+
+                // TWIST: a wide deepest chamber and offset brace create a real corner decision.
+                // The cargo must travel beyond the doorway, be approached from a second axis,
+                // and return across both parent spaces without disturbing the final room socket.
+                new LevelDef
+                {
+                    name = "Deep Corner",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "#####.#####", "#.........#", "#.........#", "...........", "#....#....#", "#.........#", "###########" }
+                    },
+                    par = 33,
+                    solution = "RRRRRRRRDRUULURDRUUUUUUDDDDRRDDRR"
+                },
+
+                // MASTERY: the whole chain rotates ninety degrees. Every doorway, brace and exit
+                // is approached from a new axis, preventing the player from reusing the previous
+                // level's command rhythm while preserving the same learned rules.
+                new LevelDef
+                {
+                    name = "Return Pocket",
+                    rooms = new[]
+                    {
+                        new[] { "##########", "#........#", "#...P....#", "#..#J#...#", "##x.1...j#", "##p##....#", "#.#......#", "#........#", "##########" },
+                        new[] { "###.###", "#.....#", "#.#...#", "#..U...", "#..#..#", "#.....#", "###.###" },
+                        new[] { "###.###", "#.....#", "#.....#", "#..#...", "#.....#", "#.....#", "###.###" }
+                    },
+                    par = 35,
+                    solution = "DDDDDDLDRRURDLDRRRRRRRRLLLLLLDDLLDD"
                 },
 
                 // CHAPTER MASTERY: four coordinate spaces form one continuous cargo route. The
@@ -1696,10 +1699,10 @@ namespace Parabox.EditorTools
                         new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
                         new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
                         new[] { "###.###", "#.....#", "#.....#", "...V#..", "#.#...#", "#.....#", "#######" },
-                        new[] { "##.##", "#...#", ".....", "#...#", "#####" }
+                        new[] { "##.##", "#...#", "#...#", ".....", "##..#", "#...#", "#####" }
                     },
-                    par = 31,
-                    solution = "RRRRRRRRRDRUUUUUUUUUUDDDDRRDDRR"
+                    par = 36,
+                    solution = "RRRRRRRRRURRDDLUUUUUUUUUUUDDDDRRDDRR"
                 },
             };
         }
@@ -2266,15 +2269,16 @@ namespace Parabox.EditorTools
             // every extra room like hundreds of ordinary walking steps. This keeps Chapter III's
             // first room-box lesson just above Level 20 and its four-room mastery just below the
             // richer mixed-mechanic Chapter IV opener. Chapter V receives a stricter replay-based
-            // score after prefab generation.
+            // score after prefab generation. The constants keep route length primary while turn
+            // count resolves adjacent levels that have similar board footprints.
             if (level.rooms.Length > 1)
-                return 1060
-                       + level.par * 20
-                       + turns * 5
-                       + Mathf.Max(0, level.rooms.Length - 1) * 75
-                       + objects * 20
-                       + targets * 15
-                       + dependencies * 35
+                return 1239
+                       + level.par * 18
+                       + turns * 3
+                       + Mathf.Max(0, level.rooms.Length - 1) * 42
+                       + objects * 10
+                       + targets * 5
+                       + dependencies * 15
                        + mechanics.Count * 40
                        + featureTiles * 2;
 
