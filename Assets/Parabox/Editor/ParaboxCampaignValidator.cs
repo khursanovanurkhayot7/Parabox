@@ -18,6 +18,8 @@ namespace Parabox.EditorTools
         const string LevelFolder = "Assets/Parabox/Prefabs/Levels";
         const string MainMenuScene = "Assets/Parabox/Scenes/MainMenu.unity";
         const string GameScene = "Assets/Parabox/Scenes/Game.unity";
+        static readonly int[] ChapterThreeRoomCounts = { 2, 2, 2, 2, 2, 3, 3, 3, 3, 4 };
+        static readonly int[] ChapterThreeCargoTransitions = { 2, 2, 2, 2, 2, 4, 4, 4, 4, 6 };
         static readonly int[] ChapterFiveRoomCounts = { 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
         static readonly int[] ChapterFiveRequiredCargo = { 4, 4, 4, 4, 4, 5, 5, 5, 5, 5 };
         static readonly int[] ChapterFiveCargoTransitions = { 0, 0, 2, 2, 1, 3, 3, 3, 4, 8 };
@@ -612,8 +614,9 @@ namespace Parabox.EditorTools
                         $"{previousName} at {previousComplexity}");
                 // The finale may land fractionally harder than the normal transition ceiling: it
                 // is the one board explicitly responsible for synthesizing the whole campaign.
-                // Chapter V now uses one continuous nested-room vocabulary, so only its opener
-                // receives the narrow 18% structural-transition allowance.
+                // Chapter III and Chapter V each use one continuous nested-room vocabulary. Their
+                // evidence formulas are calibrated to the normal transition ceiling; only the
+                // five-room finale receives the slightly wider synthesis allowance.
                 float maximumGrowth = index == 40 ? 1.18f
                     : index == ExpectedLevels - 1 ? 1.22f : 1.21f;
                 if (index > 0 && info.designComplexity > Mathf.CeilToInt(previousComplexity * maximumGrowth))
@@ -653,15 +656,18 @@ namespace Parabox.EditorTools
                     chapterHasMastery[chapterIndex] = true;
 
                 int roomCount = prefab.GetComponentsInChildren<RoomMarker>(true).Length;
-                // Chapter V deliberately deepens 2 -> 5 rooms without resetting or flattening the
-                // mechanic. Earlier chapters remain single-board puzzles.
-                int expectedRoomCount = index < 40 ? 1 : ChapterFiveRoomCounts[index - 40];
+                // Chapter III teaches a complete two-to-four-room transfer vocabulary. Chapter V
+                // later deepens it into the five-room endgame; the chapters between stay focused
+                // on their own single-board mechanics.
+                int expectedRoomCount = index >= 20 && index < 30
+                    ? ChapterThreeRoomCounts[index - 20]
+                    : index >= 40 ? ChapterFiveRoomCounts[index - 40] : 1;
                 if (roomCount != expectedRoomCount)
                     Failure(report, ref failures, index,
                         $"authored room count {roomCount} does not match Level {index + 1}'s " +
                         $"intended {expectedRoomCount}-room structure");
                 if (roomCount > 1) chapterNestedLevels[chapterIndex]++;
-                if (index >= 40)
+                if (roomCount > 1)
                     ValidateChapterFiveContainment(prefab, index, roomCount, report, ref failures);
 
                 // Chapter I may teach a directional tile when it is explicitly authored and given
@@ -753,7 +759,7 @@ namespace Parabox.EditorTools
                     Failure(report, ref failures, index,
                         "focused mechanic accents exceed the readable per-level limit");
                 int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
-                if (index >= 40)
+                if (roomCount > 1)
                 {
                     float minimumThinkingTime = info.par * 1.25f + 20f;
                     float actualTime = CampaignProgression.TimeLimit(index, info.par);
@@ -829,6 +835,31 @@ namespace Parabox.EditorTools
                 if (!routeValid) continue;
                 if (!model.IsWon())
                     Failure(report, ref failures, index, "stored solution ends without satisfying every target");
+                if (index >= 20 && index < 30)
+                {
+                    int chapterStep = index - 20;
+                    if (movedCargo.Count != 1)
+                        Failure(report, ref failures, index,
+                            $"Chapter III route moves {movedCargo.Count} cargo objects; expected the one authored amber delivery");
+                    if (visitedRooms.Count != roomCount)
+                        Failure(report, ref failures, index,
+                            $"stored solution visits {visitedRooms.Count}/{roomCount} recursive rooms");
+                    if (cargoRoomTransitions < ChapterThreeCargoTransitions[chapterStep])
+                        Failure(report, ref failures, index,
+                            $"cargo crosses {cargoRoomTransitions} room boundary/boundaries; expected at least " +
+                            ChapterThreeCargoTransitions[chapterStep]);
+                    if (metaMoves < 2)
+                        Failure(report, ref failures, index,
+                            "the room-box never completes its separate socket-placement task");
+                    foreach (PRoom room in model.rooms.Values)
+                        foreach (Vector2Int goal in room.boxGoals)
+                        {
+                            PEntity occupant = model.EntityAt(room.id, goal);
+                            if (occupant == null || occupant.interiorRoomId < 0)
+                                Failure(report, ref failures, index,
+                                    "the authored room socket is not occupied by a room-box");
+                        }
+                }
                 if (index >= 40)
                 {
                     int chapterStep = index - 40;
@@ -936,17 +967,12 @@ namespace Parabox.EditorTools
                     report.AppendLine($"FAIL  Chapter {chapter + 1}: curriculum must include teaching, " +
                         "combination and mastery roles");
                 }
-                if (chapter < 4 && chapterNestedLevels[chapter] != 0)
+                int expectedNested = chapter == 2 || chapter == 4 ? 10 : 0;
+                if (chapterNestedLevels[chapter] != expectedNested)
                 {
                     failures++;
-                    report.AppendLine($"FAIL  Chapter {chapter + 1}: recursion appears before the " +
-                        $"Chapter 5 finale ({chapterNestedLevels[chapter]} nested board(s))");
-                }
-                if (chapter == 4 && chapterNestedLevels[chapter] != 10)
-                {
-                    failures++;
-                    report.AppendLine($"FAIL  Chapter 5: expected 10 recursive boards, found " +
-                        chapterNestedLevels[chapter]);
+                    report.AppendLine($"FAIL  Chapter {chapter + 1}: expected {expectedNested} recursive " +
+                        $"board(s), found {chapterNestedLevels[chapter]}");
                 }
                 previousAverageComplexity = averageComplexity;
             }

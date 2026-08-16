@@ -381,9 +381,12 @@ namespace Parabox.EditorTools
         {
             var tiles = LoadLevelTiles();
             if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
-            var defs = Levels();
-            for (int i = 20; i <= 22 && i < defs.Length; i++)
-                BuildLevelPrefab(i, defs[i], tiles);
+            var defs = ChapterThreeSynergy();
+            for (int i = 0; i < Mathf.Min(3, defs.Length); i++)
+            {
+                defs[i].designComplexity = AuthoredDifficulty(defs[i]);
+                BuildLevelPrefab(20 + i, defs[i], tiles);
+            }
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log("Parabox: regenerated rebalanced Levels 21-23.");
@@ -395,16 +398,18 @@ namespace Parabox.EditorTools
         {
             var tiles = LoadLevelTiles();
             if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
-            var defs = Levels();
-            for (int i = 20; i < Mathf.Min(30, defs.Length); i++)
+            var defs = ChapterThreeSynergy();
+            for (int i = 0; i < defs.Length; i++)
             {
-                BuildLevelPrefab(i, defs[i], tiles);
+                int campaignIndex = 20 + i;
+                defs[i].designComplexity = AuthoredDifficulty(defs[i]);
+                BuildLevelPrefab(campaignIndex, defs[i], tiles);
                 if (string.IsNullOrEmpty(defs[i].solution))
                 {
-                    string path = LevelDir + "/Level_" + (i + 1) + ".prefab";
+                    string path = LevelDir + "/Level_" + (campaignIndex + 1) + ".prefab";
                     string proof = ParaboxCampaignSolver.SolveAndStore(
                         path, 1, Mathf.Max(60, defs[i].par + 24));
-                    Debug.Log($"Parabox: solved Chapter III L{i + 1:00} in {proof.Length} moves ({proof}).");
+                    Debug.Log($"Parabox: solved Chapter III L{campaignIndex + 1:00} in {proof.Length} moves ({proof}).");
                 }
             }
             AssetDatabase.SaveAssets();
@@ -1065,8 +1070,8 @@ namespace Parabox.EditorTools
             "Facing Away", "Pearl Crossing", "Magnetic Relay", "Echo Relay", "Nothing to Brace",
             "Set in Stone", "Foundations Circuit", "Opposite Numbers", "Two Kinds of Gate", "Colour Logistics",
 
-            "Two of Us", "Two-Stage Switch", "Geyser Workshop", "Cargo Reversal", "Synergy Engine",
-            "Systems Engine", "The Undertow", "Kelp Detour", "Weight Transfer", "Demolition Order",
+            "Cargo Through the Room", "Reverse Entry", "Turn Inside", "Side Exit", "Inner Pillar",
+            "Two Rooms Deep", "Long Inner Relay", "Deep Corner", "Return Pocket", "Rooms Within Rooms",
 
             "The Last Crossing", "Arrow Relay", "Gravity Transfer", "Narrow Relay", "Twin Pearl Circuit",
             "Corner Charge", "Dry Channel", "Latched Delivery", "Freight on Ice", "Pulse Relay"
@@ -1529,231 +1534,156 @@ namespace Parabox.EditorTools
         {
             return new[]
             {
-                // NARROW GAP + KEY/GATE: cargo slips through the narrow cell and must remain on
-                // the button. The diver takes the long route for the pearl, then crosses the lock
-                // and the cargo-held gate. The two paths are visually separated and easy to read.
+                // TEACH: the amber cargo cannot turn in the narrow outer dock, so it must enter
+                // the cobalt room-box. Inside, the player turns it toward the upper doorway,
+                // brings it back outside, parks the room-box on its own socket, enters it again,
+                // and exits into the isolated player goal. This is the full cause/effect loop from
+                // the reference sequence without revealing any later campaign solution.
                 new LevelDef
                 {
-                    name = "Narrow Relay",
-                    rooms = new[] { new[]
+                    name = "Cargo Through the Room",
+                    rooms = new[]
                     {
-                        "#############",
-                        "#P..........#",
-                        "#..b.=B.....#",
-                        "#.#########.#",
-                        "#..........k#",
-                        "#.#########.#",
-                        "#...........#",
-                        "#####K#######",
-                        "#####G#######",
-                        "#....p......#",
-                        "#############"
-                    } },
-                    par = 32,
-                    solution = "DRRRLLLURRRRRRRRRRDDDDDLLLLLLDDD"
-                },
-
-                // SLIDING CARGO + KEY/GATE: the wall at the end of the upper rail stops the slick
-                // crate. The player must circle above it, launch it down onto the button, collect
-                // the pearl on the far side and return through the two central checkpoints.
-                new LevelDef
-                {
-                    name = "Freight on Ice",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#...........#",
-                        "#P.i_=..#...#",
-                        "#......g#...#",
-                        "#......g#...#",
-                        "#......B#...#",
-                        "#......##.k.#",
-                        "######K######",
-                        "######G######",
-                        "#.....p.....#",
-                        "#############"
-                    } },
-                    par = 34,
-                    solution = "RRURRRRDURRRDDDDDUUUUULLLLDDDDDDDD"
-                },
-
-                // DOUBLE BREAK: each crate is a one-use tool. The first opens the descent on the
-                // far right; the second must then be approached from below and breaks the return
-                // wall. Reversing their order is impossible, so the dependency is unambiguous.
-                new LevelDef
-                {
-                    name = "Demolition Order",
-                    rooms = new[] { new[]
-                    {
-                        "############",
-                        "#P..b..R...#",
-                        "##########.#",
-                        "#....R..b..#",
-                        "##########.#",
-                        "#..........#",
-                        "#.##########",
-                        "#p.........#",
-                        "############"
-                    } },
-                    par = 32,
-                    solution = "RRRRRRRRRDDLLLLRRRRDDLLLLLLLLLDD"
-                },
-
-                // BUTTON/GATE + TOGGLE/LATCH + DELIVERY: one crate is parked above to hold the
-                // first checkpoint. Beyond it the toggle opens the persistent latch, but the level
-                // still ends with a second cargo turn rather than a direct walk to the target.
-                new LevelDef
-                {
-                    name = "Latched Delivery",
-                    rooms = new[] { new[]
-                    {
-                        "###############",
-                        "#P............#",
-                        "#..b..###.....#",
-                        "#.....###.....#",
-                        "#..........B..#",
-                        "#######G#######",
-                        "#......T......#",
-                        "#######L#######",
-                        "#p.......q..x.#",
-                        "###############"
-                    } },
-                    par = 37,
-                    solution = "DRRURDDLDRRRRRRRLLLDDDDRRRRLLLLLLLLLL"
-                },
-
-                // PULSE + HELD GATE: the familiar cargo turn opens the central checkpoint. Two
-                // pulse barriers sit on different approach parities, so the side loop is a clear
-                // timing tool rather than an unexplained wait command.
-                new LevelDef
-                {
-                    name = "Pulse Relay",
-                    rooms = new[] { new[]
-                    {
-                        "###############",
-                        "#P............#",
-                        "#..b..###.....#",
-                        "#.....###.....#",
-                        "#..........B..#",
-                        "#######G#######",
-                        "#......:......#",
-                        "#.###########.#",
-                        "#......:......#",
-                        "#............p#",
-                        "###############"
-                    } },
-                    par = 42,
-                    solution = "DRRURDDLDRRRRRRRLLLDDRRRRRRDDLLLLLLRRRRRRD"
-                },
-
-                // BOULDER + KEY/LOCK: the boulder needs a horizontal charge, then a new vertical
-                // run-up to reach its target. That placement exposes the pearl at the top-right;
-                // the lock below turns the solved cargo state into a required return journey.
-                new LevelDef
-                {
-                    name = "Corner Charge",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#.........xk#",
-                        "#..######...#",
-                        "#......O....#",
-                        "#..####.....#",
-                        "#...........#",
-                        "#P..........#",
-                        "######K######",
-                        "#.....p.....#",
-                        "#############"
-                    } },
-                    par = 33,
-                    solution = "UUURRRRRRRRDRDUUUDRUUDDDDLLLLLDDD"
-                },
-
-                // GRAVITY + SECOND DELIVERY: the upper crate is pushed into the clearly pictured
-                // gravity column and falls onto the button. Its gate reveals a conventional crate
-                // below, which still needs a turn around the wall before both targets are satisfied.
-                new LevelDef
-                {
-                    name = "Gravity Transfer",
-                    rooms = new[] { new[]
-                    {
-                        "#############",
-                        "#P..........#",
-                        "#.#######...#",
-                        "#..b......g.#",
-                        "##########g.#",
-                        "##########B.#",
-                        "#...........#",
-                        "######G######",
-                        "#....b....x.#",
-                        "#..........p#",
-                        "#############"
-                    } },
-                    par = 34,
-                    solution = "DDRRRRRRRRRRDDDLLLLLDDDLLURRRRRDRR"
-                },
-
-                // ECHO + HELD GATE: the echo reaches the lower button one move before the diver
-                // reaches the matching gate. Once through, their different wall banks require a
-                // shared command sequence that lands both silhouettes on their own targets.
-                new LevelDef
-                {
-                    name = "Echo Relay",
-                    rooms = new[] { new[]
-                    {
-                        "##########",
-                        "#P......p#",
-                        "#..####..#",
-                        "#E.#....e#",
-                        "#...##...#",
-                        "#........#",
-                        "#........#",
-                        "##########"
-                    } },
-                    par = 17,
-                    solution = "RDDDRDRRRRRUUUUDU"
-                },
-
-                // COLOUR CARGO + EXIT GATE: the two coloured crates must cross around separate
-                // wall banks to reach opposite targets. A third neutral crate holds the final gate,
-                // so committing to the exit too early removes the standing space used for sorting.
-                new LevelDef
-                {
-                    name = "Colour Logistics",
-                    rooms = new[] { new[]
-                    {
-                        "##########",
-                        "#........#",
-                        "#P.J.N...#",
-                        "#........#",
-                        "#..n....j#",
-                        "##########"
-                    } },
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#.....#", "#.....#", "#######" }
+                    },
                     par = 21,
-                    solution = "RRRURDDLDRRRUULLLULDD"
+                    solution = "RRRRDRUUUUUDDDDRRDDRR"
                 },
 
-                // CHAPTER MACHINE: breaking the first wall exposes the toggle; the latch leads to
-                // a charged boulder delivery. A second crate then holds the exit gate, and the final
-                // pulse barrier checks timing. Each stage uses a rule already practised above.
+                // PRACTICE: the complete interaction is mirrored and the inner room is wider.
+                // The player must read entrances as directional connections rather than memorize
+                // the previous command sequence.
                 new LevelDef
                 {
-                    name = "Synergy Engine",
-                    rooms = new[] { new[]
+                    name = "Reverse Entry",
+                    rooms = new[]
                     {
-                        "############",
-                        "#P..b..R...#",
-                        "##########.#",
-                        "#....T.....#",
-                        "######L#####",
-                        "#.....O....#",
-                        "#.....x....#",
-                        "#.##########",
-                        "#p.........#",
-                        "############"
-                    } },
+                        new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#..#.#..#", "#.#px...#", "#..##...#", "#########" },
+                        new[] { "####.####", "#.......#", "#.......#", ".........", "#.......#", "#.......#", "#########" }
+                    },
+                    par = 23,
+                    solution = "LLLLLDLUUUUUDDDDDDLLLLL"
+                },
+
+                // PRACTICE: a pillar blocks the obvious push from below. Cargo must overshoot the
+                // exit, turn around the pillar, then return to the doorway from the useful side.
+                new LevelDef
+                {
+                    name = "Turn Inside",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                    },
+                    par = 25,
+                    solution = "RRRDRUULURDRUUUDDDDRRDDRR"
+                },
+
+                // EXPERIMENT: the whole relationship is rotated. The room travels sideways to
+                // its socket and the only route to the player goal is through its lower doorway.
+                new LevelDef
+                {
+                    name = "Side Exit",
+                    rooms = new[]
+                    {
+                        new[] { "########", "#......#", "#...P..#", "#..#J..#", "##x.1.j#", "##.##..#", "##p#...#", "#......#", "########" },
+                        new[] { "###.###", "#.....#", "#.....#", "#.#....", "#.....#", "#.....#", "###.###" }
+                    },
+                    par = 26,
+                    solution = "DDDLDRURDLDRRRRLLLLDDLLDDD"
+                },
+
+                // EXPERIMENT: the wider inner chamber contains a central brace. The player must
+                // turn the cargo twice before it can leave, then solve the outer room in reverse.
+                new LevelDef
+                {
+                    name = "Inner Pillar",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#..##...#", "#.#px...#", "#..#.#..#", "#..#1JP.#", "#....#..#", "#...j...#", "#########" },
+                        new[] { "#########", "#.......#", "#...#...#", ".........", "#.......#", "#.......#", "####.####" }
+                    },
                     par = 27,
-                    solution = "RRRRRRRRRDDLLLLLRDDLLLLLDDD"
+                    solution = "LLLLULDDRDLULDDDUUUULLLUULL"
+                },
+
+                // COMBINE: cargo now passes through a room inside the first room. It must cross
+                // four boundaries before either the room-box socket or player exit can be solved.
+                new LevelDef
+                {
+                    name = "Two Rooms Deep",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "##.##", "#...#", ".....", "#...#", "#####" }
+                    },
+                    par = 25,
+                    solution = "RRRRRRDRUUUUUUUDDDDRRDDRR"
+                },
+
+                // COMBINE: the deepest room is wider, so the player must predict the emerging
+                // cargo position across both parent coordinate spaces before committing.
+                new LevelDef
+                {
+                    name = "Long Inner Relay",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "####.####", "#.......#", ".........", "#.......#", "#########" }
+                    },
+                    par = 27,
+                    solution = "RRRRRRRRDRUUUUUUUDDDDRRDDRR"
+                },
+
+                // TWIST: the deep brace removes the straight extraction. Cargo must be turned at
+                // the deepest scale, then carried back through both parent rooms without losing
+                // the room-box position required by the final player route.
+                new LevelDef
+                {
+                    name = "Deep Corner",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                    },
+                    par = 31,
+                    solution = "RRRRRRDRUULURDRUUUUUUDDDDRRDDRR"
+                },
+
+                // MASTERY: a mirrored deep turn finishes in a sealed side pocket. The final move
+                // is only available after the solved room-box has become the pocket's doorway.
+                new LevelDef
+                {
+                    name = "Return Pocket",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#....#..#", "#..#1JP.#", "#.##.#..#", "##p.x...#", "#.###...#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "..#U...", "#...#.#", "#.....#", "#######" },
+                        new[] { "###.###", "#.....#", "#.....#", ".......", "#..#..#", "#.....#", "#######" }
+                    },
+                    par = 32,
+                    solution = "LLLLLLDLUURULDLUUUUUUDDDDDLLDLLL"
+                },
+
+                // CHAPTER MASTERY: four coordinate spaces form one continuous cargo route. The
+                // amber object crosses six boundaries, the outer room-box must still reach its
+                // own socket, and the player must traverse the solved hierarchy once more to exit.
+                new LevelDef
+                {
+                    name = "Rooms Within Rooms",
+                    rooms = new[]
+                    {
+                        new[] { "#########", "#...j...#", "#..#....#", "#.PJ1#..#", "#..#.#..#", "#...xp#.#", "#...##..#", "#########" },
+                        new[] { "###.###", "#.....#", "#.....#", "...U#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "###.###", "#.....#", "#.....#", "...V#..", "#.#...#", "#.....#", "#######" },
+                        new[] { "##.##", "#...#", ".....", "#...#", "#####" }
+                    },
+                    par = 31,
+                    solution = "RRRRRRRRRDRUUUUUUUUUUDDDDRRDDRR"
                 },
             };
         }
@@ -2313,6 +2243,24 @@ namespace Parabox.EditorTools
             int turns = 0;
             for (int i = 1; i < level.solution.Length; i++)
                 if (level.solution[i] != level.solution[i - 1]) turns++;
+
+            // Recursive boards compress distance: one command can move cargo across a doorway and
+            // change coordinate spaces at the same time. Score their actual route decisions,
+            // objects, objectives and containment depth on a calibrated scale instead of treating
+            // every extra room like hundreds of ordinary walking steps. This keeps Chapter III's
+            // first room-box lesson just above Level 20 and its four-room mastery just below the
+            // richer mixed-mechanic Chapter IV opener. Chapter V receives a stricter replay-based
+            // score after prefab generation.
+            if (level.rooms.Length > 1)
+                return 1060
+                       + level.par * 20
+                       + turns * 5
+                       + Mathf.Max(0, level.rooms.Length - 1) * 75
+                       + objects * 20
+                       + targets * 15
+                       + dependencies * 35
+                       + mechanics.Count * 40
+                       + featureTiles * 2;
 
             return level.par * 60
                    + turns * 18

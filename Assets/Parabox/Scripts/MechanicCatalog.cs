@@ -143,7 +143,7 @@ namespace Parabox
             // transfer; a fourth is the first real chamber chain, where state must be carried
             // across three boundaries. Keeping these thresholds distinct spaces the lessons out.
             AddIf(result, rooms >= 3, Id.MultiStageRecursion);
-            AddIf(result, levelIndex >= 40 && rooms >= 4, Id.ChamberChain);
+            AddIf(result, rooms >= 4, Id.ChamberChain);
             return result;
         }
 
@@ -185,7 +185,7 @@ namespace Parabox
             {
                 case 0:  Add(lessons, Id.Navigation); break;   // Level 1
                 case 10: Add(lessons, Id.Mirror); break;       // Level 11
-                case 20: Add(lessons, Id.Echo); break;         // Level 21
+                case 20: Add(lessons, Id.NestedBoard); break;  // Level 21
                 case 30: Add(lessons, Id.CrackedFloor); break; // Level 31
                 case 40: Add(lessons, Id.NestedBoard); break;  // Level 41
             }

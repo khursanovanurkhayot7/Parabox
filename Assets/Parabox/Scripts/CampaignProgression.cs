@@ -45,14 +45,14 @@ namespace Parabox
         static readonly string[] ChapterPhilosophies =
         {
             "Learn one readable rule at a time", "Control state and coupled pieces",
-            "Combine familiar rules", "Solve multi-step dependencies", "Plan across nested spaces"
+            "Move cargo through rooms that are also boxes", "Solve multi-step dependencies", "Plan across nested spaces"
         };
 
         // One concise design contract for every board in final campaign order. These are not UI
         // flavour strings: the campaign validator serializes and checks them on every prefab.
-        // The first forty boards establish the complete movement vocabulary. Chapter V then uses
-        // all ten slots for a dedicated recursion curriculum, from one readable chamber to the
-        // five-room extraction finale.
+        // The first two chapters establish the physical vocabulary. Chapter III teaches room-box
+        // transfer in isolation, Chapter IV combines the terrain systems, and Chapter V turns the
+        // same spatial language into the deep recursion finale.
         static readonly string[] MechanicFocus =
         {
             "Read a one-way route around an ivory pillar", "Reuse the arrow and approach cargo from the useful side",
@@ -67,11 +67,16 @@ namespace Parabox
             "Break, toggle and cross the latch in the correct order", "Coordinate the diver and mirror around a cage",
             "Sequence a light gate and a heavy cargo plate", "Assign both coloured crates without blocking their shared sorting space",
 
-            "Coordinate the diver and echo around a cage", "Turn cargo onto the button, cross its gate, then toggle the latch",
-            "Launch over the trench, then complete two cargo deliveries", "Reorient one crate around a pillar while sequencing two deliveries",
-            "Break the wall, toggle the latch and charge the boulder onto its target", "Turn cargo onto the button, collect the pearl and ride the current through both locks",
-            "Combine echo, cage, sand and sticky momentum in a mastery route", "Route cargo around the kelp bank to hold the exit gate open",
-            "Assign the coloured delivery while the other crate holds the heavy plate", "Spend two crates to break two rocks in the only safe order",
+            "Push cargo into a room-box, bring it back out, then use the room itself as a doorway",
+            "Repeat the full room-box transfer from the opposite side",
+            "Turn cargo around an inner pillar before extracting it",
+            "Move the room sideways and leave through its lower doorway",
+            "Reverse a wide inner turn before solving the outer socket",
+            "Carry the same cargo through a room inside another room",
+            "Predict the cargo exit across two differently sized spaces",
+            "Turn cargo at the deepest scale before returning outside",
+            "Use the solved room-box to enter a sealed player pocket",
+            "Carry cargo across six boundaries, place the outer room, then traverse the hierarchy again",
 
             "Use the cracked bridge for delivery, then take the geyser-assisted one-way return", "Turn cargo around the wall, hold the button and take the arrow detour",
             "Drop one crate onto the button, then turn and deliver the second", "Send cargo through the narrow gap, collect the pearl and return through its held gate",
@@ -93,9 +98,9 @@ namespace Parabox
         {
             true, true, true, true, true, true, true, true, true, true,
             true, true, true, true, true, true, true, false, true, true,
-            false, false, true, false, true, true, false, true, false, false,
-            true, false, true, true, false, false, false, false, false, true,
-            true, false, true, false, false, true, false, false, false, false
+            true, false, false, false, false, true, false, false, false, true,
+            true, false, true, true, false, true, false, false, false, true,
+            false, false, false, false, false, false, false, false, false, false
         };
 
         public static Profile ForLevel(int levelIndex)
@@ -149,11 +154,13 @@ namespace Parabox
         {
             int level = Mathf.Clamp(levelIndex + 1, 1, 50);
 
-            // A predictable arcade curve: Level 2 starts at exactly 20 seconds and Chapters I-IV
-            // gain one second per board. Recursive boards need time to read each newly entered
-            // coordinate space, so Chapter V also scales from the solver-proven route length. This
-            // prevents a deep but valid solve from timing out while the player is still planning.
+            // A predictable arcade curve: Level 2 starts at exactly 20 seconds and ordinary boards
+            // gain one second per level. Recursive boards need time to read each newly entered
+            // coordinate space, so both recursive chapters also scale from their solver-proven
+            // route length. This prevents a valid solve from timing out during spatial planning.
             if (level <= 2) return 20f;
+            if (level <= 20) return 20f + (level - 2);
+            if (level <= 30) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
             if (level <= 40) return 20f + (level - 2);
             int chapterStep = level - 41;
             return Mathf.Max(70f + chapterStep * 2f, par * 1.5f + 22f);
@@ -199,15 +206,14 @@ namespace Parabox
                 case 19: return "COLOUR CARGO  Match each coloured crate to its own target.";
                 case 22: return "GEYSER  Ride the launch across the trench, then finish the route.";
                 case 24: return "BOULDER  Move in the same direction first to build a pushing run-up.";
-                case 25: return "CURRENT  Anything that stops on the current is carried in its direction.";
                 case 27: return "KELP  The diver can pass through it, but cargo cannot.";
                 case 30: return "CRACKED FLOOR  It collapses after you leave, so plan the return first.";
                 case 32: return "GRAVITY WELL  Aligned cargo is pulled one cell after every move.";
                 case 33: return "NARROW GAP  Cargo fits through; the diver must find another route.";
                 case 39: return "PULSE  The barrier advances through a three-beat open-and-closed cycle.";
-                case 40: return "NESTED BOARD  A room is also a box. When it cannot be pushed, move into it.";
-                case 42: return "MULTI-STAGE RECURSION  Cargo can cross room boundaries in either direction.";
-                case 45: return "CHAMBER CHAIN  Track the same cargo across three connected room boundaries.";
+                case 20: return "NESTED BOARD  A room is also a box. When it cannot move, cargo or the player enters it.";
+                case 25: return "MULTI-STAGE RECURSION  Cargo can cross several room boundaries in either direction.";
+                case 29: return "CHAMBER CHAIN  Track the same cargo through every connected coordinate space.";
                 default: return string.Empty;
             }
         }
