@@ -100,8 +100,9 @@ namespace Parabox
         }
 #endif
 
-        // Repeat/Try remain the two end choices. Skip is a separate always-available walkthrough
-        // action, so controller users never have to navigate away from those final choices.
+        // Repeat plus TRY IT YOURSELF remain the two end choices. TRY IT YOURSELF always enters
+        // the real campaign level behind the video. Skip is a separate always-available action,
+        // so controller users never have to navigate away from those final choices.
         void ConfigureTutorialChoices()
         {
             if (choiceRT != null) choiceRT.sizeDelta = new Vector2(760f, 120f);
@@ -137,6 +138,15 @@ namespace Parabox
                 skipButton.navigation = nav;
                 HideSkip();
             }
+        }
+
+        // The same serialized button advances from the first chapter video to the second, then
+        // enters the real campaign level. No runtime replacement button is created.
+        public void SetPrimaryChoiceLabel(bool hasNextVideo)
+        {
+            if (tryButton == null) return;
+            Text label = tryButton.GetComponentInChildren<Text>(true);
+            if (label != null) label.text = hasNextVideo ? "NEXT" : "TRY IT YOURSELF";
         }
 
         // The title sits centred ABOVE the video frame, leaving the demonstrated board completely

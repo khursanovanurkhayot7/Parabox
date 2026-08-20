@@ -383,16 +383,23 @@ namespace Luxodd.Game.Scripts.Input.Editor
 
         private bool GetPressed(ArcadeButtonColor b)
         {
+#if ENABLE_LEGACY_INPUT_MANAGER
             return UnityEngine.Input.GetKey(ArcadeUnityMapping.GetKeyCode(b));
+#else
+            return false;
+#endif
         }
 
         private ArcadeButtonColor? DetectFirstDown()
         {
+#if ENABLE_LEGACY_INPUT_MANAGER
             foreach (ArcadeButtonColor b in Enum.GetValues(typeof(ArcadeButtonColor)))
             {
                 if (UnityEngine.Input.GetKeyDown(ArcadeUnityMapping.GetKeyCode(b)))
                     return b;
             }
+#endif
+
             return null;
         }
 
@@ -422,8 +429,12 @@ namespace Luxodd.Game.Scripts.Input.Editor
 
         private static float SafeGetAxisRaw(string axisName)
         {
+#if ENABLE_LEGACY_INPUT_MANAGER
             try { return UnityEngine.Input.GetAxisRaw(axisName); }
             catch { return 0f; }
+#else
+            return 0f;
+#endif
         }
 
         private static Vector2 ApplyDeadZone(Vector2 v, float deadZone)

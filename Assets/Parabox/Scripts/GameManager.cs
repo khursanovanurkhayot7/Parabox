@@ -141,8 +141,6 @@ namespace Parabox
         bool focusedCinematic;
         int levelIndex;
         bool won;
-        Vector2Int lastHeld;
-        float nextRepeat;
         float timeLeft;
         float timeLimit;
         // A level's allowance begins with the player's first successful move, not while the board
@@ -155,7 +153,9 @@ namespace Parabox
         bool outOfMoves;
         bool levelEndReported;
         bool tutorialExiting;
-        string mechanicBriefingSignature;
+        int lastManualMoveFrame = -1;
+        int lastTutorialMoveFrame = -1;
+        bool suppressMirroredArcadeMove;
         GameObject mechanicSpotlightRoot;
         bool tutorialFromMainPlay;
         bool editorPreviewMode;
@@ -178,12 +178,9 @@ namespace Parabox
         bool Lost => timedUp || outOfMoves;
         int MovesLeft => Mathf.Max(0, moveLimit - model.MoveCount);
 
-        // Slack over the solver's optimal, removed in measured bands: forgiving while you're still
-        // learning the vocabulary, demanding once you know it. Undo refunds the move itself so
-        // difficulty comes from understanding the puzzle rather than from punishing experiments.
-        // Each level now also has a clock-pressure mechanic, so the move allowance is deliberately
-        // tighter: enough room to read a new rule, but not enough to brute-force the board. The
-        // solver's par remains the floor, which guarantees the proven route always fits.
+        // Every level uses the same transparent allowance: authored par plus three moves. Undo
+        // still refunds the move, so difficulty comes from understanding the puzzle rather than
+        // from inconsistent chapter-specific penalties.
         static int MoveSlack(int levelIdx)
             => CampaignProgression.ForLevel(levelIdx).moveSlack;
 
@@ -293,9 +290,9 @@ namespace Parabox
             // seamless menu-entry: the HUD is already "there" — skip the timer's scale/fade-in
             timerIntro = PlayerPrefs.GetInt("Parabox.Seamless", 0) == 1 ? IntroDur : 0f;
 
-            // Last: the level-1 demonstration needs par, timeLimit and the wired buttons to exist
-            // before it can borrow the board and hand it back untouched.
-            MaybeTutorial();
+            // A fresh run first plays the one-time origin film, then hands the untouched board
+            // directly to playable Level 1. Mechanic tutorial cinematics are intentionally off.
+            StartCoroutine(BeginOnboarding());
             tickBump = 0f;
             lastSecond = -1;
             int tier = Mathf.Clamp(levelIndex / 10, 0,
@@ -439,7 +436,7 @@ namespace Parabox
         // On-screen buttons drive the exact same logic as the keyboard (touch / click support).
         void WireOnScreenControls()
         {
-            // d-pad: press-and-hold to move (fires on press + repeats while held)
+            // d-pad: one press/contact emits exactly one grid-cell move.
             WireHold(upButton,    Vector2Int.up);
             WireHold(downButton,  Vector2Int.down);
             WireHold(leftButton,  Vector2Int.left);
@@ -493,12 +490,24 @@ namespace Parabox
                 Debug.LogError("[Parabox] HoldRepeatButton is not prebuilt on " + b.name + ". Run the Prebuilt UI generator.");
                 return;
             }
+            // Puzzle movement is one contact -> one cell. Holding an on-screen direction must not
+            // silently spend extra moves while the player is still making the same gesture.
+            h.repeatWhileHeld = false;
             h.onFire = () => UiMove(dir);
         }
 
         public void UiMove(Vector2Int dir)
         {
             if (Ended) return;
+            RequestManualMove(dir);
+        }
+
+        // All manual gameplay inputs converge here. This closes the last double-dispatch gap
+        // between the scene UI, Input System keyboard edges and Luxodd's legacy axis bridge.
+        void RequestManualMove(Vector2Int dir)
+        {
+            if (dir == Vector2Int.zero || lastManualMoveFrame == Time.frameCount) return;
+            lastManualMoveFrame = Time.frameCount;
             DoMove(dir);
         }
 
@@ -526,11 +535,27 @@ namespace Parabox
         }
 
         // Cabinet mapping: stick=move, Black=confirm/retry, Red=undo, Green=restart,
-        // Yellow/White=level select/back, Blue=mute, Purple=skip walkthrough. Orange remains Luxodd's.
+        // Yellow/White=level select/back, Blue=mute, Purple=skip walkthrough. On a standard
+        // gamepad Luxodd maps Black=A and Red=B, so B becomes contextual Back/Cancel on non-puzzle
+        // screens while remaining Undo during active gameplay. Orange remains Luxodd's.
         bool HandleArcadeInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
             if (arcade == null) return false;
+
+            // In the Editor, Luxodd's legacy axes can receive the same arrow/WASD press a frame
+            // after the Input System. Keep swallowing that mirrored axis until both the key and
+            // the smoothed legacy axis have returned to neutral. This is what closes the real
+            // two/three-cell bug; a one-frame debounce alone is not enough for smoothed axes.
+            if (suppressMirroredArcadeMove)
+            {
+                if (AnyMoveKeyHeld(Keyboard.current) || arcade.Direction != Vector2Int.zero)
+                {
+                    arcade.ClaimCurrentMoveGesture();
+                    return true;
+                }
+                suppressMirroredArcadeMove = false;
+            }
 
             if (arcade.MuteDown)
             {
@@ -553,16 +578,38 @@ namespace Parabox
 
             if (Tutoring)
             {
-                if (arcade.SkipDown)
+                if (CanSkipCurrentTutorial()
+                    && (arcade.SkipDown || (!tutorialInteractive && arcade.UndoDown)))
                 {
                     Sfx.Click();
                     TutorialSkip();
                     return true;
                 }
+                if (tutorialInteractive)
+                {
+                    if (arcade.RestartDown)
+                    {
+                        Sfx.Click();
+                        BeginInteractiveTutorial();
+                        return true;
+                    }
+                    if (arcade.UndoDown)
+                    {
+                        UndoInteractiveTutorial();
+                        return true;
+                    }
+                    if (arcade.MovePulse && arcade.Direction != Vector2Int.zero)
+                    {
+                        MoveInteractiveTutorial(arcade.Direction);
+                        return true;
+                    }
+                    // Consume the complete held gesture so one cabinet tilt remains one cell.
+                    return arcade.Direction != Vector2Int.zero;
+                }
                 return HandleArcadeTutorialInput(arcade);
             }
 
-            if (arcade.BackDown || arcade.LevelsDown)
+            if (arcade.BackDown || arcade.LevelsDown || (won && arcade.UndoDown))
             {
                 Sfx.Click();
                 GoToMenu();
@@ -582,9 +629,15 @@ namespace Parabox
             }
             if (arcade.MovePulse && arcade.Direction != Vector2Int.zero)
             {
-                DoMove(arcade.Direction);
+                RequestManualMove(arcade.Direction);
                 return true;
             }
+            // ArcadeControls' legacy Horizontal/Vertical axes also include keyboard arrows/WASD
+            // in the Unity Editor. Claim the complete held gesture here, not just its first pulse,
+            // otherwise the following frame falls through to the keyboard path and moves a second
+            // cell for the same press.
+            if (arcade.Direction != Vector2Int.zero)
+                return true;
             return false;
         }
 
@@ -674,19 +727,38 @@ namespace Parabox
             // The tutorial is driving the board — the player's keys must not fight it. Escape and
             // mute are handled above and stay live, so they're never trapped in the demo.
             //
-            // lastHeld keeps tracking reality even though nothing acts on it: if it froze at zero
-            // while a key was held down, the first frame after the demo would read that key as a
-            // fresh press and fire a move the player never asked for, on the board the tutorial
-            // just promised to hand back untouched.
+            // Gameplay uses press edges rather than held state, so a direction held while the
+            // tutorial closes cannot spill into the puzzle as an unintended move.
             if (Tutoring)
             {
-                lastHeld = ReadDirection(kb);
-                if (kb.tabKey.wasPressedThisFrame)
+                if (CanSkipCurrentTutorial() && kb.tabKey.wasPressedThisFrame)
                 {
                     TutorialSkip();
                     return;
                 }
+                if (tutorialInteractive)
+                {
+                    if (kb.rKey.wasPressedThisFrame)
+                    {
+                        BeginInteractiveTutorial();
+                        return;
+                    }
+                    if (kb.zKey.wasPressedThisFrame)
+                    {
+                        UndoInteractiveTutorial();
+                        return;
+                    }
+                    Vector2Int practiceDirection = ReadDirectionDown(kb);
+                    if (practiceDirection != Vector2Int.zero)
+                    {
+                        ClaimKeyboardMoveGesture();
+                        MoveInteractiveTutorial(practiceDirection);
+                    }
+                    return;
+                }
                 Vector2Int tutorialDirection = ReadDirectionDown(kb);
+                if (tutorialDirection != Vector2Int.zero)
+                    ClaimKeyboardMoveGesture();
                 HandleTutorialChoiceInput(tutorialDirection,
                     tutorialDirection != Vector2Int.zero,
                     kb.enterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame);
@@ -717,31 +789,29 @@ namespace Parabox
                 return;
             }
 
-            // Movement with hold-to-repeat.
-            Vector2Int held = ReadDirection(kb);
-            if (held != lastHeld)
+            // One physical/key press is exactly one logical move. A new cell requires release and
+            // another press, matching the cabinet joystick's neutral -> tilt gesture contract.
+            Vector2Int pressed = ReadDirectionDown(kb);
+            if (pressed != Vector2Int.zero)
             {
-                lastHeld = held;
-                if (held != Vector2Int.zero)
-                {
-                    DoMove(held);
-                    nextRepeat = Time.unscaledTime + 0.27f;
-                }
-            }
-            else if (held != Vector2Int.zero && Time.unscaledTime >= nextRepeat)
-            {
-                DoMove(held);
-                nextRepeat = Time.unscaledTime + 0.13f;
+                ClaimKeyboardMoveGesture();
+                RequestManualMove(pressed);
             }
         }
 
-        static Vector2Int ReadDirection(Keyboard kb)
+        void ClaimKeyboardMoveGesture()
         {
-            if (kb.wKey.isPressed || kb.upArrowKey.isPressed) return Vector2Int.up;
-            if (kb.sKey.isPressed || kb.downArrowKey.isPressed) return Vector2Int.down;
-            if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) return Vector2Int.left;
-            if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) return Vector2Int.right;
-            return Vector2Int.zero;
+            suppressMirroredArcadeMove = true;
+            LuxoddArcadeAdapter.Instance?.ClaimCurrentMoveGesture();
+        }
+
+        static bool AnyMoveKeyHeld(Keyboard kb)
+        {
+            return kb != null &&
+                (kb.wKey.isPressed || kb.upArrowKey.isPressed ||
+                 kb.sKey.isPressed || kb.downArrowKey.isPressed ||
+                 kb.aKey.isPressed || kb.leftArrowKey.isPressed ||
+                 kb.dKey.isPressed || kb.rightArrowKey.isPressed);
         }
 
         static Vector2Int ReadDirectionDown(Keyboard kb)
@@ -1299,9 +1369,9 @@ namespace Parabox
             // Moves REMAINING, not moves spent — the limit is the thing the player has to plan
             // against, so it's what the HUD counts down. It reddens as it runs out, matching the timer.
             int left = MovesLeft;
-            string best = PlayerPrefs.HasKey(BestKey(levelIndex))
-                ? $"     BEST {PlayerPrefs.GetInt(BestKey(levelIndex))}" : "";
-            movesLabel.text = $"MOVES  {left}{best}";
+            // Best-move records are still saved for scoring and the level map, but the gameplay
+            // HUD shows only the information the player can act on right now.
+            movesLabel.text = $"MOVES  {left}";
             movesLabel.color = left <= 3 ? TimerWarn : Color.white;
             UpdateScoreHud();
         }
@@ -1811,10 +1881,23 @@ namespace Parabox
 
         // ============================================ chapter-start onboarding (cinematic)
         //
-        // A dedicated mechanic cinematic, not an overlay on gameplay. The entire HUD is hidden and
-        // a small prebuilt vignette demonstrates only the new rule. It never plays the current board
-        // or reads its solution. "Try It Yourself" then reveals the untouched puzzle in-scene.
+        // A dedicated chapter cinematic, not an overlay on gameplay. The entire HUD is hidden and
+        // one clean mini-puzzle introduces the chapter. It never plays the current board
+        // or reads its solution. The end choice always enters the untouched campaign level;
+        // players never practise inside the separate teaching board.
         public const string TutorialKey = "Parabox.Tutorial.Seen";
+        // Kept for compatibility with older local/cloud progress. Playback no longer uses this
+        // persistent value: the origin film is intentionally shown once per launched game session.
+        public const string OriginFilmKey = "Parabox.OriginFilm.Seen";
+        static bool originFilmPlayedThisSession;
+
+        // SubsystemRegistration also runs when Unity enters Play Mode with domain reload disabled,
+        // so closing/reopening the build and every fresh Editor Play session reliably gets the film.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetOriginFilmSession()
+        {
+            originFilmPlayedThisSession = false;
+        }
         // The versioned prefix invalidates older solution replays and abstract rule cards. Existing
         // players receive each spoiler-free gameplay mini-board once after a presentation upgrade.
         const string MechanicBriefingPrefix = TutorialVideoVersion.MechanicSeenPrefix;
@@ -1832,6 +1915,9 @@ namespace Parabox
         readonly Dictionary<PEntity, EntityView> tutorialViews = new Dictionary<PEntity, EntityView>();
         BoardTiles tutorialTiles;
         Blinker tutorialPlayerBlinker;
+        readonly List<MechanicCatalog.Id> tutorialSequence = new List<MechanicCatalog.Id>();
+        int tutorialSequenceIndex;
+        bool tutorialInteractive;
         const float TutorialStageOffset = 4096f;
         const float TutorialPlaybackRate = 0.7f;
 
@@ -1843,37 +1929,60 @@ namespace Parabox
         List<MechanicCatalog.Id> CurrentTutorialMechanics()
             => MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
 
-        // Every first-time rule receives a tutorial, and Levels 1/11/21/31/41 always open with a
-        // compact chapter lesson. The stored signature makes each mini-board play once while a
-        // changed curriculum or video format can introduce itself again. No puzzle solution is
-        // read by this path.
-        bool WillTutorial()
+        bool CurrentTutorialIsNewMechanic()
         {
-            if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
-            {
-                Debug.LogError("[Parabox] Real tutorial video references are missing from Game.unity.");
+            if (tutorialSequenceIndex < 0 || tutorialSequenceIndex >= tutorialSequence.Count)
                 return false;
-            }
-            List<MechanicCatalog.Id> lessons = CurrentTutorialMechanics();
-            if (lessons.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(lessons)))
-                return false;
-            foreach (MechanicCatalog.Id lesson in lessons)
-            {
-                if (TutorialPuzzleLibrary.Exists(levelIndex, lesson)) continue;
-                Debug.LogError($"[Parabox] Missing prebuilt tutorial puzzle: "
-                    + TutorialPuzzleLibrary.ResourcePath(levelIndex, lesson));
-                return false;
-            }
-            string signature = MechanicCatalog.Signature(lessons);
-            return PlayerPrefs.GetString(MechanicBriefingKey(levelIndex), string.Empty) != signature;
+            MechanicCatalog.Id current = tutorialSequence[tutorialSequenceIndex];
+            return !MechanicCatalog.IsChapterTutorial(levelIndex, current)
+                && MechanicCatalog.IntroductionsAt(levelPrefabs, levelIndex).Contains(current);
         }
 
-        void MaybeTutorial()
+        bool CanSkipCurrentTutorial() => !CurrentTutorialIsNewMechanic();
+
+        // The origin movie is the complete onboarding. Campaign levels now begin immediately;
+        // the old mechanic mini-board system remains serialized only for scene compatibility.
+        bool WillTutorial() => false;
+
+        void MaybeTutorial() { }
+
+        System.Collections.IEnumerator BeginOnboarding()
         {
-            if (WillTutorial())
+            // Show the film on the first gameplay entry of every app session, regardless of saved
+            // campaign progress. Editor preview tools remain fast and never consume the real launch.
+            bool playOrigin = !editorPreviewMode && !originFilmPlayedThisSession;
+            if (playOrigin)
             {
-                mechanicBriefingSignature = MechanicCatalog.Signature(CurrentTutorialMechanics());
-                _cine = StartCoroutine(TutorialCinematic());
+                cinematic = true;
+                if (hudReveal != null) hudReveal.StandDown();
+                SetHud(0f, false);
+                if (cameraFollow != null) cameraFollow.enabled = false;
+
+                var film = gameObject.AddComponent<OriginFilmPlayer>();
+                yield return film.Play();
+                bool filmStarted = film != null && film.PlaybackStarted;
+                if (film != null) Destroy(film);
+
+                // Completion and Skip count as watched. A loading or codec failure does not, so
+                // the player receives another chance instead of silently losing the film forever.
+                if (filmStarted)
+                {
+                    originFilmPlayedThisSession = true;
+                    // Preserve the legacy analytics/cloud field, but never use it to suppress a
+                    // future launch. SubsystemRegistration above is the playback authority.
+                    PlayerPrefs.SetInt(OriginFilmKey, 1);
+                    PlayerPrefs.Save();
+                    LuxoddGameService.SyncProgress();
+                }
+                cinematic = false;
+            }
+
+            bool tutorialWillRun = WillTutorial();
+            MaybeTutorial();
+            if (!tutorialWillRun && playOrigin)
+            {
+                SetHud(1f, true);
+                if (cameraFollow != null) cameraFollow.enabled = true;
             }
         }
 
@@ -1892,13 +2001,28 @@ namespace Parabox
             mechanicSpotlightRoot = null;
         }
 
-        // The master timeline. Each chapter gets one bundled, solver-proven mini-game instead of a
-        // sequence of single-rule interruptions. It is parsed into a separate model and rendered
-        // off-screen, so the campaign puzzle stays untouched and its solution is never exposed.
-        System.Collections.IEnumerator TutorialCinematic()
+        // The master timeline. At most one solver-proven NEW MECHANIC mini-game runs per chapter,
+        // at the first supported new rule in that chapter. The chapter tutorial remains separate.
+        // Chapter II therefore keeps only its chapter mini-game when it adds no supported new rule.
+        // Tutorials use separate models and render off-screen, so the campaign puzzle stays untouched.
+        System.Collections.IEnumerator TutorialCinematic(bool resetSequence)
         {
             TutorialPlaybackSerial++;
             cinematic = true;
+            tutorialInteractive = false;
+            if (resetSequence || tutorialSequence.Count == 0)
+            {
+                tutorialSequence.Clear();
+                tutorialSequence.AddRange(CurrentTutorialMechanics());
+                if (tutorialSequence.Count == 0)
+                    tutorialSequence.Add(MechanicCatalog.Id.Navigation);
+                tutorialSequenceIndex = 0;
+            }
+            tutorialSequenceIndex = Mathf.Clamp(tutorialSequenceIndex, 0,
+                Mathf.Max(0, tutorialSequence.Count - 1));
+            if (tutorialFx != null)
+                tutorialFx.SetPrimaryChoiceLabel(
+                    tutorialSequenceIndex + 1 < tutorialSequence.Count);
             CleanupTutorialPuzzle();
             if (tutorialFx != null)
             {
@@ -1910,7 +2034,8 @@ namespace Parabox
                 tutorialFx.HideMechanicDemoImmediately();
                 tutorialFx.SetTitle("TUTORIAL");
                 tutorialFx.HideMechanicBriefingImmediately();
-                tutorialFx.ShowSkip();
+                if (CanSkipCurrentTutorial()) tutorialFx.ShowSkip();
+                else tutorialFx.HideSkip();
             }
             if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
@@ -1931,25 +2056,9 @@ namespace Parabox
             tutorialFx.PanelIn(TutorialDuration(tutorialFromMainPlay ? 0.8f : 0.5f));
             yield return WaitU(TutorialDuration(tutorialFromMainPlay ? 0.9f : 0.6f));
 
-            List<MechanicCatalog.Id> introductions = CurrentTutorialMechanics();
-            if (introductions.Count == 0)
-                introductions.Add(MechanicCatalog.Id.Navigation);
-
-            for (int i = 0; i < introductions.Count; i++)
-            {
-                tutorialFx.SetTitle(introductions.Count > 1
-                    ? $"TUTORIAL  {i + 1}/{introductions.Count}"
-                    : "TUTORIAL");
-                yield return RunTutorialPuzzle(introductions[i]);
-                if (i + 1 < introductions.Count)
-                {
-                    CleanupTutorialPuzzle();
-                    tutorialFx.HideCaptionImmediately();
-                    yield return WaitU(TutorialDuration(0.25f));
-                }
-            }
-
+            yield return RunTutorialPuzzle(tutorialSequence[tutorialSequenceIndex]);
             yield return tutorialFx.ShowChoice();
+            _cine = null;
         }
 
         System.Collections.IEnumerator RunTutorialPuzzle(MechanicCatalog.Id mechanic)
@@ -1961,6 +2070,8 @@ namespace Parabox
                     + TutorialPuzzleLibrary.ResourcePath(levelIndex, mechanic));
                 yield break;
             }
+
+            tutorialFx.SetTitle(MechanicCatalog.TutorialTitle(levelIndex, mechanic));
 
             CleanupTutorialPuzzle();
             tutorialModel = LevelParser.Parse(prefab);
@@ -1984,10 +2095,9 @@ namespace Parabox
             tutorialBgCamera.targetTexture = _rt;
             tutorialBgCamera.enabled = true;
             tutorialFx.SetVideo(_rt);
-            string bundleName = MechanicCatalog.TutorialBundleName(levelIndex);
-            string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex);
-            tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleName)
-                ? $"{bundleName}  •  {bundleLesson}"
+            string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex, mechanic);
+            tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleLesson)
+                ? bundleLesson
                 : $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
 
             SyncTutorialViews(true);
@@ -2043,6 +2153,121 @@ namespace Parabox
                 yield break;
             }
             yield return WaitU(TutorialDuration(0.9f));
+        }
+
+        // Retained for editor-authored tutorial diagnostics. The player-facing TRY IT YOURSELF
+        // action never calls this method: it starts the real campaign level behind the video.
+        void BeginInteractiveTutorial()
+        {
+            if (tutorialSequenceIndex < 0 || tutorialSequenceIndex >= tutorialSequence.Count)
+                return;
+            if (_cine != null)
+            {
+                StopCoroutine(_cine);
+                _cine = null;
+            }
+
+            MechanicCatalog.Id mechanic = tutorialSequence[tutorialSequenceIndex];
+            GameObject prefab = TutorialPuzzleLibrary.Load(levelIndex, mechanic);
+            if (prefab == null)
+            {
+                Debug.LogError($"[Parabox] Cannot practice missing tutorial puzzle "
+                    + TutorialPuzzleLibrary.ResourcePath(levelIndex, mechanic));
+                return;
+            }
+
+            tutorialExiting = false;
+            tutorialInteractive = true;
+            if (tutorialFx != null)
+            {
+                tutorialFx.HideChoice();
+                tutorialFx.SetTitle(MechanicCatalog.TutorialTitle(levelIndex, mechanic));
+            }
+            CleanupTutorialPuzzle();
+            tutorialModel = LevelParser.Parse(prefab);
+            tutorialTiles = new BoardTiles();
+            BoardAssets tutorialAssets = BuildAssets();
+            tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
+                tutorialRoomRoots, tutorialViews, tutorialTiles);
+            tutorialBoardRoot.name = "TutorialPracticePuzzle";
+            tutorialBoardRoot.position = new Vector3(TutorialStageOffset, TutorialStageOffset, 0f);
+            tutorialPlayerBlinker = tutorialViews.TryGetValue(tutorialModel.player, out var playerView)
+                && playerView != null
+                ? playerView.GetComponent<Blinker>()
+                : null;
+
+            EnsureRT();
+            var gameplayCamera = cameraFollow != null ? cameraFollow.GetComponent<Camera>() : Camera.main;
+            tutorialBgCamera.orthographic = true;
+            tutorialBgCamera.clearFlags = CameraClearFlags.SolidColor;
+            tutorialBgCamera.backgroundColor = new Color(0.005f, 0.015f, 0.055f, 1f);
+            tutorialBgCamera.cullingMask = gameplayCamera != null ? gameplayCamera.cullingMask : ~0;
+            tutorialBgCamera.targetTexture = _rt;
+            tutorialBgCamera.enabled = true;
+            tutorialFx.SetVideo(_rt);
+            tutorialFx.ShowCaptionPersistent("YOUR TURN  •  "
+                + MechanicCatalog.TutorialBundleLesson(levelIndex, mechanic));
+            SyncTutorialViews(true);
+            SetTutorialCameraRoom(tutorialModel.player.roomId, true);
+        }
+
+        void MoveInteractiveTutorial(Vector2Int direction)
+        {
+            if (!tutorialInteractive || tutorialModel == null || direction == Vector2Int.zero)
+                return;
+            if (lastTutorialMoveFrame == Time.frameCount) return;
+            lastTutorialMoveFrame = Time.frameCount;
+
+            var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+            foreach (PEntity entity in tutorialModel.entities)
+                before[entity] = (entity.roomId, entity.pos);
+            int roomBefore = tutorialModel.player.roomId;
+            if (!tutorialModel.TryMovePlayer(direction))
+            {
+                Sfx.Blocked();
+                return;
+            }
+
+            Sfx.Move();
+            SyncTutorialViews(false);
+            Vector2 squashDirection = new Vector2(direction.x, direction.y);
+            foreach (PEntity entity in tutorialModel.entities)
+            {
+                if (!before.TryGetValue(entity, out var start)
+                    || start.room != entity.roomId || start.pos != entity.pos)
+                    tutorialViews[entity].Squash(squashDirection);
+            }
+            if (tutorialPlayerBlinker != null)
+                tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
+            if (roomBefore != tutorialModel.player.roomId)
+                SetTutorialCameraRoom(tutorialModel.player.roomId, true);
+
+            if (!tutorialModel.IsWon()) return;
+            tutorialInteractive = false;
+            Sfx.Win();
+            _cine = StartCoroutine(CompleteInteractiveTutorial());
+        }
+
+        void UndoInteractiveTutorial()
+        {
+            if (!tutorialInteractive || tutorialModel == null || !tutorialModel.Undo()) return;
+            Sfx.Undo();
+            if (tutorialPlayerBlinker != null) tutorialPlayerBlinker.ResetOpen();
+            SyncTutorialViews(true);
+            SetTutorialCameraRoom(tutorialModel.player.roomId, true);
+        }
+
+        System.Collections.IEnumerator CompleteInteractiveTutorial()
+        {
+            yield return WaitU(TutorialDuration(0.55f));
+            tutorialSequenceIndex++;
+            if (tutorialSequenceIndex < tutorialSequence.Count)
+            {
+                _cine = StartCoroutine(TutorialCinematic(false));
+                yield break;
+            }
+            tutorialExiting = true;
+            yield return TutorialExitToPlay();
         }
 
         static Vector2Int TutorialDirection(char command)
@@ -2184,6 +2409,7 @@ namespace Parabox
         // scrim still covers the display, then reveal the untouched campaign puzzle underneath.
         System.Collections.IEnumerator TutorialExitToPlay()
         {
+            tutorialInteractive = false;
             if (tutorialFx != null)
             {
                 tutorialFx.HideChoice();
@@ -2223,16 +2449,11 @@ namespace Parabox
             countdownArmed = false;
             cinematic = false;                      // gameplay is live from here
             tutorialExiting = false;
+            tutorialInteractive = false;
+            tutorialSequence.Clear();
+            tutorialSequenceIndex = 0;
             _cine = null;
             FocusRoom(model.player.roomId);         // restore normal all-room visibility after close-up
-            if (!string.IsNullOrEmpty(mechanicBriefingSignature))
-            {
-                // Record the exact mechanic set only after the video closes and the player enters
-                // play. A changed curriculum therefore replays the new lesson without ever using
-                // puzzle progress as tutorial state.
-                PlayerPrefs.SetString(MechanicBriefingKey(levelIndex), mechanicBriefingSignature);
-                mechanicBriefingSignature = null;
-            }
             PlayerPrefs.SetInt(TutorialKey, 1);
             PlayerPrefs.Save();
             LuxoddGameService.SyncProgress();
@@ -2241,6 +2462,7 @@ namespace Parabox
         public void TutorialWatchAgain()
         {
             tutorialExiting = false;
+            tutorialInteractive = false;
             if (_cine != null) StopCoroutine(_cine);
             if (tutorialFx != null) tutorialFx.HideChoice();
             if (!TutorialRewind())
@@ -2250,22 +2472,40 @@ namespace Parabox
             }
             ClearGoalGlow();
             ClearMechanicSpotlights();
-            _cine = StartCoroutine(TutorialCinematic());
+            // Replay only the tutorial currently on screen. In particular, REPEAT on the
+            // NEW MECHANICS card must not jump back to a different chapter lesson.
+            _cine = StartCoroutine(TutorialCinematic(false));
         }
 
         public void TutorialTryIt()
         {
             if (tutorialExiting) return;
-            tutorialExiting = true;
             Sfx.Ding();
+
+            // The first card's primary action is NEXT. Only the second/final card hands control
+            // to the untouched campaign level.
+            if (tutorialSequenceIndex + 1 < tutorialSequence.Count)
+            {
+                tutorialSequenceIndex++;
+                tutorialInteractive = false;
+                if (_cine != null) StopCoroutine(_cine);
+                if (tutorialFx != null) tutorialFx.HideChoice();
+                _cine = StartCoroutine(TutorialCinematic(false));
+                return;
+            }
+
+            // TRY IT YOURSELF always means the real campaign puzzle that caused this tutorial to
+            // appear. The isolated teaching example is video-only and is never handed to the
+            // player as a practice level.
+            tutorialExiting = true;
             StartCoroutine(TutorialExitToPlay());
         }
 
-        // Available for the complete duration of every walkthrough. Purple on a Luxodd cabinet
-        // and RB on a standard gamepad call here.
+        // Available on chapter walkthroughs. First-appearance NEW MECHANIC videos deliberately
+        // hide and disable Skip, including Purple/RB and keyboard Tab.
         public void TutorialSkip()
         {
-            if (!Tutoring || tutorialExiting) return;
+            if (!Tutoring || tutorialExiting || !CanSkipCurrentTutorial()) return;
 
             if (_cine != null)
             {
@@ -2274,6 +2514,7 @@ namespace Parabox
             }
 
             Sfx.Ding();
+            tutorialInteractive = false;
             tutorialExiting = true;
             ClearMechanicSpotlights();
             StartCoroutine(TutorialExitToPlay());
@@ -2320,6 +2561,9 @@ namespace Parabox
             if (cameraFollow != null) cameraFollow.enabled = true;
             SetHud(1f, true);
             cinematic = false;
+            tutorialInteractive = false;
+            tutorialSequence.Clear();
+            tutorialSequenceIndex = 0;
             if (model != null && model.player != null) FocusRoom(model.player.roomId);
             tutorialExiting = false;
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
@@ -2580,8 +2824,6 @@ namespace Parabox
             timedUp = false;
             outOfMoves = false;
             lossTransactionRequested = false;
-            lastHeld = Vector2Int.zero;
-            nextRepeat = 0f;
             tickBump = 0f;
             lastSecond = -1;
 

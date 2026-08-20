@@ -40,15 +40,10 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
             base.OnCommandResponseSuccessHandler(responseHandler);
 #if NEWTONSOFT_JSON
             var payloadJson = JsonConvert.SerializeObject(ResponseHandler.Payload);
-            LoggerHelper.Log(
-                $"[{DateTime.Now}][{GetType().Name}][{nameof(OnCommandResponseSuccessHandler)}] OK, payload: {payloadJson}");
-
             var payloadObject = JsonConvert.DeserializeObject<SessionInfoPayload>(payloadJson);
-            if (payloadObject != null)
-            {
-                Debug.Log(
-                    $"[{DateTime.Now}][{GetType().Name}][{nameof(OnCommandResponseSuccessHandler)}] OK, session type: {payloadObject.SessionType}");
-            }
+            LoggerHelper.Log(
+                $"[{DateTime.Now}][{GetType().Name}][{nameof(OnCommandResponseSuccessHandler)}] " +
+                $"OK, payloadPresent={ResponseHandler.Payload != null}, responseParsed={payloadObject != null}");
 
             ResponseHandler.Payload = payloadObject;
 #endif

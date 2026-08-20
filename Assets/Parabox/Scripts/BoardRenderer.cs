@@ -43,8 +43,8 @@ namespace Parabox
     // the placement half of SyncViews) so it can run in ANY scene without input/timer/undo/win/HUD.
     public static class BoardRenderer
     {
-        // Crate colours 1..N. A coloured crate and its goal are drawn in the same hue, which is
-        // the entire explanation the player gets — and all they need.
+        // Crate colours 1..N. Cargo and its goal share both this hue and a matching embossed
+        // identity mark, so Chapter V remains readable even when colour alone is hard to judge.
         public static readonly Color[] CrateColours =
         {
             new Color(1f, 0.55f, 0.42f, 1f),   // 1 — coral
@@ -137,7 +137,7 @@ namespace Parabox
                 var root = new GameObject("Room_" + room.id).transform;
                 root.SetParent(worldRoot, false);
                 roomRoots[room.id] = root;
-                PaintRoom(root, room, a, tiles);
+                PaintRoom(root, room, a, tiles, model);
             }
 
             var nestedRooms = new HashSet<int>();
@@ -261,20 +261,27 @@ namespace Parabox
                             shadowRenderer.color = new Color(0f, 0f, 0f, 0.20f);
                     }
 
-                    // Plain cargo uses a quiet inset hatch instead of the old white gloss. The
-                    // parallel diagonals make it unmistakably pushable cargo while staying flat
-                    // and readable. Special crates keep their own stronger functional marking.
+                    // Plain cargo uses a quiet inset hatch. Chapter V colour cargo instead receives
+                    // a semantic mark (coral sprig, sky wind or green leaf); its target receives the
+                    // same mark below, making every pairing understandable without relying on hue.
                     if (a.cellSprite != null && !e.locking && !e.fragile && !e.boulder
                         && !e.slick && !e.anchored)
                     {
-                        Color hatch = Lighten(crateC, 0.20f);
-                        hatch.a = 0.58f;
-                        Bar(go.transform, a.cellSprite, hatch, 60,
-                            new Vector2(-0.14f, 0.14f), 0.39f, 0.040f, 45f);
-                        Bar(go.transform, a.cellSprite, hatch, 60,
-                            Vector2.zero, 0.39f, 0.040f, 45f);
-                        Bar(go.transform, a.cellSprite, hatch, 60,
-                            new Vector2(0.14f, -0.14f), 0.39f, 0.040f, 45f);
+                        if (e.colour > 0)
+                        {
+                            AddColourIdentity(go.transform, a, e.colour, crateC, 60, false);
+                        }
+                        else
+                        {
+                            Color hatch = Lighten(crateC, 0.20f);
+                            hatch.a = 0.58f;
+                            Bar(go.transform, a.cellSprite, hatch, 60,
+                                new Vector2(-0.14f, 0.14f), 0.39f, 0.040f, 45f);
+                            Bar(go.transform, a.cellSprite, hatch, 60,
+                                Vector2.zero, 0.39f, 0.040f, 45f);
+                            Bar(go.transform, a.cellSprite, hatch, 60,
+                                new Vector2(0.14f, -0.14f), 0.39f, 0.040f, 45f);
+                        }
                     }
                     if (!UsesOptionOneSkin(a))
                         AddRim(go, "Sprite", crateC, ObjSize, a);
@@ -363,9 +370,9 @@ namespace Parabox
                     && nestedRooms.Add(e.interiorRoomId))
                 {
                     Color interiorC = RoomColor(a.roomColors, e.interiorRoomId);
-                    // Chapter IV's movable room is the cobalt-blue puzzle piece taught in that
-                    // world. Chapter V keeps the amber extraction-shell language, so entering and
-                    // repositioning one room never looks like the later nested-cargo chapter.
+                    // Every movable recursive room is cargo: it can be pushed onto the same amber
+                    // socket as an ordinary crate. Keep that object/goal identity consistent in
+                    // every chapter; anchored enter-only rooms retain their depth colours.
                     Color shellC = e.anchored
                         ? NestedShellColor(e.interiorRoomId)
                         : MovableNestedShellColor(a.chapter);
@@ -647,6 +654,39 @@ namespace Parabox
                 }
         }
 
+        // Gates face across their corridor.  A north/south corridor gets posts on its left/right
+        // edges; an east/west corridor gets posts above/below.  This is derived from the authored
+        // neighbouring floor, so generated campaign boards and tutorial boards use the same rule.
+        static bool GatePassageIsHorizontal(PRoom room, Vector2Int cell)
+        {
+            bool left  = GateNeighbourIsPassage(room, cell + Vector2Int.left);
+            bool right = GateNeighbourIsPassage(room, cell + Vector2Int.right);
+            bool down  = GateNeighbourIsPassage(room, cell + Vector2Int.down);
+            bool up    = GateNeighbourIsPassage(room, cell + Vector2Int.up);
+
+            // A complete opposing pair is the clearest corridor signal.
+            bool horizontalPair = left && right;
+            bool verticalPair = down && up;
+            if (horizontalPair != verticalPair) return horizontalPair;
+
+            // Corners and T-junctions fall back to whichever axis has more open neighbours.
+            int horizontalOpen = (left ? 1 : 0) + (right ? 1 : 0);
+            int verticalOpen = (down ? 1 : 0) + (up ? 1 : 0);
+            if (horizontalOpen != verticalOpen) return horizontalOpen > verticalOpen;
+
+            // Fully open/crossing cells keep the established north/south presentation.
+            return false;
+        }
+
+        static bool GateNeighbourIsPassage(PRoom room, Vector2Int neighbour)
+        {
+            // A non-wall edge is a valid doorway into/out of a nested room.  Therefore the cell
+            // just beyond that edge still counts as passage when choosing the frame orientation.
+            if (!room.InBounds(neighbour)) return true;
+            return !room.IsWall(neighbour) && !room.IsRock(neighbour) &&
+                   !room.IsOpenTrench(neighbour) && !room.IsBroken(neighbour);
+        }
+
         // A gate: a slatted slab that the game hides while its switch is held, over a permanent
         // frame that stays put — so an OPEN gate still reads as a gateway rather than plain floor.
         static void PaintGates(Transform root, PRoom room, BoardAssets a, bool[,] cells, Color tint,
@@ -672,17 +712,30 @@ namespace Parabox
                     fsr3.color = Color.Lerp(new Color(0.015f, 0.045f, 0.10f, 1f), tint, 0.10f);
                     fsr3.sortingOrder = OrderFloorCell + 1;
 
-                    // The persistent side posts keep an open gate readable as a gateway. They also
-                    // stop the three illuminated slats from looking like an ordinary floor motif.
+                    bool horizontalPassage = GatePassageIsHorizontal(room, cell);
+
+                    // Rotate the complete frame by a quarter turn for an east/west corridor.
+                    // The posts remain parallel to movement and the closed slats cross movement.
+                    Vector2 postA = horizontalPassage
+                        ? new Vector2(0f, -0.39f) : new Vector2(-0.39f, 0f);
+                    Vector2 postB = horizontalPassage
+                        ? new Vector2(0f, 0.39f) : new Vector2(0.39f, 0f);
+                    Vector2 capA = horizontalPassage
+                        ? new Vector2(-0.30f, -0.39f) : new Vector2(-0.39f, 0.30f);
+                    Vector2 capB = horizontalPassage
+                        ? new Vector2(-0.30f, 0.39f) : new Vector2(0.39f, 0.30f);
+                    float postAngle = horizontalPassage ? 0f : 90f;
+                    float capAngle = horizontalPassage ? 90f : 0f;
+
                     Color rail = Darken(tint, 0.28f);
                     Bar(frame.transform, a.cellSprite, rail, OrderWall + 1,
-                        new Vector2(-0.39f, 0f), 0.78f, 0.105f, 90f);
+                        postA, 0.78f, 0.105f, postAngle);
                     Bar(frame.transform, a.cellSprite, rail, OrderWall + 1,
-                        new Vector2(0.39f, 0f), 0.78f, 0.105f, 90f);
+                        postB, 0.78f, 0.105f, postAngle);
                     Bar(frame.transform, a.cellSprite, Lighten(tint, 0.18f), OrderWall + 2,
-                        new Vector2(-0.39f, 0.30f), 0.16f, 0.075f, 0f);
+                        capA, 0.16f, 0.075f, capAngle);
                     Bar(frame.transform, a.cellSprite, Lighten(tint, 0.18f), OrderWall + 2,
-                        new Vector2(0.39f, 0.30f), 0.16f, 0.075f, 0f);
+                        capB, 0.16f, 0.075f, capAngle);
 
                     var slab = new GameObject("Gate");           // hidden while the switch is held
                     slab.transform.SetParent(root, false);
@@ -696,19 +749,23 @@ namespace Parabox
                     bsr4.color = Darken(tint, 0.42f);
                     bsr4.sortingOrder = OrderWall;
 
+                    float slatAngle = horizontalPassage ? 90f : 0f;
                     for (int k = -1; k <= 1; k++)                // slats = a barrier, not a floor tile
                     {
+                        Vector2 slatAt = horizontalPassage
+                            ? new Vector2(k * 0.24f, 0f) : new Vector2(0f, k * 0.24f);
                         Bar(slab.transform, a.cellSprite, new Color(tint.r, tint.g, tint.b, 0.18f),
-                            OrderWall + 1, new Vector2(0f, k * 0.24f), 0.76f, 0.18f, 0f);
+                            OrderWall + 1, slatAt, 0.76f, 0.18f, slatAngle);
                         Bar(slab.transform, a.cellSprite, Lighten(tint, 0.12f),
-                            OrderWall + 3, new Vector2(0f, k * 0.24f), 0.68f, 0.085f, 0f);
+                            OrderWall + 3, slatAt, 0.68f, 0.085f, slatAngle);
                     }
 
                     if (showLatchIndicator)
                     {
                         var indicator = new GameObject("LatchIndicator");
                         indicator.transform.SetParent(slab.transform, false);
-                        indicator.transform.localPosition = new Vector3(0.31f, 0f, 0f);
+                        indicator.transform.localPosition = horizontalPassage
+                            ? new Vector3(0f, -0.31f, 0f) : new Vector3(0.31f, 0f, 0f);
                         indicator.transform.localScale = Vector3.one * 0.22f;
                         var isr = indicator.AddComponent<SpriteRenderer>();
                         isr.sprite = a.cellSprite;
@@ -717,7 +774,8 @@ namespace Parabox
 
                         var lamp = new GameObject("Lamp");
                         lamp.transform.SetParent(indicator.transform, false);
-                        lamp.transform.localScale = new Vector3(0.34f, 0.62f, 1f);
+                        lamp.transform.localScale = horizontalPassage
+                            ? new Vector3(0.62f, 0.34f, 1f) : new Vector3(0.34f, 0.62f, 1f);
                         var lsr = lamp.AddComponent<SpriteRenderer>();
                         lsr.sprite = a.cellSprite;
                         lsr.color = Lighten(tint, 0.30f);
@@ -822,7 +880,8 @@ namespace Parabox
                 }
         }
 
-        static void PaintRoom(Transform root, PRoom room, BoardAssets a, BoardTiles tiles)
+        static void PaintRoom(Transform root, PRoom room, BoardAssets a, BoardTiles tiles,
+                              LevelModel model)
         {
             Color floorC = RoomColor(a.roomColors, room.id);
             bool main = room.id == 0;
@@ -1556,7 +1615,7 @@ namespace Parabox
             }
 
             if (optionOne)
-                PaintPlayableBoundaryContours(root, room, a);
+                PaintPlayableBoundaryContours(root, room, a, model);
             else
                 for (int x = 0; x < room.width; x++)
                     for (int y = 0; y < room.height; y++)
@@ -1603,6 +1662,7 @@ namespace Parabox
                 SetOrder(go, OrderGoal);
                 Color gc = CrateColour(a.boxColor, colour);
                 StyleGoal(go, gc, false, a);
+                AddColourIdentity(go.transform, a, colour, gc, OrderGoal + 3, true);
             }
         }
 
@@ -1686,10 +1746,12 @@ namespace Parabox
                 }
         }
 
-        // Derive closed contours from the real playable-cell boundary. No wall cell is rendered.
-        // Every exposed floor edge is added once, then connected into a loop. The result supports
-        // concave rooms, separate islands and enclosed holes without duplicated corner geometry.
-        static void PaintPlayableBoundaryContours(Transform root, PRoom room, BoardAssets a)
+        // Derive contours from the real playable-cell boundary. No wall cell is rendered. Nested
+        // rooms are the one exception to a closed outline: their valid parent-facing exits are
+        // physical doorways, so the rail must stop at those cells instead of drawing a misleading
+        // line across them. Root rooms and unusable anchored sides remain fully closed.
+        static void PaintPlayableBoundaryContours(Transform root, PRoom room, BoardAssets a,
+                                                   LevelModel model)
         {
             var edges = new List<BoundaryEdge>();
             var outgoing = new Dictionary<Vector2Int, List<int>>();
@@ -1721,13 +1783,11 @@ namespace Parabox
             {
                 if (used[firstEdge]) continue;
 
-                var points = new List<Vector2Int>();
+                var loopEdges = new List<BoundaryEdge>();
                 BoundaryEdge edge = edges[firstEdge];
                 Vector2Int loopStart = edge.start;
                 Vector2Int incoming = edge.end - edge.start;
-                bool touchesOutside = edge.touchesOutside;
-                points.Add(loopStart);
-                points.Add(edge.end);
+                loopEdges.Add(edge);
                 used[firstEdge] = true;
 
                 Vector2Int current = edge.end;
@@ -1739,16 +1799,27 @@ namespace Parabox
 
                     BoundaryEdge nextEdge = edges[next];
                     used[next] = true;
-                    touchesOutside |= nextEdge.touchesOutside;
                     incoming = nextEdge.end - nextEdge.start;
                     current = nextEdge.end;
-                    points.Add(current);
+                    loopEdges.Add(nextEdge);
                 }
 
-                if (current != loopStart || points.Count < 5) continue;
-                points.RemoveAt(points.Count - 1); // LineRenderer.loop closes the final segment.
-                PaintBoundaryContour(root, room, a, points, touchesOutside);
+                if (current != loopStart || loopEdges.Count < 4) continue;
+                PaintBoundaryContour(root, room, a, loopEdges, model);
             }
+        }
+
+        static Vector2Int BoundaryOutward(BoundaryEdge edge)
+        {
+            Vector2Int tangent = edge.end - edge.start;
+            return new Vector2Int(tangent.y, -tangent.x);
+        }
+
+        static bool IsNestedDoorway(BoundaryEdge edge, PRoom room, LevelModel model)
+        {
+            if (!edge.touchesOutside || room.containerBox == null || model == null) return false;
+            if (!model.rooms.TryGetValue(room.containerBox.roomId, out PRoom parentRoom)) return false;
+            return HasUsableParentSide(room.containerBox, parentRoom, BoundaryOutward(edge));
         }
 
         static void AddBoundaryEdge(List<BoundaryEdge> edges,
@@ -1790,8 +1861,56 @@ namespace Parabox
         }
 
         static void PaintBoundaryContour(Transform root, PRoom room, BoardAssets a,
-                                         List<Vector2Int> gridPoints, bool touchesOutside)
+                                         List<BoundaryEdge> edges, LevelModel model)
         {
+            int doorway = -1;
+            for (int i = 0; i < edges.Count; i++)
+                if (IsNestedDoorway(edges[i], room, model))
+                {
+                    doorway = i;
+                    break;
+                }
+
+            if (doorway < 0)
+            {
+                var closed = new List<Vector2Int>(edges.Count);
+                bool touchesOutside = false;
+                for (int i = 0; i < edges.Count; i++)
+                {
+                    closed.Add(edges[i].start);
+                    touchesOutside |= edges[i].touchesOutside;
+                }
+                PaintBoundaryContourPath(root, room, a, closed, touchesOutside, true);
+                return;
+            }
+
+            // Start immediately after a doorway so a run can never wrap across the list boundary.
+            // Each skipped edge is exactly one authored boundary cell, leaving a clean threshold.
+            var run = new List<Vector2Int>();
+            int index = (doorway + 1) % edges.Count;
+            for (int visited = 0; visited < edges.Count; visited++)
+            {
+                BoundaryEdge edge = edges[index];
+                if (IsNestedDoorway(edge, room, model))
+                {
+                    PaintBoundaryContourPath(root, room, a, run, true, false);
+                    run.Clear();
+                }
+                else
+                {
+                    if (run.Count == 0) run.Add(edge.start);
+                    run.Add(edge.end);
+                }
+                index = (index + 1) % edges.Count;
+            }
+            PaintBoundaryContourPath(root, room, a, run, true, false);
+        }
+
+        static void PaintBoundaryContourPath(Transform root, PRoom room, BoardAssets a,
+                                             List<Vector2Int> gridPoints, bool touchesOutside,
+                                             bool loop)
+        {
+            if (gridPoints == null || gridPoints.Count < 2) return;
             var contour = new GameObject(touchesOutside ? "BoundaryWall" : "Wall");
             contour.transform.SetParent(root, false);
 
@@ -1804,16 +1923,16 @@ namespace Parabox
 
             Material material = BoundaryLineMaterial(a);
             CreateContourLine(contour.transform, "ContourShadow", points, material,
-                new Color(0f, 0.005f, 0.025f, 0.82f), 0.32f, OrderWall - 1);
+                new Color(0f, 0.005f, 0.025f, 0.82f), 0.32f, OrderWall - 1, loop);
             CreateContourLine(contour.transform, "CyanGlow", points, material,
                 new Color(a.frameColor.r, a.frameColor.g, a.frameColor.b, 0.30f),
-                0.26f, OrderWall);
+                0.26f, OrderWall, loop);
             CreateContourLine(contour.transform, "NavyRail", points, material,
-                a.wallColor, 0.20f, OrderWall + 1);
+                a.wallColor, 0.20f, OrderWall + 1, loop);
             CreateContourLine(contour.transform, "CobaltBevel", points, material,
-                OptionOneBevel, 0.135f, OrderWall + 2);
+                OptionOneBevel, 0.135f, OrderWall + 2, loop);
             CreateContourLine(contour.transform, "CyanEdge", points, material,
-                a.frameColor, 0.060f, OrderWall + 3);
+                a.frameColor, 0.060f, OrderWall + 3, loop);
         }
 
         static Material BoundaryLineMaterial(BoardAssets a)
@@ -1827,14 +1946,15 @@ namespace Parabox
         }
 
         static void CreateContourLine(Transform parent, string name, Vector3[] points,
-                                      Material material, Color color, float width, int order)
+                                      Material material, Color color, float width, int order,
+                                      bool loop)
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
             var line = go.AddComponent<LineRenderer>();
             if (material != null) line.sharedMaterial = material;
             line.useWorldSpace = false;
-            line.loop = true;
+            line.loop = loop;
             line.positionCount = points.Length;
             line.SetPositions(points);
             line.startWidth = width;
@@ -2034,9 +2154,11 @@ namespace Parabox
             return panel;
         }
 
-        // Goals in Option 1 are quiet floor markings, not bright white tiles. A player target uses
-        // the same magenta silhouette and two-eye language as the actor, while a box target remains
-        // an immediately readable amber outline. This keeps the visual explanation inside the board.
+        // Goals are floor markings, but their coloured rim must still read as the SAME colour as
+        // the object that belongs there. The old 22-24% player-goal alpha blended a cyan/blue goal
+        // into the navy floor until it looked grey-purple. Keeping the socket translucent while
+        // giving the rim and silhouette enough colour solves that mismatch on every campaign and
+        // tutorial board without making a goal look like a second movable actor.
         static void StyleGoal(GameObject go, Color color, bool playerSilhouette, BoardAssets a)
         {
             foreach (var sr in go.GetComponentsInChildren<SpriteRenderer>(true))
@@ -2052,9 +2174,9 @@ namespace Parabox
                     else if (part == "Glow")
                         sr.transform.localScale = Vector3.one * (OptionOneObjectSize * 1.08f);
                 }
-                float alpha = part == "Glow" ? 0.075f
-                    : part == "Socket" ? (playerSilhouette ? 0.05f : 0.30f)
-                    : playerSilhouette ? 0.24f : 0.88f;
+                float alpha = part == "Glow" ? (playerSilhouette ? 0.12f : 0.10f)
+                    : part == "Socket" ? (playerSilhouette ? 0.20f : 0.36f)
+                    : playerSilhouette ? 0.78f : 0.92f;
                 sr.color = new Color(color.r, color.g, color.b, alpha);
             }
 
@@ -2065,15 +2187,66 @@ namespace Parabox
             silhouette.transform.localScale = Vector3.one * 0.64f;
             var body = silhouette.AddComponent<SpriteRenderer>();
             body.sprite = a.cellSprite;
-            body.color = new Color(color.r, color.g, color.b, 0.22f);
+            body.color = new Color(color.r, color.g, color.b, 0.54f);
             body.sortingOrder = OrderGoal + 1;
 
-            Color eye = Color.Lerp(OptionOneFloor, color, 0.12f);
-            eye.a = 0.62f;
+            Color eye = Color.Lerp(color, Color.white, 0.62f);
+            eye.a = 0.88f;
             Bar(silhouette.transform, a.cellSprite, eye, OrderGoal + 2,
                 new Vector2(-0.16f, 0.055f), 0.19f, 0.14f, 90f);
             Bar(silhouette.transform, a.cellSprite, eye, OrderGoal + 2,
                 new Vector2(0.16f, 0.055f), 0.19f, 0.14f, 90f);
+        }
+
+        // Chapter V keeps one focused rule: match the three cargo families. These tiny embossed
+        // marks turn abstract colours into familiar objects while preserving the premium cabinet
+        // language: coral has a branching sprig, sky has wind streaks, and green has a leaf vein.
+        // The identical mark is rendered on the corresponding floor socket.
+        static void AddColourIdentity(Transform parent, BoardAssets a, int colour,
+                                      Color baseColor, int order, bool goal)
+        {
+            if (parent == null || a == null || a.cellSprite == null || colour < 1 || colour > 3)
+                return;
+
+            var mark = new GameObject(colour == 1 ? "CoralMark"
+                : colour == 2 ? "SkyMark" : "LeafMark");
+            mark.transform.SetParent(parent, false);
+            mark.transform.localPosition = new Vector3(0f, 0f, -0.01f);
+
+            Color ink = Lighten(baseColor, goal ? 0.48f : 0.62f);
+            ink.a = goal ? 0.82f : 0.94f;
+            float thickness = goal ? 0.042f : 0.052f;
+
+            if (colour == 1)
+            {
+                // Coral: one stem growing into two unmistakable branches.
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(0f, -0.02f), 0.42f, thickness, 90f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(-0.10f, 0.10f), 0.25f, thickness, 42f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(0.10f, 0.10f), 0.25f, thickness, 138f);
+            }
+            else if (colour == 2)
+            {
+                // Sky: three offset wind streaks, with a longer centre gust.
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(-0.055f, 0.13f), 0.34f, thickness, 0f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(0.025f, 0f), 0.50f, thickness, 0f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(-0.075f, -0.13f), 0.30f, thickness, 0f);
+            }
+            else
+            {
+                // Green: a diagonal leaf vein with two smaller veins.
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    Vector2.zero, 0.48f, thickness, 48f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(-0.07f, 0.08f), 0.22f, thickness, 108f);
+                Bar(mark.transform, a.cellSprite, ink, order,
+                    new Vector2(0.08f, -0.07f), 0.22f, thickness, -18f);
+            }
         }
 
         public static Color RoomColor(Color[] roomColors, int roomId)
@@ -2109,15 +2282,14 @@ namespace Parabox
 
         static Color MovableNestedShellColor(int chapter)
         {
-            // Chapter indices are zero-based. Chapter IV deliberately owns cobalt rooms; the
-            // amber shell remains reserved for Chapter V's extraction and chamber-chain puzzles.
-            if (chapter == 3) return new Color(0.055f, 0.245f, 0.625f, 1f);
+            // A movable room-box satisfies an amber cargo socket, so its body must advertise the
+            // same relationship. The chapter argument remains for API stability and clarity at
+            // call sites; chapter identity belongs to the player, not to cargo semantics.
             return Darken(OptionOneBox, 0.46f);
         }
 
         static Color MovableNestedShellAccentColor(int chapter)
         {
-            if (chapter == 3) return new Color(0.275f, 0.700f, 1.000f, 1f);
             return Lighten(OptionOneBox, 0.10f);
         }
 
@@ -2161,6 +2333,25 @@ namespace Parabox
             if (box == null || a == null || a.cellSprite == null || a.floorPrefab == null || room == null
                 || box.transform.Find("NestedDoorways") != null) return;
 
+            bool bottomDoor = HasUsableParentSide(container, parentRoom, Vector2Int.down)
+                              && HasOpenBoundaryCell(room, false, false);
+            bool topDoor = HasUsableParentSide(container, parentRoom, Vector2Int.up)
+                           && HasOpenBoundaryCell(room, false, true);
+            bool leftDoor = HasUsableParentSide(container, parentRoom, Vector2Int.left)
+                            && HasOpenBoundaryCell(room, true, false);
+            bool rightDoor = HasUsableParentSide(container, parentRoom, Vector2Int.right)
+                             && HasOpenBoundaryCell(room, true, true);
+
+            // SpriteMask support is material-dependent. On the cabinet material the old single
+            // ring could therefore survive the mask and draw a bright bar straight across a real
+            // doorway (most visibly over Chapter III's upward tutorial exit). Build the frame as
+            // four authored, split sides instead. The missing segment is now real geometry, not a
+            // rendering trick, so every recursive-room entrance stays visibly open in Editor and
+            // WebGL builds.
+            if (bottomDoor || topDoor || leftDoor || rightDoor)
+                ReplaceNestedShellFrameWithSplitSides(box, a, room, roomScale,
+                    bottomDoor, topDoor, leftDoor, rightDoor);
+
             // Only the recursive shell participates in these masks. Room art and entities keep
             // their normal renderers, so the diver remains visible as it crosses the threshold.
             SetOutsideMask(box.transform.Find("Backing"));
@@ -2180,18 +2371,156 @@ namespace Parabox
             float verticalDepth = shellOutside - halfRoomWidth + floorOverlap;
             float horizontalY = (shellOutside + halfRoomHeight - floorOverlap) * 0.5f;
             float verticalX = (shellOutside + halfRoomWidth - floorOverlap) * 0.5f;
-            if (HasUsableParentSide(container, parentRoom, Vector2Int.down))
+            if (bottomDoor)
                 CreateHorizontalDoorwayRuns(doorwayRoot, a, room, roomScale, floorColor,
                     false, -horizontalY, horizontalDepth);
-            if (HasUsableParentSide(container, parentRoom, Vector2Int.up))
+            if (topDoor)
                 CreateHorizontalDoorwayRuns(doorwayRoot, a, room, roomScale, floorColor,
                     true, horizontalY, horizontalDepth);
-            if (HasUsableParentSide(container, parentRoom, Vector2Int.left))
+            if (leftDoor)
                 CreateVerticalDoorwayRuns(doorwayRoot, a, room, roomScale, floorColor,
                     false, -verticalX, verticalDepth);
-            if (HasUsableParentSide(container, parentRoom, Vector2Int.right))
+            if (rightDoor)
                 CreateVerticalDoorwayRuns(doorwayRoot, a, room, roomScale, floorColor,
                     true, verticalX, verticalDepth);
+        }
+
+        static bool HasOpenBoundaryCell(PRoom room, bool vertical, bool highEdge)
+        {
+            if (room == null) return false;
+            if (vertical)
+            {
+                int x = highEdge ? room.width - 1 : 0;
+                for (int y = 0; y < room.height; y++)
+                    if (!room.wall[x, y]) return true;
+            }
+            else
+            {
+                int y = highEdge ? room.height - 1 : 0;
+                for (int x = 0; x < room.width; x++)
+                    if (!room.wall[x, y]) return true;
+            }
+            return false;
+        }
+
+        static void ReplaceNestedShellFrameWithSplitSides(GameObject box, BoardAssets a,
+                                                           PRoom room, float roomScale,
+                                                           bool bottomDoor, bool topDoor,
+                                                           bool leftDoor, bool rightDoor)
+        {
+            if (box == null || a == null || a.cellSprite == null || room == null
+                || box.transform.Find("NestedSplitFrame") != null) return;
+
+            Transform frame = box.transform.Find("Frame");
+            var frameRenderer = frame != null ? frame.GetComponent<SpriteRenderer>() : null;
+            if (frameRenderer == null) return;
+
+            Color accent = frameRenderer.color;
+            int order = frameRenderer.sortingOrder;
+            frameRenderer.enabled = false;
+
+            // The full backing becomes a giant coloured slab when the camera zooms through the
+            // recursive room. The generated split rails now provide the shell body themselves,
+            // so keeping that square behind them would expose a tall purple/blue rectangle beside
+            // the miniature board. Remove it together with the old unsplit bevels.
+            DisableSprite(box.transform.Find("Backing"));
+            DisableSprite(box.transform.Find("NestedShellHighlightTop"));
+            DisableSprite(box.transform.Find("NestedShellHighlightLeft"));
+
+            var root = new GameObject("NestedSplitFrame").transform;
+            root.SetParent(box.transform, false);
+
+            List<Vector2> bottomGaps = bottomDoor
+                ? DoorwayGaps(room, roomScale, false, false) : new List<Vector2>();
+            List<Vector2> topGaps = topDoor
+                ? DoorwayGaps(room, roomScale, false, true) : new List<Vector2>();
+            List<Vector2> leftGaps = leftDoor
+                ? DoorwayGaps(room, roomScale, true, false) : new List<Vector2>();
+            List<Vector2> rightGaps = rightDoor
+                ? DoorwayGaps(room, roomScale, true, true) : new List<Vector2>();
+
+            const float side = 0.405f;
+            CreateSplitFrameSide(root, a.cellSprite, accent, order, bottomGaps,
+                false, -side, "Bottom");
+            CreateSplitFrameSide(root, a.cellSprite, accent, order, topGaps,
+                false, side, "Top");
+            CreateSplitFrameSide(root, a.cellSprite, accent, order, leftGaps,
+                true, -side, "Left");
+            CreateSplitFrameSide(root, a.cellSprite, accent, order, rightGaps,
+                true, side, "Right");
+        }
+
+        static void DisableSprite(Transform target)
+        {
+            if (target == null) return;
+            var renderer = target.GetComponent<SpriteRenderer>();
+            if (renderer != null) renderer.enabled = false;
+        }
+
+        static List<Vector2> DoorwayGaps(PRoom room, float roomScale,
+                                         bool vertical, bool highEdge)
+        {
+            var gaps = new List<Vector2>();
+            int count = vertical ? room.height : room.width;
+            int fixedCoordinate = highEdge
+                ? (vertical ? room.width - 1 : room.height - 1)
+                : 0;
+            int runStart = -1;
+            for (int i = 0; i <= count; i++)
+            {
+                bool open = false;
+                if (i < count)
+                    open = vertical
+                        ? !room.wall[fixedCoordinate, i]
+                        : !room.wall[i, fixedCoordinate];
+                if (open && runStart < 0) runStart = i;
+                if (open || runStart < 0) continue;
+
+                int runEnd = i - 1;
+                int doorwayCell = (runStart + runEnd) / 2;
+                float centre = (doorwayCell - (count - 1) * 0.5f) * roomScale;
+                float halfGap = roomScale * 0.5f + 0.026f;
+                gaps.Add(new Vector2(centre - halfGap, centre + halfGap));
+                runStart = -1;
+            }
+            return gaps;
+        }
+
+        static void CreateSplitFrameSide(Transform parent, Sprite sprite, Color accent,
+                                         int order, List<Vector2> gaps, bool vertical,
+                                         float sideCoordinate, string sideName)
+        {
+            const float edge = 0.445f;
+            const float minimumSegment = 0.012f;
+            float cursor = -edge;
+            int segment = 0;
+
+            for (int i = 0; i <= gaps.Count; i++)
+            {
+                float end = i < gaps.Count ? Mathf.Clamp(gaps[i].x, -edge, edge) : edge;
+                if (end - cursor > minimumSegment)
+                {
+                    float length = end - cursor;
+                    float mid = (cursor + end) * 0.5f;
+                    Vector2 position = vertical
+                        ? new Vector2(sideCoordinate, mid)
+                        : new Vector2(mid, sideCoordinate);
+
+                    // These dimensions are deliberately narrow. Recursive camera zoom magnifies
+                    // the shell along with the room, so normal one-cell wall thickness becomes a
+                    // screen-sized rectangle at depth two or three.
+                    GameObject shadow = Bar(parent, sprite, Darken(accent, 0.58f), order,
+                        position, length + 0.010f, 0.038f, vertical ? 90f : 0f);
+                    shadow.name = $"NestedFrame_{sideName}_{segment}_Shadow";
+                    GameObject light = Bar(parent, sprite, accent, order + 1,
+                        position, length + 0.004f, 0.014f, vertical ? 90f : 0f);
+                    light.name = $"NestedFrame_{sideName}_{segment}_Light";
+                    segment++;
+                }
+
+                if (i < gaps.Count)
+                    cursor = Mathf.Max(cursor, Mathf.Clamp(gaps[i].y, -edge, edge));
+            }
         }
 
         static bool HasUsableParentSide(PEntity container, PRoom parentRoom,

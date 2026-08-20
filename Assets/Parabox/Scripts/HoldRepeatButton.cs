@@ -3,13 +3,13 @@ using UnityEngine.EventSystems;
 
 namespace Parabox
 {
-    // A press-and-hold button for the on-screen d-pad: fires the instant it's pressed and keeps
-    // firing while held, so tapping OR holding an arrow moves the player (like a real game pad).
-    // Serialized onto the d-pad buttons by the prebuilt-UI generator; GameManager only assigns the
-    // current movement callback when play begins.
+    // Direction button shared by the prebuilt on-screen controls. Gameplay explicitly disables
+    // repeat so one pointer contact always means one cell; the optional repeat mode remains here
+    // only for non-puzzle interfaces that may need it later.
     public class HoldRepeatButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
     {
         public System.Action onFire;
+        public bool repeatWhileHeld;
         public float firstDelay = 0.26f;   // delay before hold-repeat kicks in
         public float repeatRate = 0.13f;    // repeat interval while held
 
@@ -28,7 +28,7 @@ namespace Parabox
 
         void Update()
         {
-            if (held && onFire != null && Time.unscaledTime >= nextFire)
+            if (repeatWhileHeld && held && onFire != null && Time.unscaledTime >= nextFire)
             {
                 onFire();
                 nextFire = Time.unscaledTime + repeatRate;

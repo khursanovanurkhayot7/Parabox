@@ -4,6 +4,70 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.1] - Unreleased
+
+### Changed
+- Updated WebGL validation guidance for throttled startup, reconnect, and replacement-socket behavior.
+
+### Fixed
+- Fixed a WebGL WebSocket race where messages could be sent while the browser socket was still in CONNECTING state, causing `InvalidStateError`.
+- Messages sent during CONNECTING are queued and flushed in FIFO order when the socket opens.
+- Stale WebSocket callbacks can no longer clear or interfere with a newer replacement socket.
+
+## [1.1.0] - 2026-08-13
+
+### Added
+- Added asmdef-based modular architecture:
+  - `Luxodd.Game.Runtime`
+  - `Luxodd.Game.InputSystem` (optional)
+  - `Luxodd.Game.Editor`
+  - `Luxodd.Game.InputSystem.Editor`
+- Added optional Input System backend contract and implementation:
+  - `IArcadeControlsBackend`
+  - `ArcadeControlsInputSystemBackend`
+- Added optional Input System compile gating through asmdef `versionDefines` + `defineConstraints` (`LUXODD_INPUT_SYSTEM`).
+- Added arcade button mapping diagnostic example aligned with the physical arcade button layout.
+- Added joystick visualization example with shader-based visual feedback.
+- Added explicit `Unity.TextMeshPro` and `Unity.ugui` runtime asmdef references.
+- Added export-contained example font and TMP resource references under `Assets/Luxodd.Game`.
+
+### Changed
+- Split `ArcadeControls` into:
+  - Core facade with legacy-safe fallback behavior
+  - Optional Input System backend in separate assembly
+- Moved runtime code into `Assets/Luxodd.Game/Runtime/Core/**`.
+- Moved Input System specific runtime code into `Assets/Luxodd.Game/Runtime/InputSystem/**`.
+- Moved editor tooling into `Assets/Luxodd.Game/Editor/Core/**`.
+- Moved Input System diagnostic example to `Assets/Luxodd.Game/Example/Scripts/InputSystem/**`.
+- Updated assembly references:
+  - `Luxodd.Game.Runtime` now references `Unity.TextMeshPro`.
+  - `Luxodd.Game.InputSystem` now references `Unity.InputSystem`.
+- Updated `EventSystemInputModuleSwitcher` to detect Input System UI modules at runtime without a compile-time dependency on `LUXODD_INPUT_SYSTEM` in Core.
+- Current arcade joystick hardware behavior is digital-direction oriented (typically 0/1 states), while the public API remains `Vector2`-compatible for future analog hardware.
+- `Assets/WebGLTemplates/LuxoddTemplate/**` is part of required release content for WebGL/browser integration.
+- Projects upgrading from previous plugin structure should remove old plugin files before importing `1.1.0` to avoid stale files from legacy paths.
+- Legacy Input fallback returns neutral values when Legacy Input Manager is unavailable.
+- Every non-empty `prize_tickets` response is forwarded as `prize_won`, including repeated identical payloads.
+- Selected backend command handlers log safe metadata instead of full payload contents.
+- Package export guidance uses `Assets/Luxodd.Game/**` and `Assets/WebGLTemplates/LuxoddTemplate/**`.
+
+### Fixed
+- Fixed Core Legacy Input exceptions in Input System Package-only projects.
+- Fixed `EventSystemInputModuleSwitcher` calling `DestroyImmediate` from `OnValidate`.
+- Fixed the missing `Unity.ugui` runtime assembly reference.
+- Fixed repeated identical prize ticket responses being dropped before frontend forwarding.
+- Removed full prize ticket JSON and selected full backend payload logs.
+- Fixed example prefab and scene dependencies on root `Assets/Fonts` and `Assets/TextMesh Pro` folders.
+
+### Removed
+- Removed duplicate `prize_won` payload suppression.
+- Removed plugin example dependencies on root `Assets/Fonts` and `Assets/TextMesh Pro`.
+
+### Known Limitations
+- Score signing/encryption is not included in 1.1.0.
+- Final Unity 2022 LTS, Unity 6+, clean-project, and WebGL browser validation remains required before future release publication.
+- Broader transport, token, URL, and session logging hardening remains future work.
+
 ## [1.0.12] - 2026-02-16
 
 ### Added

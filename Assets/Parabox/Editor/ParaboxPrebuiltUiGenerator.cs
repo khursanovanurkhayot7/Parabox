@@ -175,6 +175,12 @@ namespace Parabox.EditorTools
                     && !tutorial.mechanicDemo.IsGameplayStylePrebuilt)
                     problems.Add("The tutorial still contains the old abstract mechanic diagram; "
                         + "the prebuilt gameplay-style mini-board is missing.");
+                if (tutorial != null && tutorial.tryButton != null)
+                {
+                    Text label = tutorial.tryButton.GetComponentInChildren<Text>(true);
+                    if (label == null || label.text != "TRY IT YOURSELF")
+                        problems.Add("Every tutorial primary action must be TRY IT YOURSELF, not NEXT.");
+                }
                 if (tutorial != null && tutorial.skipButton != null)
                 {
                     Text label = tutorial.skipButton.GetComponentInChildren<Text>(true);
@@ -229,6 +235,8 @@ namespace Parabox.EditorTools
             Image image = button.GetComponent<Image>();
             if (group == null || image == null)
                 problems.Add(label + " does not have a prebuilt CanvasGroup and root Image hit target.");
+            else if (image.color.a > 0.01f)
+                problems.Add(label + " root hit target is visible and will draw a rectangular background.");
         }
 
         static void ValidateHiddenLossAction(Button button, string label, List<string> problems)

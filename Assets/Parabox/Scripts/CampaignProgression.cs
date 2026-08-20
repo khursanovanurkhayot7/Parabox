@@ -39,73 +39,90 @@ namespace Parabox
 
         static readonly string[] ChapterNames =
         {
-            "Foundations", "Systems", "Synergy", "Mastery", "Recursion"
+            "Foundations", "Inside the Box", "Room Transfers", "Room Maneuvers", "Recursive Mastery"
         };
 
         static readonly string[] ChapterPhilosophies =
         {
-            "Learn one readable rule at a time", "Control state and coupled pieces",
-            "Move cargo through rooms that are also boxes", "Reposition rooms that are also puzzle pieces", "Plan across nested spaces"
+            "Master four readable foundation rules", "Enter rooms that are also boxes",
+            "Transfer cargo through rooms and choose useful exits",
+            "Dock, enter and re-enter rooms as puzzle pieces",
+            "Master deep room chains, sibling transfers and multi-stage extraction"
         };
 
         // One concise design contract for every board in final campaign order. These are not UI
         // flavour strings: the campaign validator serializes and checks them on every prefab.
-        // The first two chapters establish the physical vocabulary. Chapter III teaches room-box
-        // transfer in isolation, Chapter IV makes the rooms themselves the objects to reposition,
-        // and Chapter V turns the same spatial language into the deep cargo-recursion finale.
+        // Chapter II introduces room-box traversal gently. Chapter III transfers cargo across
+        // room boundaries, Chapter IV makes rooms themselves the objects to reposition, and
+        // Chapter V combines both ideas across the deepest recursive chains in the campaign.
         static readonly string[] MechanicFocus =
         {
-            "Read a one-way route around an ivory pillar", "Reuse the arrow and approach cargo from the useful side",
-            "Swim through deep water while keeping cargo on dry ground", "Park cargo on a button before crossing its gate",
-            "Line up cargo and sacrifice it to break the cracked rock", "Use an updraft without losing the required route",
-            "Stop sliding cargo on its intended cell", "Bridge the trench, cross the ice and preserve the return route",
-            "Use sticky-floor momentum without overshooting", "Commit cargo to the cage only after its route is ready",
+            "Read a bent one-way route around an ivory pillar",
+            "Approach cargo from below, turn it onto its goal and return separately",
+            "Stop sliding cargo at the far wall, then take the lower return path",
+            "Solve two opposed deliveries before returning to the player target",
+            "Keep one crate on the button while delivering another beyond its gate",
+            "Complete an ordinary delivery, slide a second crate onto the button, then cross its opened gate",
+            "Hold the button with one crate, send the other through the gate, then recover and deliver both",
+            "Complete three deliveries from three approach sides around the central wall and one-way crossing",
+            "Hold the gate with ordinary cargo while ordinary and sliding cargo cross the divider",
+            "Open the circuit with one crate, route sliding cargo through it, then finish three deliveries and exit",
 
-            "Move opposite the mirror and finish both targets", "Use asymmetric walls to pause one linked actor",
-            "Coordinate both actors while delivering one shared parcel", "Rebuild the pushing side without losing either linked route",
-            "Turn the parcel through a narrow side channel", "Commit both linked actors around an irreversible cage",
-            "Order two shared deliveries before occupying either target", "Coordinate two deliveries across different axes",
-            "Control the player, echo and mirror with every input", "Finish three linked routes through two independent wall banks",
+            "Enter one fixed room, solve its bent inner route and leave through a different edge",
+            "Exit a fixed room, circle outside and re-enter it from another side before finishing",
+            "Pin one movable room, enter it and leave through the opposite boundary",
+            "Push a movable room twice, pin it against a wall, then enter from its useful side",
+            "Dock a movable room on its socket, enter it and use its far exit to reach the target",
+            "Enter from one edge, extract through another and return by a new approach",
+            "Turn a movable room before its useful opening can line up with the route",
+            "Dock the room, enter it, leave, then re-enter from its new position",
+            "Carry the same object across an inner boundary and finish outside",
+            "Dock the room, leave through its far side, then re-enter from the new position",
 
-            "Transfer cargo through a horizontal room, lower that room onto its socket, then use it as the exit",
-            "Solve a vertical cargo stack, move the room right and turn the delivery down outside",
-            "Enter from the opposite side and route cargo around two offset inner braces",
-            "Cross a tall S-shaped board, extract right and move the room left before taking the floor exit",
-            "Navigate a wide gated chamber with two axis changes before reversing the outer delivery",
-            "Force one cargo through two nested rooms before docking the parent and reaching the exit",
-            "Relay cargo from a movable room across the root into a differently shaped anchored sibling",
-            "Solve a vertical two-room transfer, then reposition the parent repeatedly to align both goals",
-            "Dock two movable sibling rooms and transfer the same cargo through both before the final turn",
-            "Carry cargo across six boundaries in four spaces while combining movable and anchored rooms",
+            "Transfer cargo through the room before placing the room itself",
+            "Move the room first, then bring its cargo to the outer target",
+            "Cross between differently shaped rooms without losing the return route",
+            "Choose the useful exit side before extracting the cargo",
+            "Move a room around a corner, pin it and use its new entry side",
+            "Reverse the normal flow by sending cargo into the inner room",
+            "Relay one object through two connected rooms in the correct order",
+            "Enter a room inside another room and return through both boundaries",
+            "Turn the inner delivery before the surrounding room can be moved",
+            "Reverse the transfer by sending ordinary cargo into the inner room",
 
-            "Enter the pinned room, leave from below and dock it on the visible socket",
-            "Enter from above, leave from the right and re-enter after docking on the left",
-            "Move the room down to its stop, travel through it and turn the room onto a side socket",
-            "Dock the room around the corner, then use the solved room as the only doorway to the exit",
-            "Coordinate two movable rooms whose useful exits face different directions",
-            "Finish two separated room docks in order without reusing the same approach",
-            "Dock an inner room, return through its parent and then dock the outer room",
-            "Solve a nested branch before crossing the outer rail to a separate sibling room",
-            "Dock three rooms from the deepest scale outward without swapping their order",
-            "Complete three differently oriented room docks before taking the final room passage",
+            "Choose the only exit side that preserves the later docking move",
+            "Extract cargo outward, then reposition its former room for the exit",
+            "Solve one nested branch before crossing into its sibling branch",
+            "Route cargo around an inner pillar before aligning the parent room",
+            "Travel through two connected rooms without losing the outer route",
+            "Send cargo inward first, then bring it back through a different side",
+            "Relay one cargo piece outward across two boundaries, then finish outside",
+            "Carry one object through three connected room scales",
+            "Dock three room pieces without blocking the next approach",
+            "Push the child room to its stop, enter it and extract from the new side",
 
-            "Enter a pinned room and exit through a different edge", "Push a room into its socket before entering it",
-            "Extract deep cargo, shift the convoy and turn the final crate upward", "Send cargo inward, finish deep, then backtrack outside",
-            "Reposition a child room and re-enter it from another side", "Turn deep cargo while relaying it across three boundaries",
-            "Move cargo between sibling rooms through the outer sorting bay", "Choose the child room's exit position before extracting cargo",
-            "Re-enter from a new side and carry cargo through four nested boundaries", "Side-dock a deep room, extract an ordered convoy and relay it across sibling branches"
+            "Carry cargo through two nested rooms, then dock the parent to finish",
+            "Plan a long inner relay whose return path changes after each transfer",
+            "Turn cargo around the deepest corner before rebuilding the outer route",
+            "Relay cargo across four boundaries while preserving the exit path",
+            "Extract from one branch and deliver into a different sibling branch",
+            "Choose the room position that creates the correct final exit side",
+            "Move back through a nested pocket and recover cargo from a new approach",
+            "Push, pin and re-enter across five spaces before extracting the cargo",
+            "Coordinate a branching five-room chain with ordered cargo transfers",
+            "Complete the final four-room recursion where every boundary crossing matters"
         };
 
-        // A new rule is demonstrated before it becomes part of later combination boards. Keep this
-        // table in lockstep with MechanicCatalog's prefab audit: it is also serialized onto each
-        // level so editor tooling can detect accidental curriculum drift.
+        // This serialized flag marks the five guaranteed chapter-tutorial checkpoints. Focused
+        // NEW MECHANIC videos are derived from the actual prefab by MechanicCatalog and therefore
+        // do not need a fragile second hard-coded table here.
         static readonly bool[] IntroducesMechanic =
         {
-            true, true, true, true, true, true, true, true, true, true,
-            true, false, false, false, false, false, false, false, true, false,
-            true, false, false, false, false, true, false, false, false, true,
-            false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false
         };
 
         public static Profile ForLevel(int levelIndex)
@@ -131,15 +148,10 @@ namespace Parabox
                 directionalBudget = 0,
                 hazardBudget = 0,
 
-                // Assistance is removed in short, measured bands instead of once per chapter.
-                // Undo refunds moves, so from Level 23 onward the exact proven budget rewards
-                // planning without making experimentation irreversible or unfair.
-                moveSlack = index >= 40 ? 3
-                    : index < 3 ? 4
-                    : index < 8 ? 3
-                    : index < 14 ? 2
-                    : index < 22 ? 1
-                    : 0,
+                // Every campaign puzzle gives the player exactly three recovery moves beyond its
+                // authored route. This keeps the rule predictable: a 14-move solution always has
+                // a 17-move allowance, independent of chapter or level number.
+                moveSlack = 3,
             };
         }
 
@@ -159,26 +171,27 @@ namespace Parabox
         {
             int level = Mathf.Clamp(levelIndex + 1, 1, 50);
 
-            // A predictable arcade curve: Level 2 starts at exactly 20 seconds and ordinary boards
-            // gain one second per level. Recursive boards need time to read each newly entered
-            // coordinate space, so both recursive chapters also scale from their solver-proven
-            // route length. This prevents a valid solve from timing out during spatial planning.
+            // A predictable arcade curve: Level 2 starts at exactly 20 seconds. Multi-delivery and
+            // recursive boards also scale from their authored route length so the player has time
+            // to read the board and plan instead of losing to the clock while learning.
             if (level <= 2) return 20f;
-            if (level <= 20) return 20f + (level - 2);
+            if (level <= 10)
+                return Mathf.Max(20f + (level - 2), par * 1.35f + 12f);
+            if (level <= 20) return Mathf.Max(20f + (level - 2), par * 1.5f + 22f);
             if (level <= 30) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
             if (level <= 40) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
             int chapterStep = level - 41;
-            return Mathf.Max(70f + chapterStep * 2f, par * 1.5f + 22f);
+            return Mathf.Max(76f + chapterStep * 3f, par * 1.65f + 30f);
         }
 
         public static string TutorialLine(int levelIndex)
         {
             switch (Mathf.Clamp(levelIndex, 0, 49) / 10)
             {
-                case 1: return "Terrain changes what a move does. Read the whole route before committing.";
-                case 2: return "Rules now interact. Plan their order before making the first move.";
+                case 1: return "A room can also be a box. If it cannot move, enter it and leave through another edge.";
+                case 2: return "Carry cargo through room boundaries. Choose the exit side before you start pushing.";
                 case 3: return "A room is also a movable piece. Pin it to enter, leave from another side, then dock it.";
-                case 4: return "Rooms are movable objects. Pin one to enter it, then plan how cargo crosses every boundary.";
+                case 4: return "Combine everything: move, pin and enter rooms, then relay cargo through several connected spaces.";
                 default: return "Move one tile at a time and reach the bright player target.";
             }
         }
@@ -192,23 +205,15 @@ namespace Parabox
             {
                 case 0:  return "ONE-WAY  Follow the arrow and route around the ivory pillar.";
                 case 1:  return "PUSH  The arrow remains. Get behind the amber cargo and push it away from you.";
-                case 2:  return "DEEP WATER  It carries the diver, but cargo will sink.";
-                case 3:  return "BUTTON + GATE  Leave cargo on the button to hold its matching gate open.";
-                case 4:  return "BREAKABLE ROCK  Push cargo into the cracked rock to open the route.";
-                case 5:  return "UPDRAFT  Cargo rises until another cell stops it.";
-                case 6:  return "SLIDING CARGO  Icy cargo keeps moving until a solid cell stops it.";
-                case 7:  return "BRIDGE + ICE  Fill the trench with cargo, then use the frozen crossing.";
-                case 8:  return "STICKY FLOOR  Your next move repeats the previous direction.";
-                case 9:  return "CAGE  A crate can enter, but it cannot leave.";
-                case 10: return "MIRROR  The second diver moves opposite to you.";
+                case 2:  return "SLIDING CARGO  A pushed sliding crate continues until a wall stops it.";
+                case 4:  return "BUTTON + GATE  Leave cargo on the button to hold its matching gate open.";
+                case 10: return "NESTED BOARD  A room is also a box. When it cannot move, the player enters it.";
                 case 11: return "PEARL + LOCK  Collect the pearl before crossing the gold lock.";
                 case 12: return "MAGNET  Aligned cargo is pulled after every move.";
                 case 13: return "ECHO  The second diver copies every move; finish both positions together.";
                 case 14: return "SAND  You cannot push cargo while standing on it.";
                 case 15: return "LOCKING CARGO  Once delivered, this crate cannot move again.";
                 case 16: return "TOGGLE + LATCH  Activate the switch before crossing its matching latch.";
-                case 18: return "HEAVY PLATE  The striped heavy gate opens only while cargo holds its plate.";
-                case 19: return "COLOUR CARGO  Match each coloured crate to its own target.";
                 case 22: return "GEYSER  Ride the launch across the trench, then finish the route.";
                 case 24: return "BOULDER  Move in the same direction first to build a pushing run-up.";
                 case 27: return "KELP  The diver can pass through it, but cargo cannot.";
@@ -216,9 +221,9 @@ namespace Parabox
                 case 32: return "GRAVITY WELL  Aligned cargo is pulled one cell after every move.";
                 case 33: return "NARROW GAP  Cargo fits through; the diver must find another route.";
                 case 39: return "PULSE  The barrier advances through a three-beat open-and-closed cycle.";
-                case 20: return "NESTED BOARD  A room is also a box. When it cannot move, cargo or the player enters it.";
-                case 25: return "MULTI-STAGE RECURSION  Cargo can cross several room boundaries in either direction.";
+                case 18: return "MULTI-STAGE RECURSION  One move can carry the player or cargo between connected rooms.";
                 case 29: return "CHAMBER CHAIN  Track the same cargo through every connected coordinate space.";
+                case 40: return "COLOUR CARGO  Match coral, sky and green crates to targets with the same colour and mark.";
                 default: return string.Empty;
             }
         }

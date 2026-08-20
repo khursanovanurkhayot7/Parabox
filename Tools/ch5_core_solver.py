@@ -64,6 +64,8 @@ class CoreLevel:
                         colour_goals[(x, y)] = 1
                     elif ch == "n":
                         colour_goals[(x, y)] = 2
+                    elif ch == "z":
+                        colour_goals[(x, y)] = 3
                     elif ch == "A":
                         colour_goals[(x, y)] = 1
                         self.entities.append(Entity("crate", colour=1))
@@ -84,6 +86,9 @@ class CoreLevel:
                         positions.append((room_id, x, y))
                     elif ch == "N":
                         self.entities.append(Entity("crate", colour=2))
+                        positions.append((room_id, x, y))
+                    elif ch == "Z":
+                        self.entities.append(Entity("crate", colour=3))
                         positions.append((room_id, x, y))
                     elif "1" <= ch <= "9":
                         inner = int(ch)

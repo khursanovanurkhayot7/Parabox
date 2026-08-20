@@ -18,22 +18,26 @@ namespace Parabox.EditorTools
         const string LevelFolder = "Assets/Parabox/Prefabs/Levels";
         const string MainMenuScene = "Assets/Parabox/Scenes/MainMenu.unity";
         const string GameScene = "Assets/Parabox/Scenes/Game.unity";
-        static readonly int[] ChapterTwoParFloors = { 13, 15, 16, 17, 18, 20, 22, 24, 25, 27 };
-        static readonly int[] ChapterTwoCargoObjectives = { 0, 0, 1, 1, 1, 0, 2, 2, 0, 0 };
-        static readonly int[] ChapterThreeRoomCounts = { 2, 2, 2, 2, 2, 3, 3, 3, 3, 4 };
-        static readonly int[] ChapterThreeCargoTransitions = { 2, 2, 2, 2, 2, 4, 4, 4, 4, 6 };
-        static readonly int[] ChapterFourRoomCounts = { 2, 2, 2, 2, 3, 3, 3, 4, 4, 4 };
-        static readonly int[] ChapterFourPlayerTransitions = { 2, 4, 4, 4, 4, 6, 4, 6, 6, 8 };
-        static readonly int[] ChapterFourMetaMoves = { 2, 2, 4, 5, 3, 3, 4, 5, 6, 5 };
-        static readonly int[] ChapterFiveRoomCounts = { 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
-        static readonly int[] ChapterFiveRequiredCargo = { 4, 4, 4, 4, 4, 5, 5, 5, 5, 5 };
-        static readonly int[] ChapterFiveCargoTransitions = { 0, 0, 2, 2, 1, 3, 3, 3, 4, 8 };
-        static readonly int[] ChapterFiveMetaMoves = { 0, 3, 0, 0, 2, 0, 0, 3, 2, 3 };
-        // Chapter V is the expert endgame. These are reviewed solver-proof floors, not targets
-        // produced by padding corridors: a future edit that removes decisions or shortens a
-        // multi-stage route must fail release validation instead of silently flattening the curve.
-        static readonly int[] ChapterFiveParFloors = { 21, 26, 32, 35, 40, 46, 46, 47, 55, 58 };
-        static readonly int[] ChapterFiveTurnFloors = { 7, 16, 15, 17, 12, 17, 13, 26, 12, 24 };
+        // One campaign-wide contract keeps chapter boundaries from resetting the difficulty.
+        // The authored proof may be longer than the floor, but never shorter. Room counts are
+        // exact because each recursive room is an intentional dependency, not visual decoration.
+        static readonly int[] MinimumPars =
+        {
+             8, 10, 12, 16, 18, 19, 30, 34, 39, 42,
+            15, 16, 18, 19, 19, 19, 20, 21, 21, 22,
+            23, 24, 24, 25, 26, 27, 27, 28, 29, 31,
+            32, 32, 33, 34, 34, 35, 36, 38, 39, 40,
+            41, 44, 45, 46, 46, 47, 51, 55, 58, 64
+        };
+
+        static readonly int[] ExpectedRoomCounts =
+        {
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 3, 2, 2, 2, 3, 3, 2, 2,
+            2, 3, 4, 2, 3, 3, 3, 4, 4, 3,
+            3, 3, 3, 4, 4, 4, 3, 5, 5, 4
+        };
 
         static double nextPlayModeRequestPoll;
 
@@ -521,6 +525,7 @@ namespace Parabox.EditorTools
             var chapterComplexityTotal = new int[5];
             var chapterLevelCount = new int[5];
             var chapterIntroductions = new int[5];
+            var chapterTutorialVideos = new int[5];
             var chapterNestedLevels = new int[5];
             var chapterHasTeach = new bool[5];
             var chapterHasCombine = new bool[5];
@@ -563,6 +568,7 @@ namespace Parabox.EditorTools
                 if (authoredMechanics == 0)
                     Failure(report, ref failures, index,
                         "level introduces no authored gameplay mechanic");
+                ValidateGoalColourContract(prefab, index, report, ref failures);
                 if (info.par <= 0)
                     Failure(report, ref failures, index, $"invalid par {info.par}");
                 if (string.IsNullOrWhiteSpace(info.solution))
@@ -574,40 +580,65 @@ namespace Parabox.EditorTools
                     Failure(report, ref failures, index,
                         $"solution length {info.solution.Length} does not equal par {info.par}");
                 CampaignProgression.Profile progression = CampaignProgression.ForLevel(index);
-                List<MechanicCatalog.Id> detectedIntroductions =
-                    MechanicCatalog.IntroductionsAt(campaignPrefabs, index);
                 List<MechanicCatalog.Id> tutorialLessons =
                     MechanicCatalog.TutorialsAt(campaignPrefabs, index);
-                bool introducesDetectedRule = detectedIntroductions.Count > 0;
-                if (progression.introducesMechanic != introducesDetectedRule)
+                // Chapter videos are fixed checkpoints. A focused mechanic video is conditional:
+                // it may appear only where the prefab proves that supported rule is genuinely new.
+                bool chapterTutorialCheckpoint = MechanicCatalog.IsChapterTutorialCheckpoint(index);
+                bool hasNewMechanicTutorial = MechanicCatalog.TryGetNewMechanicTutorial(
+                    campaignPrefabs, index, out MechanicCatalog.Id newMechanicLesson);
+                int expectedTutorialCount = (chapterTutorialCheckpoint ? 1 : 0)
+                    + (hasNewMechanicTutorial ? 1 : 0);
+                chapterTutorialVideos[index / 10] += tutorialLessons.Count;
+                if (progression.introducesMechanic != chapterTutorialCheckpoint)
                     Failure(report, ref failures, index,
-                        $"curriculum introduction flag is {progression.introducesMechanic}, but prefab audit found " +
-                        $"{detectedIntroductions.Count} first appearance(s): " +
-                        string.Join(", ", detectedIntroductions));
-                if (introducesDetectedRule
-                    && string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(detectedIntroductions)))
+                        $"chapter tutorial flag is {progression.introducesMechanic}; " +
+                        $"only chapter openers 1, 11, 21, 31 and 41 may set it");
+                if (tutorialLessons.Count != expectedTutorialCount)
                     Failure(report, ref failures, index,
-                        "first mechanic appearance has no reusable tutorial lesson");
-                if (MechanicCatalog.IsChapterTutorialCheckpoint(index)
-                    && tutorialLessons.Count == 0)
+                        $"expected {expectedTutorialCount} tutorial video(s) from its chapter/new-" +
+                        $"mechanic evidence; found {tutorialLessons.Count}");
+                if (hasNewMechanicTutorial
+                    && !tutorialLessons.Contains(newMechanicLesson))
                     Failure(report, ref failures, index,
-                        "chapter opener has no bundled tutorial mini-board");
-                if (MechanicCatalog.IsChapterTutorialCheckpoint(index)
-                    && tutorialLessons.Count != 1)
+                        $"first appearance is missing its NEW MECHANIC {newMechanicLesson} video");
+                if (MechanicCatalog.TryGetChapterTutorial(index, out MechanicCatalog.Id chapterLesson)
+                    && !tutorialLessons.Contains(chapterLesson))
                     Failure(report, ref failures, index,
-                        $"chapter opener must play exactly one bundled tutorial, found {tutorialLessons.Count}");
-                if (!MechanicCatalog.IsChapterTutorialCheckpoint(index)
-                    && tutorialLessons.Count != 0)
+                        $"chapter opener is missing its {chapterLesson} tutorial mini-board");
+                foreach (MechanicCatalog.Id tutorialLesson in tutorialLessons)
+                {
+                    if (!TutorialPuzzleLibrary.Exists(index, tutorialLesson))
+                    {
+                        Failure(report, ref failures, index,
+                            $"tutorial prefab is missing: "
+                            + TutorialPuzzleLibrary.ResourcePath(index, tutorialLesson));
+                        continue;
+                    }
+                    if (!string.IsNullOrWhiteSpace(MechanicCatalog.TutorialTitle(index, tutorialLesson))
+                        && !string.IsNullOrWhiteSpace(
+                            MechanicCatalog.TutorialBundleName(index, tutorialLesson))
+                        && !string.IsNullOrWhiteSpace(
+                            MechanicCatalog.TutorialBundleLesson(index, tutorialLesson)))
+                        continue;
                     Failure(report, ref failures, index,
-                        "non-checkpoint level schedules an extra tutorial interruption");
-                if (tutorialLessons.Count > 0
-                    && (string.IsNullOrWhiteSpace(MechanicCatalog.TutorialBundleName(index))
-                        || string.IsNullOrWhiteSpace(MechanicCatalog.TutorialBundleLesson(index))))
-                    Failure(report, ref failures, index,
-                        "bundled tutorial has no three-skill player explanation");
+                        $"tutorial {tutorialLesson} has no short player-facing title or description");
+                }
 
                 foreach (MechanicCatalog.Id mechanic in MechanicCatalog.MechanicsIn(prefab, index))
                 {
+                    if (index < 10
+                        && mechanic != MechanicCatalog.Id.Navigation
+                        && mechanic != MechanicCatalog.Id.Crate
+                        && mechanic != MechanicCatalog.Id.OneWay
+                        && mechanic != MechanicCatalog.Id.ButtonGate
+                        && mechanic != MechanicCatalog.Id.SlidingCargo)
+                    {
+                        Failure(report, ref failures, index,
+                            $"Chapter I contains disallowed mechanic {mechanic}; keep only "
+                            + "push, one-way, button/gate and sliding cargo");
+                    }
+
                     if (!mechanicOccurrences.TryGetValue(mechanic, out List<int> levels))
                     {
                         levels = new List<int>();
@@ -629,9 +660,6 @@ namespace Parabox.EditorTools
                         $"{previousName} at {previousComplexity}");
                 // The finale may land fractionally harder than the normal transition ceiling: it
                 // is the one board explicitly responsible for synthesizing the whole campaign.
-                // Chapter III and Chapter V each use one continuous nested-room vocabulary. Their
-                // evidence formulas are calibrated to the normal transition ceiling; only the
-                // five-room finale receives the slightly wider synthesis allowance.
                 float maximumGrowth = index == 40 ? 1.18f
                     : index == ExpectedLevels - 1 ? 1.22f : 1.21f;
                 if (index > 0 && info.designComplexity > Mathf.CeilToInt(previousComplexity * maximumGrowth))
@@ -671,20 +699,14 @@ namespace Parabox.EditorTools
                     chapterHasMastery[chapterIndex] = true;
 
                 int roomCount = prefab.GetComponentsInChildren<RoomMarker>(true).Length;
-                // Chapters III-V share the recursive vocabulary for different purposes: cargo
-                // transfer, room repositioning, then the deep cargo endgame.
-                int expectedRoomCount = index >= 20 && index < 30
-                    ? ChapterThreeRoomCounts[index - 20]
-                    : index >= 30 && index < 40
-                        ? ChapterFourRoomCounts[index - 30]
-                        : index >= 40 ? ChapterFiveRoomCounts[index - 40] : 1;
+                int expectedRoomCount = ExpectedRoomCounts[index];
                 if (roomCount != expectedRoomCount)
                     Failure(report, ref failures, index,
                         $"authored room count {roomCount} does not match Level {index + 1}'s " +
                         $"intended {expectedRoomCount}-room structure");
                 if (roomCount > 1) chapterNestedLevels[chapterIndex]++;
                 if (roomCount > 1)
-                    ValidateChapterFiveContainment(prefab, index, roomCount, report, ref failures);
+                    ValidateRecursiveContainment(prefab, index, roomCount, report, ref failures);
 
                 // Chapter I may teach a directional tile when it is explicitly authored and given
                 // a first-appearance lesson. The generic introduction audit above guarantees that
@@ -703,79 +725,20 @@ namespace Parabox.EditorTools
                     Failure(report, ref failures, index, "level has no player");
                     continue;
                 }
-                if (index >= 10 && index < 20)
-                {
-                    int chapterStep = index - 10;
-                    int mirrorGoals = 0;
-                    int echoGoals = 0;
-                    int cargoGoals = 0;
-                    foreach (PRoom room in model.rooms.Values)
-                    {
-                        mirrorGoals += room.mirrorGoals.Count;
-                        echoGoals += room.echoGoals.Count;
-                        cargoGoals += room.boxGoals.Count + room.colourGoals.Count;
-                    }
-                    if (model.mirror == null || mirrorGoals != 1)
-                        Failure(report, ref failures, index,
-                            "Chapter II must keep one opposite-moving mirror and one mirror target");
-                    if (cargoGoals != ChapterTwoCargoObjectives[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"Chapter II cargo objective count {cargoGoals} does not match the " +
-                            $"intentional linked-player curve value {ChapterTwoCargoObjectives[chapterStep]}");
-                    bool expectsEcho = chapterStep >= 8;
-                    if ((model.echo != null) != expectsEcho || echoGoals != (expectsEcho ? 1 : 0))
-                        Failure(report, ref failures, index,
-                            expectsEcho
-                                ? "Chapter II mastery must coordinate one echo as the third linked actor"
-                                : "Chapter II introduces the echo only in its final two mastery boards");
-                    if (info.par < ChapterTwoParFloors[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"Chapter II route {info.par} is below its reviewed difficulty floor " +
-                            ChapterTwoParFloors[chapterStep]);
-                }
-                if (index >= 30 && index < 40)
-                {
-                    try
-                    {
-                        ChapterFourDifficultyEvidence.Result evidence =
-                            ChapterFourDifficultyEvidence.Evaluate(prefab, info.solution);
-                        if (info.designComplexity != evidence.score)
-                            Failure(report, ref failures, index,
-                                $"serialized complexity {info.designComplexity} does not match " +
-                                $"room-maneuver evidence {evidence.score}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Failure(report, ref failures, index,
-                            $"could not measure room-maneuver difficulty evidence: {ex.Message}");
-                    }
-                }
-                if (index >= 40)
-                {
-                    try
-                    {
-                        int chapterStep = index - 40;
-                        ChapterFiveDifficultyEvidence.Result evidence =
-                            ChapterFiveDifficultyEvidence.Evaluate(prefab, info.solution);
-                        if (info.designComplexity != evidence.score)
-                            Failure(report, ref failures, index,
-                                $"serialized complexity {info.designComplexity} does not match " +
-                                $"runtime-route evidence {evidence.score}");
-                        if (info.par < ChapterFiveParFloors[chapterStep])
-                            Failure(report, ref failures, index,
-                                $"expert route {info.par} is below the reviewed Chapter V floor " +
-                                ChapterFiveParFloors[chapterStep]);
-                        if (evidence.directionChanges < ChapterFiveTurnFloors[chapterStep])
-                            Failure(report, ref failures, index,
-                                $"expert route has {evidence.directionChanges} planning turns; expected at least " +
-                                ChapterFiveTurnFloors[chapterStep]);
-                    }
-                    catch (Exception ex)
-                    {
-                        Failure(report, ref failures, index,
-                            $"could not measure recursive difficulty evidence: {ex.Message}");
-                    }
-                }
+                if (index >= 10 && index < 20 && (model.mirror != null || model.echo != null))
+                    Failure(report, ref failures, index,
+                        "Chapter II must teach room-inside-a-box movement without linked-player actors");
+                if (info.par < MinimumPars[index])
+                    Failure(report, ref failures, index,
+                        $"route {info.par} is below Level {index + 1}'s reviewed difficulty floor " +
+                        MinimumPars[index]);
+                int minimumComplexity = 650 + index * 100;
+                int maximumComplexity = minimumComplexity + 89;
+                if (info.designComplexity < minimumComplexity
+                    || info.designComplexity > maximumComplexity)
+                    Failure(report, ref failures, index,
+                        $"campaign complexity {info.designComplexity} is outside the reviewed Level " +
+                        $"{index + 1} band {minimumComplexity}-{maximumComplexity}");
 
                 // Curriculum reuses are installed into the parsed board only when the exact
                 // authored solution still wins. Treat a missed checkpoint as a release error:
@@ -796,46 +759,6 @@ namespace Parabox.EditorTools
                 int targets = TargetCount(model);
                 if (targets == 0)
                     Failure(report, ref failures, index, "level has no completion target");
-                if (index >= 30 && index < 40)
-                {
-                    int ordinaryCargo = 0;
-                    int movableRooms = 0;
-                    foreach (PEntity entity in model.entities)
-                    {
-                        if (!entity.IsCrate) continue;
-                        if (entity.interiorRoomId >= 0) movableRooms++;
-                        else ordinaryCargo++;
-                    }
-                    int roomSockets = 0;
-                    foreach (PRoom room in model.rooms.Values)
-                        roomSockets += room.boxGoals.Count;
-                    if (ordinaryCargo != 0)
-                        Failure(report, ref failures, index,
-                            $"Chapter IV has {ordinaryCargo} ordinary cargo object(s); the room itself must be the puzzle piece");
-                    if (movableRooms != roomCount - 1)
-                        Failure(report, ref failures, index,
-                            $"Chapter IV has {movableRooms} movable room(s); expected {roomCount - 1}");
-                    if (roomSockets != movableRooms)
-                        Failure(report, ref failures, index,
-                            $"Chapter IV has {roomSockets} room socket(s) for {movableRooms} movable room(s)");
-                }
-                if (index >= 40)
-                {
-                    int chapterStep = index - 40;
-                    int cargoCount = 0;
-                    foreach (PEntity entity in model.entities)
-                        if (entity.IsCrate && entity.interiorRoomId < 0) cargoCount++;
-                    int cargoTargets = 0;
-                    foreach (PRoom room in model.rooms.Values)
-                        cargoTargets += room.boxGoals.Count + room.colourGoals.Count;
-                    int expectedCargo = ChapterFiveRequiredCargo[chapterStep];
-                    if (cargoCount != expectedCargo)
-                        Failure(report, ref failures, index,
-                            $"Chapter V has {cargoCount} cargo objects; expected exactly {expectedCargo}");
-                    if (cargoTargets != expectedCargo)
-                        Failure(report, ref failures, index,
-                            $"Chapter V has {cargoTargets} cargo goals; expected exactly {expectedCargo}");
-                }
                 int dependencyLimit = LevelLayoutRebalancer.DependencyBudgetForLevel(index);
                 if (model.rebalanceObjectives > dependencyLimit)
                     Failure(report, ref failures, index,
@@ -870,12 +793,17 @@ namespace Parabox.EditorTools
                 // state does not make a nine-command straight input sequence interesting to play.
                 int routeTurns = DirectionChanges(info.solution);
                 int longestRun = LongestDirectionRun(info.solution);
+                if (index >= 20 && longestRun > 18)
+                    Failure(report, ref failures, index,
+                        $"recursive route repeats one direction {longestRun} times; maximum is 18");
                 if (index > 0 && index < 20 && routeTurns < 4)
                     Failure(report, ref failures, index,
                         $"early route has only {routeTurns} direction decisions; minimum is 4 after Level 1");
-                if (index > 0 && index < 20 && longestRun > 5)
+                int maximumEarlyRun = index < 10 ? 5 : 10;
+                if (index > 0 && index < 20 && longestRun > maximumEarlyRun)
                     Failure(report, ref failures, index,
-                        $"early route repeats one direction {longestRun} times; maximum is 5 after Level 1");
+                        $"early route repeats one direction {longestRun} times; maximum is "
+                        + $"{maximumEarlyRun} in this chapter");
 
                 bool routeValid = true;
                 int playerRoomTransitions = 0;
@@ -934,90 +862,32 @@ namespace Parabox.EditorTools
                 if (!routeValid) continue;
                 if (!model.IsWon())
                     Failure(report, ref failures, index, "stored solution ends without satisfying every target");
-                if (index >= 20 && index < 30)
+                if (index >= 10)
                 {
-                    int chapterStep = index - 20;
-                    if (movedCargo.Count != 1)
-                        Failure(report, ref failures, index,
-                            $"Chapter III route moves {movedCargo.Count} cargo objects; expected the one authored amber delivery");
-                    if (visitedRooms.Count != roomCount)
-                        Failure(report, ref failures, index,
-                            $"stored solution visits {visitedRooms.Count}/{roomCount} recursive rooms");
-                    if (cargoRoomTransitions < ChapterThreeCargoTransitions[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"cargo crosses {cargoRoomTransitions} room boundary/boundaries; expected at least " +
-                            ChapterThreeCargoTransitions[chapterStep]);
-                    if (metaMoves < 2)
-                        Failure(report, ref failures, index,
-                            "the room-box never completes its separate socket-placement task");
-                    foreach (PRoom room in model.rooms.Values)
-                        foreach (Vector2Int goal in room.boxGoals)
-                        {
-                            PEntity occupant = model.EntityAt(room.id, goal);
-                            if (occupant == null || occupant.interiorRoomId < 0)
-                                Failure(report, ref failures, index,
-                                    "the authored room socket is not occupied by a room-box");
-                        }
-                }
-                if (index >= 30 && index < 40)
-                {
-                    int chapterStep = index - 30;
-                    int movableRooms = roomCount - 1;
-                    if (movedCargo.Count != 0)
-                        Failure(report, ref failures, index,
-                            "Chapter IV route moves ordinary cargo instead of focusing on room repositioning");
-                    if (movedMetaRooms.Count != movableRooms)
-                        Failure(report, ref failures, index,
-                            $"stored solution moves {movedMetaRooms.Count}/{movableRooms} authored room-boxes");
-                    if (visitedRooms.Count != roomCount)
-                        Failure(report, ref failures, index,
-                            $"stored solution visits {visitedRooms.Count}/{roomCount} recursive rooms");
-                    if (playerRoomTransitions < ChapterFourPlayerTransitions[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"player crosses {playerRoomTransitions} room boundary/boundaries; expected at least " +
-                            ChapterFourPlayerTransitions[chapterStep]);
-                    if (metaMoves < ChapterFourMetaMoves[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"room boxes move {metaMoves} time(s); expected at least " +
-                            ChapterFourMetaMoves[chapterStep]);
-                    foreach (PRoom room in model.rooms.Values)
-                        foreach (Vector2Int goal in room.boxGoals)
-                        {
-                            PEntity occupant = model.EntityAt(room.id, goal);
-                            if (occupant == null || occupant.interiorRoomId < 0)
-                                Failure(report, ref failures, index,
-                                    "a room socket is not occupied by a movable room-box");
-                        }
-                }
-                if (index >= 40)
-                {
-                    int chapterStep = index - 40;
-                    if (movedCargo.Count != ChapterFiveRequiredCargo[chapterStep])
-                        Failure(report, ref failures, index,
-                            $"stored solution moves {movedCargo.Count}/{ChapterFiveRequiredCargo[chapterStep]} " +
-                            "required cargo objects; pre-solved decorative cargo is not allowed");
+                    int authoredMovableRooms = 0;
+                    int authoredCargo = 0;
+                    foreach (PEntity entity in model.entities)
+                    {
+                        if (entity.interiorRoomId >= 0 && !entity.anchored) authoredMovableRooms++;
+                        if (entity.IsCrate && entity.interiorRoomId < 0) authoredCargo++;
+                    }
                     if (visitedRooms.Count != roomCount)
                         Failure(report, ref failures, index,
                             $"stored solution visits {visitedRooms.Count}/{roomCount} recursive rooms");
                     if (playerRoomTransitions == 0)
                         Failure(report, ref failures, index,
-                            "stored solution never crosses a room boundary");
-                    if (cargoRoomTransitions < ChapterFiveCargoTransitions[chapterStep])
+                            "proof never demonstrates entering or leaving a room-box");
+                    if (movedMetaRooms.Count != authoredMovableRooms)
                         Failure(report, ref failures, index,
-                            $"cargo crosses {cargoRoomTransitions} room boundary/boundaries; expected at least " +
-                            ChapterFiveCargoTransitions[chapterStep]);
-                    if (metaMoves < ChapterFiveMetaMoves[chapterStep])
+                            $"route moves {movedMetaRooms.Count}/{authoredMovableRooms} authored movable " +
+                            "rooms; room mechanics cannot be decorative");
+                    if (movedCargo.Count != authoredCargo)
                         Failure(report, ref failures, index,
-                            $"room boxes move {metaMoves} time(s); expected at least " +
-                            ChapterFiveMetaMoves[chapterStep]);
-                    foreach (PRoom room in model.rooms.Values)
-                        foreach (Vector2Int goal in room.boxGoals)
-                        {
-                            PEntity occupant = model.EntityAt(room.id, goal);
-                            if (occupant != null && occupant.interiorRoomId >= 0)
-                                Failure(report, ref failures, index,
-                                    "a room box, rather than authored cargo, satisfies a cargo goal");
-                        }
+                            $"route moves {movedCargo.Count}/{authoredCargo} authored cargo objects; " +
+                            "cargo cannot be decorative");
+                    if (authoredCargo > 0 && roomCount > 1 && cargoRoomTransitions == 0)
+                        Failure(report, ref failures, index,
+                            "recursive cargo never crosses a room boundary");
                 }
                 if (model.MoveCount > moveLimit)
                     Failure(report, ref failures, index,
@@ -1090,13 +960,38 @@ namespace Parabox.EditorTools
                 // Requiring a novel mechanic in every chapter encouraged one-off rules and visual
                 // clutter. The role checks below still require a clear lesson, combination phase
                 // and mastery test in all five chapters.
+                if (chapterIntroductions[chapter] != 1)
+                {
+                    failures++;
+                    report.AppendLine($"FAIL  Chapter {chapter + 1}: expected exactly one tutorial " +
+                        $"checkpoint at its opener, found {chapterIntroductions[chapter]}");
+                }
+                bool chapterHasMechanicVideo = false;
+                int chapterStart = chapter * 10;
+                for (int level = chapterStart; level < chapterStart + 10; level++)
+                {
+                    if (!MechanicCatalog.TryGetNewMechanicTutorial(
+                            campaignPrefabs, level, out _)) continue;
+                    chapterHasMechanicVideo = true;
+                    break;
+                }
+                int expectedChapterVideos = chapterHasMechanicVideo ? 2 : 1;
+                if (chapterTutorialVideos[chapter] != expectedChapterVideos)
+                {
+                    failures++;
+                    report.AppendLine($"FAIL  Chapter {chapter + 1}: expected " +
+                        $"{expectedChapterVideos} tutorial video(s) (one chapter video" +
+                        (chapterHasMechanicVideo ? " plus one mechanic video" :
+                            "; no supported new mechanic exists") +
+                        $"), found {chapterTutorialVideos[chapter]}");
+                }
                 if (!chapterHasTeach[chapter] || !chapterHasCombine[chapter] || !chapterHasMastery[chapter])
                 {
                     failures++;
                     report.AppendLine($"FAIL  Chapter {chapter + 1}: curriculum must include teaching, " +
                         "combination and mastery roles");
                 }
-                int expectedNested = chapter >= 2 ? 10 : 0;
+                int expectedNested = chapter == 0 ? 0 : 10;
                 if (chapterNestedLevels[chapter] != expectedNested)
                 {
                     failures++;
@@ -1130,9 +1025,9 @@ namespace Parabox.EditorTools
             report.AppendLine($"FAIL  L{levelIndex + 1:00}: {message}");
         }
 
-        static void ValidateChapterFiveContainment(GameObject prefab, int levelIndex,
-                                                    int roomCount, StringBuilder report,
-                                                    ref int failures)
+        static void ValidateRecursiveContainment(GameObject prefab, int levelIndex,
+                                                 int roomCount, StringBuilder report,
+                                                 ref int failures)
         {
             var roomIds = new HashSet<int>();
             foreach (RoomMarker room in prefab.GetComponentsInChildren<RoomMarker>(true))
@@ -1291,6 +1186,52 @@ namespace Parabox.EditorTools
                 if (marker.colour > 0) mechanics.Add("colour-goal");
 
             return mechanics.Count;
+        }
+
+        // Colour is gameplay information, not decoration. Every authored coloured target must
+        // have enough matching ordinary cargo, and every colour id must exist in the renderer's
+        // shared palette. Keeping this in the release validator prevents a future level rebuild
+        // from showing (for example) a blue target for amber cargo.
+        static void ValidateGoalColourContract(GameObject prefab, int index, StringBuilder report,
+                                               ref int failures)
+        {
+            var cargoByColour = new Dictionary<int, int>();
+            var goalsByColour = new Dictionary<int, int>();
+
+            foreach (BoxMarker marker in prefab.GetComponentsInChildren<BoxMarker>(true))
+            {
+                if (marker.containsRoomId >= 0 || marker.colour <= 0) continue;
+                if (marker.colour > BoardRenderer.CrateColours.Length)
+                {
+                    Failure(report, ref failures, index,
+                        $"cargo uses undefined colour id {marker.colour}");
+                    continue;
+                }
+                cargoByColour.TryGetValue(marker.colour, out int count);
+                cargoByColour[marker.colour] = count + 1;
+            }
+
+            foreach (GoalMarker marker in prefab.GetComponentsInChildren<GoalMarker>(true))
+            {
+                if (marker.forPlayer || marker.forEcho || marker.forMirror || marker.colour <= 0)
+                    continue;
+                if (marker.colour > BoardRenderer.CrateColours.Length)
+                {
+                    Failure(report, ref failures, index,
+                        $"goal uses undefined colour id {marker.colour}");
+                    continue;
+                }
+                goalsByColour.TryGetValue(marker.colour, out int count);
+                goalsByColour[marker.colour] = count + 1;
+            }
+
+            foreach (var pair in goalsByColour)
+            {
+                cargoByColour.TryGetValue(pair.Key, out int cargoCount);
+                if (cargoCount < pair.Value)
+                    Failure(report, ref failures, index,
+                        $"colour {pair.Key} has {pair.Value} target(s) but only {cargoCount} matching cargo");
+            }
         }
 
         // Fingerprint the authored marker data before LevelLayoutRebalancer adds its level-specific

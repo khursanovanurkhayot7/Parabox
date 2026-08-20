@@ -61,6 +61,12 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
         {
             base.OnCommandResponseSuccessHandler(responseHandler);
 
+#if NEWTONSOFT_JSON
+            var payloadJson = JsonConvert.SerializeObject(ResponseHandler.Payload);
+            var payloadObject = JsonConvert.DeserializeObject<LevelEndResponsePayload>(payloadJson);
+            ResponseHandler.Payload = payloadObject;
+#endif
+
             _onCommandCompletedCallback?.Invoke();
         }
     }

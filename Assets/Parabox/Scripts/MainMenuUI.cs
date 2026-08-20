@@ -272,8 +272,17 @@ namespace Parabox
             BuildApprovedMapProgressLights();
             RefreshStates();
             RefreshGates();
-            BuildLiveBoard();   // render the real next level in world space (the O) + set the backdrop tier
-            ShowWorldBoard(true);
+            // The approved title artwork already contains the finished menu composition.  Do not
+            // create a second puzzle board behind it: on a resized Game view that world-space board
+            // can escape the old O slot and cover the whole menu.  The legacy animated preview is
+            // still available only when the opt-in flag is deliberately disabled in the Inspector.
+            if (useStaticHomeArtwork)
+                RemoveLiveBoardPreview();
+            else
+            {
+                BuildLiveBoard();
+                ShowWorldBoard(true);
+            }
             if (_autoStartRoot == null || _autoStartLabel == null || _autoStartOutline == null)
                 Debug.LogError("[Parabox] Menu timer UI is not prebuilt. Run Tools/Parabox/Generate Prebuilt UI (Run This) before Play or Build.");
             // Arm the clock only after the expensive first-frame board/menu setup. Otherwise that
@@ -282,7 +291,7 @@ namespace Parabox
             BeginMenuTimeoutSession();
 
             // arriving out of the finale: catch the board mid-move and carry it out to the logo
-            if (PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1)
+            if (!useStaticHomeArtwork && PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1)
             {
                 PlayerPrefs.DeleteKey("Parabox.SeamlessOut");
                 PlayerPrefs.Save();
@@ -292,6 +301,15 @@ namespace Parabox
                 // the flash this whole ending exists to avoid. The coroutine clears it a frame later.
                 StartCoroutine(RiseOutOfBoard());
                 return;                                      // the outro owns the screen from here
+            }
+
+            // Static artwork has no world board to receive the old finale hand-off.  Clear stale
+            // hand-off state so an earlier build cannot resurrect the removed preview.
+            if (useStaticHomeArtwork && PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1)
+            {
+                PlayerPrefs.DeleteKey("Parabox.SeamlessOut");
+                PlayerPrefs.DeleteKey("Parabox.Seamless");
+                PlayerPrefs.Save();
             }
 
             StartCoroutine(OEntrance());   // the O spins into the logo on a normal open
@@ -340,8 +358,8 @@ namespace Parabox
 
             // Older scenes use a small child named Face as Button.targetGraphic. The approved
             // artwork buttons are considerably larger, so clicking their outer area never reached
-            // the Button. A root Image exactly follows the Button RectTransform and makes the
-            // complete visible artwork area clickable without adding any visible runtime UI.
+            // the Button. A nearly transparent root Image follows the complete Button rectangle:
+            // it remains a reliable pointer target without drawing a white backing behind BACK.
             Image hitTarget = button.GetComponent<Image>();
             if (hitTarget == null)
             {
@@ -349,7 +367,7 @@ namespace Parabox
                 return;
             }
             hitTarget.sprite = null;
-            hitTarget.color = Color.white;
+            hitTarget.color = new Color(1f, 1f, 1f, 0.001f);
             hitTarget.raycastTarget = true;
             button.targetGraphic = hitTarget;
 
@@ -414,7 +432,10 @@ namespace Parabox
             TickAutoStartTimer();
             if (kb == null || transitioning) return;
             if (kb.mKey.wasPressedThisFrame) Sfx.ToggleMute();
-            if (kb.deleteKey.wasPressedThisFrame) ResetProgress();
+            // macOS labels Backspace as "Delete"; support both physical keys so the editor/test
+            // reset shortcut works on a MacBook as well as a full keyboard.
+            if (kb.deleteKey.wasPressedThisFrame || kb.backspaceKey.wasPressedThisFrame)
+                ResetProgress();
             if (kb.escapeKey.wasPressedThisFrame)
             {
                 if (screen == 1) CloseLevelBoard();
@@ -461,6 +482,13 @@ namespace Parabox
             // new run from Level 1. Explicit level-map selections are handled separately.
             int desiredLevel = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel),
                 0, levelButtons.Length - 1);
+            if (useStaticHomeArtwork)
+            {
+                _startLevel = desiredLevel;
+                RemoveLiveBoardPreview();
+                if (!transitioning) ReselectCurrentScreen();
+                return;
+            }
             // Keep the title's live-board preview aligned with the Level-1 start destination.
             if (!transitioning && _boardRoot != null && desiredLevel != _startLevel)
             {
@@ -482,9 +510,9 @@ namespace Parabox
         }
 
         // Luxodd does not inject cabinet controls into Unity's EventSystem, so menu navigation is
-        // explicit: stick changes focus, Black activates it, Yellow opens the map and White goes
-        // back. This keeps the same UI usable with mouse/keyboard while making the arcade build
-        // fully operable without either one.
+        // explicit: stick/D-pad changes focus, Black activates it, Yellow opens the map and
+        // White goes back. On a standard gamepad Luxodd maps Black=A and Red=B, so B is also a
+        // contextual Back button outside gameplay. This keeps both primary gamepad buttons useful.
         bool HandleArcadeMenuInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
@@ -498,7 +526,7 @@ namespace Parabox
                 Sfx.ToggleMute();
                 return true;
             }
-            if (arcade.BackDown)
+            if (arcade.BackDown || arcade.UndoDown)
             {
                 Sfx.Click();
                 if (screen == 1) CloseLevelBoard();
@@ -2002,6 +2030,7 @@ namespace Parabox
             // A fresh start has to include the first-run demonstration, or "reset" quietly means
             // "reset everything except the one thing only a new player sees".
             PlayerPrefs.DeleteKey(GameManager.TutorialKey);
+            PlayerPrefs.DeleteKey(GameManager.OriginFilmKey);
             PlayerPrefs.Save();
             RefreshStates();
             RefreshGates();
@@ -2013,6 +2042,10 @@ namespace Parabox
 
         void BuildLiveBoard()
         {
+            // Static artwork is the shipping presentation.  This guard is intentionally inside
+            // the builder as well as at its call sites so no cloud-progress callback or future
+            // menu refresh can accidentally recreate the oversized board.
+            if (useStaticHomeArtwork) return;
             if (levelPrefabs == null || levelPrefabs.Length == 0 || floorPrefab == null || boardThemes == null || boardThemes.Length == 0) return;
             // Arriving out of the finale, the board MUST be the one the game just pulled away from —
             // same level, same geometry, same world position — or the hand-off is a cut instead of
@@ -2042,6 +2075,21 @@ namespace Parabox
                 _glowBaseScale = span * 1.7f;
                 g.transform.localScale = Vector3.one * _glowBaseScale;
             }
+        }
+
+        void RemoveLiveBoardPreview()
+        {
+            if (_boardRoot != null)
+            {
+                _boardRoot.gameObject.SetActive(false);
+                Destroy(_boardRoot.gameObject);
+            }
+            _boardRoot = null;
+            _boardGlow = null;
+            _ambience = null;
+            _model = null;
+            _roomRoots.Clear();
+            _views.Clear();
         }
 
         MenuAmbience _ambience;
@@ -2217,7 +2265,13 @@ namespace Parabox
         {
             Sfx.Ding();
             if (homeGroup != null) { homeGroup.interactable = false; homeGroup.blocksRaycasts = false; }
-            if (menuCam == null || _model == null) { LoadGame(level, true); yield break; }
+            if (useStaticHomeArtwork || menuCam == null || _model == null)
+            {
+                // No board was shown on the static menu, so this is a normal game entrance rather
+                // than a seamless camera hand-off.
+                LoadGame(level, false);
+                yield break;
+            }
 
             // Level 1 opens with the tutorial cinematic, which covers the screen the INSTANT the game
             // loads. Flying the board in first would just show a board that's about to be hidden — so

@@ -20,7 +20,8 @@ namespace Luxodd.Game.Scripts.Network
         SetUserDataRequest,
         GetGameSessionInfoRequest,
         SendStrategicBettingResultRequest,
-        GetBettingSessionMissionsRequest
+        GetBettingSessionMissionsRequest,
+        GetMerchantPrizeInfoRequest
     }
 
     public enum CommandResponseType
@@ -41,7 +42,8 @@ namespace Luxodd.Game.Scripts.Network
         SetUserDataResponse,
         GetGameSessionInfoResponse,
         SendStrategicBettingResultResponse,
-        GetBettingSessionMissionsResponse
+        GetBettingSessionMissionsResponse,
+        GetMerchantPrizeInfoResponse
     }
 
     public enum PayloadParameterTypes
@@ -73,6 +75,7 @@ namespace Luxodd.Game.Scripts.Network
                 CommandResponseType.GetGameSessionInfoResponse => CommandRequestType.GetGameSessionInfoRequest,
                 CommandResponseType.SendStrategicBettingResultResponse => CommandRequestType.SendStrategicBettingResultRequest,
                 CommandResponseType.GetBettingSessionMissionsResponse  => CommandRequestType.GetBettingSessionMissionsRequest,
+                CommandResponseType.GetMerchantPrizeInfoResponse => CommandRequestType.GetMerchantPrizeInfoRequest,
                 _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
             };
         }
@@ -97,6 +100,7 @@ namespace Luxodd.Game.Scripts.Network
                 CommandRequestType.GetGameSessionInfoRequest => CommandResponseType.GetGameSessionInfoResponse,
                 CommandRequestType.SendStrategicBettingResultRequest =>  CommandResponseType.SendStrategicBettingResultResponse,
                 CommandRequestType.GetBettingSessionMissionsRequest => CommandResponseType.GetBettingSessionMissionsResponse,
+                CommandRequestType.GetMerchantPrizeInfoRequest => CommandResponseType.GetMerchantPrizeInfoResponse,
                 _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
             };
         }

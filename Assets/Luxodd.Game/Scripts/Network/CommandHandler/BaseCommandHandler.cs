@@ -116,6 +116,9 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
                 
                 case CommandRequestType.GetBettingSessionMissionsRequest:
                     return new GetBettingSessionMissionsRequestCommandHandler(webSocketService);
+
+                case CommandRequestType.GetMerchantPrizeInfoRequest:
+                    return new GetMerchantPrizeInfoRequestCommandHandler(webSocketService);
                 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(commandRequestType), commandRequestType, null);

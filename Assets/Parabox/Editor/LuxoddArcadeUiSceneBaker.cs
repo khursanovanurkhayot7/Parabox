@@ -868,12 +868,13 @@ namespace Parabox.EditorTools
             group.interactable = true;
             group.blocksRaycasts = true;
 
-            // Put the hit graphic on the Button root, not on the smaller legacy Face child. This
-            // makes the entire approved-artwork rectangle clickable and survives future rebakes.
+            // Put the hit graphic on the Button root, not on the smaller legacy Face child. Keep
+            // it barely above zero alpha so the complete rectangle remains clickable without
+            // baking a white backing behind visible controls such as the level-map BACK button.
             Image hitTarget = button.GetComponent<Image>();
             if (hitTarget == null) hitTarget = button.gameObject.AddComponent<Image>();
             hitTarget.sprite = null;
-            hitTarget.color = Color.white;
+            hitTarget.color = new Color(1f, 1f, 1f, 0.001f);
             hitTarget.raycastTarget = true;
             button.targetGraphic = hitTarget;
 

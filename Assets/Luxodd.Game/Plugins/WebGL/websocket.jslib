@@ -1,23 +1,10 @@
 mergeInto(LibraryManager.library, {
     ConnectWebSocket: function (urlPtr) {
         var url = UTF8ToString(urlPtr);
-
-        // SessionFlowController can receive the host session event at the same time as its
-        // legacy timeout completes. Do not replace a live socket with a new CONNECTING socket:
-        // commands sent during that small window used to throw InvalidStateError and abort the
-        // entire Unity WebGL player.
-        var currentSocket = window.UnityWebSocket;
-        if (currentSocket &&
-            (currentSocket.readyState === WebSocket.CONNECTING ||
-             currentSocket.readyState === WebSocket.OPEN)) {
-            console.warn("WebSocket connection request ignored because a socket is already active");
-            return;
-        }
-
         var socket = new WebSocket(url);
 
         window.UnityWebSocket = socket;
-        window.UnityWebSocketPendingMessages = window.UnityWebSocketPendingMessages || [];
+        window.UnityWebSocketPendingMessages = [];
 
         socket.onopen = function () {
             if (window.UnityWebSocket !== socket) {
@@ -25,15 +12,21 @@ mergeInto(LibraryManager.library, {
             }
 
             console.log("WebSocket connected to " + url);
+            if (!window.UnityWebSocketPendingMessages) {
+                window.UnityWebSocketPendingMessages = [];
+            }
 
-            var pendingMessages = window.UnityWebSocketPendingMessages || [];
-            window.UnityWebSocketPendingMessages = [];
-            for (var i = 0; i < pendingMessages.length; i++) {
+            var pendingMessages = window.UnityWebSocketPendingMessages;
+            while (pendingMessages.length > 0) {
+                if (window.UnityWebSocket !== socket || socket.readyState !== WebSocket.OPEN) {
+                    break;
+                }
+
                 try {
-                    socket.send(pendingMessages[i]);
+                    socket.send(pendingMessages[0]);
+                    pendingMessages.shift();
                 } catch (error) {
-                    console.error("Failed to flush queued WebSocket message: ", error);
-                    window.UnityWebSocketPendingMessages = pendingMessages.slice(i);
+                    console.warn("WebSocket message send failed.");
                     break;
                 }
             }
@@ -46,10 +39,6 @@ mergeInto(LibraryManager.library, {
         };
 
         socket.onmessage = function (event) {
-            if (window.UnityWebSocket !== socket) {
-                return;
-            }
-
             console.log("Message received: " + event.data);
             if (typeof unityInstance !== "undefined") {
                 unityInstance.SendMessage('WebSocketLibraryWrapper', 'OnWebSocketMessage', event.data);
@@ -64,19 +53,16 @@ mergeInto(LibraryManager.library, {
             }
 
             console.log("WebSocket connection closed, code and reason:", event.code, event.reason);
+            window.UnityWebSocketPendingMessages = [];
+            window.UnityWebSocket = null;
             if (typeof unityInstance !== "undefined") {
                 unityInstance.SendMessage('WebSocketLibraryWrapper', 'OnWebSocketClose', event.code);
             } else {
                 console.error("unityInstance is not defined");
             }
-            window.UnityWebSocket = null;
         };
 
         socket.onerror = function (error) {
-            if (window.UnityWebSocket !== socket) {
-                return;
-            }
-
             console.error("WebSocket connection error: ", error);
             if (typeof unityInstance !== "undefined") {
                 unityInstance.SendMessage('WebSocketLibraryWrapper', 'OnWebSocketError', error.type);
@@ -89,38 +75,43 @@ mergeInto(LibraryManager.library, {
     SendWebSocketMessage: function (messagePtr) {
         var message = UTF8ToString(messagePtr);
         var socket = window.UnityWebSocket;
+        if (!socket) {
+            console.warn("No active WebSocket connection.");
+            return;
+        }
 
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            console.log("Sending message: " + message);
+        if (socket.readyState === WebSocket.OPEN) {
             try {
                 socket.send(message);
             } catch (error) {
-                // Never allow a browser networking race to escape into Unity's main loop.
-                console.error("Failed to send WebSocket message: ", error);
+                console.warn("WebSocket message send failed.");
             }
-        } else if (socket && socket.readyState === WebSocket.CONNECTING) {
-            var pendingMessages = window.UnityWebSocketPendingMessages || [];
-            // Bound the queue so a broken host cannot grow memory forever.
-            if (pendingMessages.length < 100) {
-                pendingMessages.push(message);
-                window.UnityWebSocketPendingMessages = pendingMessages;
-                console.log("WebSocket is connecting; message queued");
-            } else {
-                console.error("WebSocket pending-message queue is full");
-            }
-        } else {
-            console.warn("WebSocket is not open; message was not sent");
+            return;
         }
+
+        if (socket.readyState === WebSocket.CONNECTING) {
+            if (!window.UnityWebSocketPendingMessages) {
+                window.UnityWebSocketPendingMessages = [];
+            }
+
+            var pendingMessages = window.UnityWebSocketPendingMessages;
+            if (pendingMessages.length >= 100) {
+                console.warn("WebSocket pending message queue is full.");
+                return;
+            }
+
+            pendingMessages.push(message);
+            return;
+        }
+
+        console.warn("WebSocket connection is not open.");
     },
 
     CloseWebSocket: function () {
-        var socket = window.UnityWebSocket;
-        window.UnityWebSocketPendingMessages = [];
-
-        if (socket &&
-            (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
+        if (window.UnityWebSocket) {
             console.log("Closing WebSocket connection...");
-            socket.close();
+            window.UnityWebSocketPendingMessages = [];
+            window.UnityWebSocket.close();
         } else {
             console.error("No active WebSocket connection to close");
         }
@@ -148,5 +139,29 @@ mergeInto(LibraryManager.library, {
         }
         console.log("Sending session_options with action:", action);
         window.parent.postMessage({ type: "session_options", action: action }, "*");
+    },
+
+    SendPrizeWonMessage: function (ticketsJsonPtr) {
+        var ticketsJson = UTF8ToString(ticketsJsonPtr);
+        if (!ticketsJson) {
+            return;
+        }
+
+        var tickets;
+        try {
+            tickets = JSON.parse(ticketsJson);
+        } catch (e) {
+            console.warn("SendPrizeWonMessage: invalid tickets json", e);
+            return;
+        }
+
+        if (!Array.isArray(tickets) || tickets.length === 0) {
+            return;
+        }
+
+        window.parent.postMessage({
+            type: "prize_won",
+            tickets: tickets
+        }, "*");
     }
 });

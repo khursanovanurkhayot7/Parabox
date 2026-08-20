@@ -107,8 +107,13 @@ namespace Parabox.EditorTools
 
         static void ValidateStandardGamepadContract(List<string> problems)
         {
-            MethodInfo mapper = typeof(ArcadeControls).GetMethod("ColorToGamepadButton",
-                BindingFlags.NonPublic | BindingFlags.Static);
+            // Luxodd 2.x moved the controller mapping out of ArcadeControls and into its optional
+            // Input System assembly. Resolve it by assembly-qualified name so this validator stays
+            // compatible when that optional backend is disabled.
+            System.Type mapperType = System.Type.GetType(
+                "Luxodd.Game.Scripts.Input.StandardGamepadMapping, Luxodd.Game.InputSystem");
+            MethodInfo mapper = mapperType?.GetMethod("GetButtonControl",
+                BindingFlags.Public | BindingFlags.Static);
             if (mapper == null)
             {
                 problems.Add("ArcadeControls standard-gamepad mapper is missing.");
@@ -120,13 +125,13 @@ namespace Parabox.EditorTools
             {
                 ButtonControl[] expected =
                 {
-                    gamepad.buttonSouth, gamepad.buttonWest, gamepad.buttonNorth,
-                    gamepad.startButton, gamepad.leftShoulder, gamepad.rightShoulder,
-                    gamepad.selectButton, gamepad.buttonEast
+                    gamepad.buttonSouth, gamepad.buttonEast, gamepad.buttonWest,
+                    gamepad.buttonNorth, gamepad.leftShoulder, gamepad.rightShoulder,
+                    gamepad.selectButton, gamepad.startButton
                 };
                 for (int i = 0; i < Colors.Length; i++)
                 {
-                    var actual = mapper.Invoke(null, new object[] { Colors[i], gamepad }) as ButtonControl;
+                    var actual = mapper.Invoke(null, new object[] { gamepad, Colors[i] }) as ButtonControl;
                     if (actual != expected[i])
                         problems.Add(Colors[i] + " standard-gamepad mapping is incorrect.");
                 }
@@ -148,27 +153,35 @@ namespace Parabox.EditorTools
             }
 
             bool latched = false;
-            bool Pulse(Vector2Int direction)
+            bool Pulse(Vector2Int direction, Vector2 rawStick)
             {
-                object[] values = { direction, latched };
+                object[] values = { direction, rawStick, latched };
                 bool fired = (bool)consume.Invoke(null, values);
-                latched = (bool)values[1];
+                latched = (bool)values[2];
                 return fired;
             }
 
-            if (!Pulse(Vector2Int.down))
+            if (!Pulse(Vector2Int.down, Vector2.down))
                 problems.Add("The first joystick tilt must emit one puzzle move.");
             for (int frame = 0; frame < 120; frame++)
-                if (Pulse(Vector2Int.down))
+                if (Pulse(Vector2Int.down, Vector2.down))
                 {
                     problems.Add("Holding the joystick emits extra puzzle moves.");
                     break;
                 }
-            if (Pulse(Vector2Int.right))
+            if (Pulse(Vector2Int.right, Vector2.right))
                 problems.Add("Rotating a held joystick emits an extra puzzle move before neutral.");
-            if (Pulse(Vector2Int.zero))
+
+            // Cabinet axes can briefly dip below the engage threshold without the player actually
+            // releasing the stick. That noise must not re-arm movement.
+            if (Pulse(Vector2Int.zero, new Vector2(0f, -0.45f)))
+                problems.Add("Joystick threshold noise emits an extra puzzle move.");
+            if (Pulse(Vector2Int.down, Vector2.down))
+                problems.Add("Joystick threshold noise re-arms movement before true neutral.");
+
+            if (Pulse(Vector2Int.zero, Vector2.zero))
                 problems.Add("Returning the joystick to neutral must not emit a move.");
-            if (!Pulse(Vector2Int.down))
+            if (!Pulse(Vector2Int.down, Vector2.down))
                 problems.Add("A new tilt after neutral must emit the next puzzle move.");
         }
 
@@ -181,6 +194,7 @@ namespace Parabox.EditorTools
             {
                 int systems = 0;
                 foreach (GameObject root in scene.GetRootGameObjects())
+                {
                     foreach (EventSystem eventSystem in root.GetComponentsInChildren<EventSystem>(true))
                     {
                         systems++;
@@ -188,6 +202,12 @@ namespace Parabox.EditorTools
                             problems.Add(Path.GetFileName(path)
                                 + " allows duplicate Unity/Luxodd controller navigation.");
                     }
+                    foreach (HoldRepeatButton directionButton in
+                             root.GetComponentsInChildren<HoldRepeatButton>(true))
+                        if (directionButton.repeatWhileHeld)
+                            problems.Add(Path.GetFileName(path) + "/" + directionButton.name
+                                + " repeats puzzle movement while one pointer is held.");
+                }
                 if (systems != 1)
                     problems.Add(Path.GetFileName(path) + " must contain exactly one EventSystem.");
             }

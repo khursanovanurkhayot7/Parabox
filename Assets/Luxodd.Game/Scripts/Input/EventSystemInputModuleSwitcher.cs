@@ -1,9 +1,7 @@
+using System;
+using Object = UnityEngine.Object;
 using UnityEngine;
 using UnityEngine.EventSystems;
-
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem.UI;
-#endif
 
 namespace Luxodd.Game
 {
@@ -11,8 +9,14 @@ namespace Luxodd.Game
     [RequireComponent(typeof(EventSystem))]
     public class EventSystemInputModuleSwitcher : MonoBehaviour
     {
+        private const string InputSystemUiInputModuleTypeFullName = "UnityEngine.InputSystem.UI.InputSystemUIInputModule";
+
         [Tooltip("If true, will auto-fix the input module in Editor via OnValidate.")]
         public bool autoFixInEditor = true;
+
+#if UNITY_EDITOR
+        private bool _isValidationScheduled;
+#endif
 
         private void Awake()
         {
@@ -22,36 +26,95 @@ namespace Luxodd.Game
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            if (!autoFixInEditor) return;
-            
+            if (!autoFixInEditor || _isValidationScheduled)
+            {
+                return;
+            }
+
+            _isValidationScheduled = true;
+            UnityEditor.EditorApplication.delayCall += RunScheduledValidation;
+        }
+
+        private void RunScheduledValidation()
+        {
+            _isValidationScheduled = false;
+
+            if (this == null || gameObject == null || !autoFixInEditor)
+            {
+                return;
+            }
+
             EnsureCorrectModule();
         }
 #endif
 
         private void EnsureCorrectModule()
         {
-#if ENABLE_INPUT_SYSTEM
-            
-            var newModule = GetComponent<InputSystemUIInputModule>();
-            if (newModule == null)
-                newModule = gameObject.AddComponent<InputSystemUIInputModule>();
+            Type inputSystemModuleType = GetInputSystemUiModuleType();
+            if (inputSystemModuleType != null)
+            {
+                EnsureInputSystemModule(inputSystemModuleType);
+                return;
+            }
 
-           
-            var oldModule = GetComponent<StandaloneInputModule>();
-            if (oldModule != null)
-                DestroyImmediateSafe(oldModule);
+            EnsureStandaloneModule();
+        }
 
-#else
-          
-            var oldModule = GetComponent<StandaloneInputModule>();
-            if (oldModule == null)
-                oldModule = gameObject.AddComponent<StandaloneInputModule>();
+        private void EnsureInputSystemModule(Type inputSystemModuleType)
+        {
+            Component inputSystemModule = GetComponent(inputSystemModuleType);
+            if (inputSystemModule == null)
+            {
+                inputSystemModule = gameObject.AddComponent(inputSystemModuleType);
+            }
 
-            
-            var newModule = GetComponent("InputSystemUIInputModule");
-            if (newModule != null)
-                DestroyImmediateSafe((Component)newModule);
-#endif
+            var standaloneInputModule = GetComponent<StandaloneInputModule>();
+            if (standaloneInputModule != null)
+            {
+                DestroyImmediateSafe(standaloneInputModule);
+            }
+        }
+
+        private void EnsureStandaloneModule()
+        {
+            var standaloneInputModule = GetComponent<StandaloneInputModule>();
+            if (standaloneInputModule == null)
+            {
+                standaloneInputModule = gameObject.AddComponent<StandaloneInputModule>();
+            }
+
+            Component[] allModules = GetComponents<BaseInputModule>();
+            for (int i = 0; i < allModules.Length; i++)
+            {
+                Component module = allModules[i];
+                if (module == null || module == standaloneInputModule)
+                {
+                    continue;
+                }
+
+                DestroyImmediateSafe(module);
+            }
+        }
+
+        private Type GetInputSystemUiModuleType()
+        {
+            Component[] allModules = GetComponents<BaseInputModule>();
+            for (int i = 0; i < allModules.Length; i++)
+            {
+                Component module = allModules[i];
+                if (module == null)
+                {
+                    continue;
+                }
+
+                Type moduleType = module.GetType();
+                if (moduleType.FullName == InputSystemUiInputModuleTypeFullName)
+                {
+                    return moduleType;
+                }
+            }
+
+            return Type.GetType($"{InputSystemUiInputModuleTypeFullName}, Unity.InputSystem");
         }
 
         private static void DestroyImmediateSafe(Component c)

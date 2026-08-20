@@ -17,6 +17,7 @@ namespace Luxodd.Game.Scripts.Missions
         [JsonProperty("ratio")] public float Ratio { get; set; }
         [JsonProperty("value")] public int Value { get; set; }
         [JsonProperty("level")] public int Level { get; set; }
+        [JsonProperty("calculated_hardness")] public float CalculatedHardness { get; set; }
 #else
         
         public string Id { get; set; }
@@ -29,7 +30,7 @@ namespace Luxodd.Game.Scripts.Missions
         public float Ratio { get; set; }
         public int Value { get; set; }
         public int Level { get; set; }
-        
+        public float CalculatedHardness { get; set; }
 #endif
     }
 }

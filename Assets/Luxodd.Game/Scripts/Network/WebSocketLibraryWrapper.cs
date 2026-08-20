@@ -37,6 +37,9 @@ namespace Luxodd.Game.Scripts.Network
         public static extern void SendSessionOptionsMessageWithAction(string action);
         
         [DllImport("__Internal")]
+        public static extern void SendPrizeWonMessage(string ticketsJson);
+        
+        [DllImport("__Internal")]
         private static extern string GetParentHost();
         
         [DllImport("__Internal")]
@@ -137,6 +140,28 @@ namespace Luxodd.Game.Scripts.Network
         public void SendSessionOptionsEnd()
         {
             PostSessionOptionCommand(SessionOptionAction.End);
+        }
+
+        public void NotifyPrizeWon(string ticketsJson)
+        {
+            if (string.IsNullOrEmpty(ticketsJson))
+            {
+                return;
+            }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            SendPrizeWonMessage(ticketsJson);
+#endif
+        }
+
+        [ContextMenu("Test Prize Won Message")]
+        public void TestPrizeWonMessage()
+        {
+            const string testTicketsJson =
+                "[{\"prize_name\":\"$5 Demo Cash\",\"prize_text\":\"Win $5!\",\"qr_data\":\"https://staging-app.luxodd.com/redeem/84SPQJMG\",\"ticket_code\":\"84SPQJMG\",\"ticket_id\":\"26f912aa-5b2f-47b1-929e-a3c48cbea024\"}]";
+
+            LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(TestPrizeWonMessage)}] Sending test prize_tickets payload");
+            NotifyPrizeWon(testTicketsJson);
         }
 
         public void OnHostSessionAction(string action)

@@ -23,6 +23,7 @@ namespace Parabox
         const string ProfileKey = "Parabox.Luxodd.Profile";
         const string LevelKey = "Parabox.Level";
         const string TutorialKey = "Parabox.Tutorial.Seen";
+        const string OriginFilmKey = "Parabox.OriginFilm.Seen";
         const string BestPrefix = "Parabox.Best.";
         const string SessionFingerprintKey = "Parabox.Luxodd.SessionFingerprint";
         const string SessionUpdatedKey = "Parabox.Luxodd.SessionUpdatedAt";
@@ -366,10 +367,11 @@ namespace Parabox
             }
             var state = new ParaboxCloudState
             {
-                formatVersion = 2,
+                formatVersion = 3,
                 scoreVersion = ScoreSystem.CurrentVersion,
                 currentLevel = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, 0), 0, LevelCount - 1),
                 tutorialSeen = PlayerPrefs.GetInt(TutorialKey, 0) == 1,
+                originFilmSeen = PlayerPrefs.GetInt(OriginFilmKey, 0) == 1,
                 sessionFingerprint = PlayerPrefs.GetString(SessionFingerprintKey, string.Empty),
                 updatedAtUnix = updatedAt,
                 bestMoves = new int[LevelCount],
@@ -392,6 +394,7 @@ namespace Parabox
         {
             if (state == null) return;
             if (state.tutorialSeen) PlayerPrefs.SetInt(TutorialKey, 1);
+            if (state.originFilmSeen) PlayerPrefs.SetInt(OriginFilmKey, 1);
 
             // Account data can outlive a paid cabinet session. Restore run data only when both
             // sides identify the same Luxodd session; otherwise an old run must not revive.
@@ -452,7 +455,11 @@ namespace Parabox
             }
             PlayerPrefs.SetInt(LevelKey, 0);
             PlayerPrefs.DeleteKey(SessionUpdatedKey);
-            if (!preserveTutorial) PlayerPrefs.DeleteKey(TutorialKey);
+            if (!preserveTutorial)
+            {
+                PlayerPrefs.DeleteKey(TutorialKey);
+                PlayerPrefs.DeleteKey(OriginFilmKey);
+            }
         }
 
         static long LocalProgressUpdatedAt()
@@ -905,6 +912,7 @@ namespace Parabox
             public int scoreVersion;
             public int currentLevel;
             public bool tutorialSeen;
+            public bool originFilmSeen;
             public string sessionFingerprint;
             public long updatedAtUnix;
             public int[] bestMoves;

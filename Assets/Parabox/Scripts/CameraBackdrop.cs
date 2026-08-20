@@ -25,12 +25,15 @@ namespace Parabox
         public Color[] rayColors;    // god-ray tint, per tier
         [Range(0f, 1f)] public float vignetteAlpha = 0f;
 
+        FilmGridBackdrop filmGrid;
+
         const string LevelKey = "Parabox.Level";
         const int PerTier = 10;
 
         void Start()
         {
             if (cam == null) cam = GetComponentInParent<Camera>();
+            EnsureFilmGrid();
             int level = PlayerPrefs.GetInt(LevelKey, 0);
             int tier = (baseColors != null && baseColors.Length > 0)
                 ? Mathf.Clamp(level / PerTier, 0, baseColors.Length - 1)
@@ -41,6 +44,7 @@ namespace Parabox
         void OnEnable()
         {
             if (cam == null) cam = GetComponentInParent<Camera>();
+            EnsureFilmGrid();
             RenderPipelineManager.beginCameraRendering -= BeforeCameraRender;
             RenderPipelineManager.beginCameraRendering += BeforeCameraRender;
             FitToCamera();
@@ -59,12 +63,18 @@ namespace Parabox
         public void Apply(int tier)
         {
             int chapter = Mathf.Clamp(tier, 0, 4);
+            EnsureFilmGrid();
+            if (filmGrid != null) filmGrid.SetChapter(chapter);
+            bool filmStyle = filmGrid != null;
             Color accent = ChapterAccent(chapter);
             // When a real background photo is present, keep the procedural glows/rays subtle so
             // the art shows. Chapter V still needs enough cool light to separate its deep nested
             // shells from the cabinet, so it uses a slightly stronger (but never coloured-wash)
             // atmosphere.
-            bool photo = bgPhoto != null && bgPhoto.sprite != null;
+            // The MP4 background is a live flat graphic, not a photograph. Hiding the legacy art
+            // prevents its static grid from doubling the seven animated rows built by FilmGrid.
+            if (bgPhoto != null) bgPhoto.enabled = !filmStyle;
+            bool photo = bgPhoto != null && bgPhoto.enabled && bgPhoto.sprite != null;
             float atmos = photo ? 0.40f : 1f;
 
             Color baseColor = Configured(baseColors, chapter,
@@ -72,6 +82,8 @@ namespace Parabox
             // Existing early-chapter values remain the foundation, while a restrained chapter tint
             // makes all five environments identifiable even behind the shared chamber artwork.
             baseColor = Color.Lerp(baseColor, Color.Lerp(Color.black, accent, 0.19f), 0.30f);
+            if (filmStyle)
+                baseColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
             if (cam != null) cam.backgroundColor = baseColor;
 
             Color glowA = Configured(glowAColors, chapter, WithAlpha(accent, 0.16f));
@@ -93,25 +105,50 @@ namespace Parabox
             {
                 baseColor = new Color(0.003f, 0.012f, 0.045f, 1f);
                 if (cam != null) cam.backgroundColor = baseColor;
-                glowA = Color.clear;
-                glowB = Color.clear;
+                glowA = new Color(0.055f, 0.30f, 0.72f, 0.078f);
+                glowB = new Color(0.34f, 0.13f, 0.72f, 0.042f);
                 ray = Color.clear;
             }
 
-            if (glow1 != null) glow1.color = Fade(glowA, atmos);
-            if (glow2 != null) glow2.color = Fade(glowB, atmos);
+            if (filmStyle)
+            {
+                // The exact film reference has a clean navy field. Its light is provided by the
+                // live cyan/violet lines and particles, not the scene's old nebula/god-ray sprites.
+                baseColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
+                glowA = Color.clear;
+                glowB = Color.clear;
+                ray = Color.clear;
+                if (cam != null) cam.backgroundColor = baseColor;
+            }
+
+            if (glow1 != null)
+            {
+                glow1.enabled = true;
+                glow1.color = Fade(glowA, atmos);
+            }
+            if (glow2 != null)
+            {
+                glow2.enabled = true;
+                glow2.color = Fade(glowB, atmos);
+            }
             if (rays != null)
-                foreach (var r in rays) if (r != null) r.color = Fade(ray, photo ? 0.6f : 1f);
-            if (bgPhoto != null && bgPhoto.sprite != null)
+                foreach (var r in rays) if (r != null)
+                {
+                    r.enabled = !filmStyle;
+                    r.color = Fade(ray, photo ? 0.6f : 1f);
+                }
+            if (bgPhoto != null && bgPhoto.enabled && bgPhoto.sprite != null)
                 bgPhoto.color = chapter == 4
                     ? Color.white
                     : Color.Lerp(Color.white, accent, 0.055f);
-            // The vignette sprite reads as a second room-sized border once the camera zooms into a
-            // board. Disable it outright; the solid backdrop is cleaner and keeps the grid dominant.
+            // The film uses a very soft edge falloff rather than a hard frame. This low-alpha
+            // vignette blends the linework into the navy field and keeps attention on the puzzle.
             if (vignette != null)
             {
-                vignette.color = Color.clear;
-                vignette.enabled = false;
+                vignette.enabled = filmStyle;
+                vignette.color = filmStyle
+                    ? new Color(0f, 0.004f, 0.018f, 0.18f)
+                    : Color.clear;
             }
         }
 
@@ -135,6 +172,14 @@ namespace Parabox
             => new Color(c.r, c.g, c.b, alpha);
 
         static Color Fade(Color c, float m) => new Color(c.r, c.g, c.b, c.a * m);
+
+        void EnsureFilmGrid()
+        {
+            if (!Application.isPlaying || gameObject.scene.name != "Game") return;
+            if (filmGrid == null) filmGrid = GetComponent<FilmGridBackdrop>();
+            if (filmGrid == null) filmGrid = gameObject.AddComponent<FilmGridBackdrop>();
+            filmGrid.cam = cam;
+        }
 
         void LateUpdate()
         {
@@ -188,6 +233,8 @@ namespace Parabox
                     rays[i].transform.localEulerAngles = new Vector3(0f, 0f, rz[i % 3]);
                 }
             }
+
+            if (filmGrid != null) filmGrid.FitToCamera(false);
         }
 
 #if UNITY_EDITOR

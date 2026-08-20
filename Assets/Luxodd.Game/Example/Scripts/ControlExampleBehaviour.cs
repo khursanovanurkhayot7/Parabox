@@ -37,7 +37,7 @@ namespace Luxodd.Game.Example.Scripts
         {
             if (!_isActive) return;
             
-            var stick = ArcadeControls.GetStick();
+            var stick = ArcadeControls.GetJoystick();
             MoveToDirection2D(stick);
 
             CheckButtonStatus(ArcadeButtonColor.Black);
@@ -56,10 +56,10 @@ namespace Luxodd.Game.Example.Scripts
             _onArcadeButtonClickStatusChanged?.Invoke(color, state);
         }
         
-        private void MoveToDirection2D(ArcadeStick stick)
+        private void MoveToDirection2D(Vector2 stickVector)
         {
-            var direction = stick.Vector;
-            //Debug.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(MoveToDirection2D)}] OK, arcadeStick: {stick}");
+            var direction = stickVector;
+            //Debug.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(direction)}] OK");
             _target.position += new Vector3(direction.x, direction.y) * (_speed * Time.deltaTime);
         }
 

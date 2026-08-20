@@ -18,8 +18,7 @@ namespace Luxodd.Game.Example.Scripts.ControlTest
 
         private void Update()
         {
-            var stickData = ArcadeControls.GetStick();
-            MovementVector = stickData.Vector;
+            MovementVector = ArcadeControls.GetJoystick();
 
             // Fire - hold Red
             if (ArcadeControls.GetButtonDown(ArcadeButtonColor.Red))

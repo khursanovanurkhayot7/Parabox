@@ -4,9 +4,10 @@ using UnityEngine;
 
 namespace Parabox
 {
-    // Reads mechanics from the level prefabs themselves. This keeps onboarding tied to the real
-    // campaign: moving a mechanic to another level also moves its first-appearance lesson, and a
-    // later board cannot accidentally be labelled as an introduction to an already-known rule.
+    // Reads mechanics from the level prefabs themselves. Chapter tutorials stay at Levels
+    // 1/11/21/31/41. Each chapter may schedule only one additional NEW MECHANIC video, at the
+    // first level in that chapter which genuinely adds a supported rule. This keeps the chapter
+    // contract at one video when there is no new rule and at two videos maximum otherwise.
     public static class MechanicCatalog
     {
         public enum Id
@@ -174,52 +175,161 @@ namespace Parabox
             return introduced;
         }
 
-        // Tutorials are intentionally bundled at five chapter checkpoints. A chapter mini-board
-        // demonstrates several related skills in one short solve, rather than interrupting play
-        // with a separate video every time a single tile first appears. The campaign level itself
-        // is never replayed, so the player still discovers its solution independently.
+        // A chapter can show at most one focused NEW MECHANIC example, followed by its chapter
+        // tutorial when the first eligible rule is introduced at the opener. Only concrete
+        // player-facing rules qualify.
+        // MultiStageRecursion and ChamberChain are difficulty labels for deeper uses of the same
+        // room-box rule, not new controls, so they must not create extra tutorial interruptions.
+        // Colour matching is taught by the chapter board itself and likewise is not a separate
+        // control tutorial. This keeps Chapter II at its one chapter video.
+        // Reverse order lets the most specific qualifying rule represent the chapter's single
+        // mechanic lesson when one board adds several. Once any eligible rule has received the
+        // chapter's mechanic video, later rules in the same chapter do not add more tutorials.
+        public static bool TryGetNewMechanicTutorial(GameObject[] prefabs, int levelIndex,
+                                                      out Id tutorial)
+        {
+            tutorial = default;
+            if (prefabs == null || levelIndex < 0 || levelIndex >= prefabs.Length)
+                return false;
+
+            int chapterStart = (levelIndex / 10) * 10;
+            for (int earlier = chapterStart; earlier < levelIndex; earlier++)
+                if (TryGetEligibleIntroductionAt(prefabs, earlier, chapterStart, out _))
+                    return false;
+
+            return TryGetEligibleIntroductionAt(prefabs, levelIndex, chapterStart, out tutorial);
+        }
+
+        static bool TryGetEligibleIntroductionAt(GameObject[] prefabs, int levelIndex,
+                                                  int chapterStart, out Id tutorial)
+        {
+            List<Id> introductions = IntroductionsAt(prefabs, levelIndex);
+            TryGetChapterTutorial(chapterStart, out Id chapterLesson);
+            for (int i = introductions.Count - 1; i >= 0; i--)
+            {
+                Id candidate = introductions[i];
+                if (candidate == Id.Navigation || candidate == chapterLesson)
+                    continue;
+                if (!HasDedicatedMechanicTutorial(candidate)) continue;
+                tutorial = candidate;
+                return true;
+            }
+
+            tutorial = default;
+            return false;
+        }
+
+        public static bool HasDedicatedMechanicTutorial(Id mechanic)
+        {
+            switch (mechanic)
+            {
+                case Id.Crate:
+                case Id.OneWay:
+                case Id.DeepWater:
+                case Id.ButtonGate:
+                case Id.BreakableRock:
+                case Id.Updraft:
+                case Id.SlidingCargo:
+                case Id.Trench:
+                case Id.Ice:
+                case Id.StickyFloor:
+                case Id.Cage:
+                case Id.KeyLock:
+                case Id.Magnet:
+                case Id.Echo:
+                case Id.Sand:
+                case Id.LockingCargo:
+                case Id.ToggleLatch:
+                case Id.HeavyPlateGate:
+                case Id.NestedBoard:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         public static List<Id> TutorialsAt(GameObject[] prefabs, int levelIndex)
         {
             var lessons = new List<Id>();
-            switch (levelIndex)
-            {
-                case 0:  Add(lessons, Id.Navigation); break;   // Level 1
-                case 10: Add(lessons, Id.Mirror); break;       // Level 11
-                case 20: Add(lessons, Id.NestedBoard); break;  // Level 21
-                case 30: Add(lessons, Id.NestedBoard); break;  // Level 31 — movable-room refresher
-                case 40: Add(lessons, Id.NestedBoard); break;  // Level 41
-            }
+            if (TryGetNewMechanicTutorial(prefabs, levelIndex, out Id newMechanic))
+                lessons.Add(newMechanic);
+            if (TryGetChapterTutorial(levelIndex, out Id chapterTutorial)
+                && !lessons.Contains(chapterTutorial))
+                lessons.Add(chapterTutorial);
             return lessons;
         }
+
+        public static bool TryGetChapterTutorial(int levelIndex, out Id tutorial)
+        {
+            switch (levelIndex)
+            {
+                case 0: tutorial = Id.Navigation; return true;
+                case 10: tutorial = Id.NestedBoard; return true;
+                case 20: tutorial = Id.NestedBoard; return true;
+                case 30: tutorial = Id.NestedBoard; return true;
+                case 40: tutorial = Id.ColourCargo; return true;
+                default: tutorial = default; return false;
+            }
+        }
+
+        public static bool IsChapterTutorial(int levelIndex, Id tutorial)
+            => TryGetChapterTutorial(levelIndex, out Id expected) && expected == tutorial;
 
         public static bool IsChapterTutorialCheckpoint(int levelIndex)
             => levelIndex >= 0 && levelIndex < 50 && levelIndex % 10 == 0;
 
-        // Player-facing copy for the single bundled video at each chapter opener. These are three
-        // actions demonstrated by the purpose-built mini-board, not hints for the campaign board.
+        // Player-facing copy for the clean tutorial at each chapter opener. These describe the
+        // purpose-built tutorial board, never the campaign level behind it.
         public static string TutorialBundleName(int levelIndex)
+            => TutorialBundleName(levelIndex, Id.Navigation);
+
+        public static string TutorialTitle(int levelIndex, Id tutorial)
+        {
+            if (levelIndex == 0 && tutorial == Id.Navigation) return "CHAPTER 1 TUTORIAL";
+            if (levelIndex == 10 && tutorial == Id.NestedBoard) return "CHAPTER 2 TUTORIAL";
+            if (levelIndex == 20 && tutorial == Id.NestedBoard) return "CHAPTER 3  •  CARGO RELAY";
+            if (levelIndex == 30 && tutorial == Id.NestedBoard) return "CHAPTER 4  •  ROOM DOCKING";
+            if (levelIndex == 40 && tutorial == Id.ColourCargo)
+                return "CHAPTER 5 TUTORIAL";
+            return "NEW MECHANIC  •  " + DisplayName(tutorial);
+        }
+
+        public static string TutorialBundleName(int levelIndex, Id tutorial)
         {
             switch (levelIndex)
             {
-                case 0: return "MOVE  •  TURN  •  REACH THE GOAL";
-                case 10: return "COPY  •  MOVE OPPOSITE  •  FINISH TOGETHER";
-                case 20: return "ENTER A ROOM  •  MOVE INSIDE  •  EXIT OUTSIDE";
-                case 30: return "PUSH THE ROOM  •  PIN IT  •  RE-ENTER";
-                case 40: return "ENTER THE CHAIN  •  EXTRACT CARGO  •  RETURN OUTSIDE";
-                default: return string.Empty;
+                case 0 when tutorial == Id.Navigation:
+                    return "MOVE  •  PUSH  •  TWO TARGETS";
+                case 10 when tutorial == Id.NestedBoard:
+                    return "ROOM INSIDE A BOX  •  ENTER + EXIT  •  CARGO RELAY";
+                case 20 when tutorial == Id.NestedBoard:
+                    return "CARGO RELAY  •  MOVE + PIN ROOM  •  DEEP TRANSFER";
+                case 30 when tutorial == Id.NestedBoard:
+                    return "ROOM MODULE  •  DOCK SOCKET  •  SIDE EXIT";
+                case 40 when tutorial == Id.ColourCargo:
+                    return "MOVE  •  PUSH  •  MATCH COLOUR";
+                default: return DisplayName(tutorial);
             }
         }
 
         public static string TutorialBundleLesson(int levelIndex)
+            => TutorialBundleLesson(levelIndex, Id.Navigation);
+
+        public static string TutorialBundleLesson(int levelIndex, Id tutorial)
         {
             switch (levelIndex)
             {
-                case 0: return "Learn three movement skills in one small example.";
-                case 10: return "One input moves the echo with you and the mirror opposite to you.";
-                case 20: return "Crossing a room edge changes which board the player occupies.";
-                case 30: return "A room moves when space is free and becomes enterable when pinned.";
-                case 40: return "Carry the same cargo outward through connected rooms.";
-                default: return string.Empty;
+                case 0 when tutorial == Id.Navigation:
+                    return "Push the crate onto its target, then move the player to the bright target.";
+                case 10 when tutorial == Id.NestedBoard:
+                    return "Enter the smaller rooms, then carry their cargo back across both room boundaries.";
+                case 20 when tutorial == Id.NestedBoard:
+                    return "Pin the smaller room, enter it, then carry its coral cargo back across both room boundaries.";
+                case 30 when tutorial == Id.NestedBoard:
+                    return "Push the room onto its glowing dock. When pinned, enter it and leave through the useful side.";
+                case 40 when tutorial == Id.ColourCargo:
+                    return "Match Coral, Sky and Green cargo to the identical marked sockets. Choose the pushing side and delivery order first.";
+                default: return Lesson(tutorial);
             }
         }
 
@@ -338,7 +448,7 @@ namespace Parabox
                 case Id.Echo: return "ECHOES copy every move; solve both positions together";
                 case Id.Sand: return "SAND gives no purchase, so you cannot push while standing on it";
                 case Id.LockingCargo: return "LOCKING CARGO cannot move after reaching its target";
-                case Id.ColourCargo: return "COLOURED CARGO belongs on the matching target";
+                case Id.ColourCargo: return "COLOURED CARGO belongs on the target with the same colour and mark";
                 case Id.Portal: return "PORTALS connect matching spaces instantly";
                 case Id.Deflector: return "DEFLECTORS turn movement clockwise";
                 case Id.Swap: return "SWAP cells trade the objects standing on their pair";

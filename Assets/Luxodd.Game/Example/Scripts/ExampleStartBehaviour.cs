@@ -8,12 +8,14 @@ using Luxodd.Game.Scripts.HelpersAndUtils.Logger;
 using Luxodd.Game.Scripts.Input;
 using Luxodd.Game.Scripts.Network;
 using Luxodd.Game.Scripts.Network.CommandHandler;
+using Luxodd.Game.Scripts.Network.Payloads;
 
 #if NEWTONSOFT_JSON
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 #endif
 using UnityEngine;
+using UserDataPayload = Luxodd.Game.Scripts.Network.Payloads.UserDataPayload;
 
 namespace Luxodd.Game.Example.Scripts
 {
@@ -31,9 +33,12 @@ namespace Luxodd.Game.Example.Scripts
         [SerializeField] private ControlExampleBehaviour _controlExampleBehaviour;
         
         [SerializeField] private MobileDetectionDemo.MobileDetectionDemo _mobileDetectionDemo;
+        
+        [SerializeField] private ArcadeButtonMappingDiagnosticBehaviour _arcadeButtonMappingDiagnosticBehaviour;
 
         [SerializeField] private int _creditsToCharge = 3;
         [SerializeField] private int _creditsToAdd = 5;
+        [SerializeField] private bool _runMerchantPrizeInfoCheckOnConnect = true;
         
         [SerializeField] private List<string> _spaceshipNames;
         [SerializeField] private List<int> _levels;
@@ -56,6 +61,7 @@ namespace Luxodd.Game.Example.Scripts
         private void Start()
         {
             PrepareDefault();
+            CheckForDiagnostic();
         }
 
         private void PrepareDefault()
@@ -136,6 +142,11 @@ namespace Luxodd.Game.Example.Scripts
             _mainMenuPanelViewHandler.HideProcessing();
             //update status
             _isConnected.SetValue(_webSocketService.IsConnected);
+
+            if (_runMerchantPrizeInfoCheckOnConnect)
+            {
+                RunMerchantPrizeInfoCheck();
+            }
         }
         
         private void OnReconnectionServiceStatusChanged(ReconnectionState reconnectionState)
@@ -255,10 +266,75 @@ namespace Luxodd.Game.Example.Scripts
             _mobileDetectionDemo.Activate();
         }
 
+        [ContextMenu("Debug/Run Merchant Prize Info Check")]
+        private void RunMerchantPrizeInfoCheck()
+        {
+            if (_webSocketCommandHandler == null || _webSocketService == null)
+            {
+                const string missingDependencyMessage = "MerchantPrizeInfo check skipped: missing WebSocket references.";
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(RunMerchantPrizeInfoCheck)}] {missingDependencyMessage}");
+                _rawResponse.SetValue(missingDependencyMessage);
+                return;
+            }
+
+            if (_webSocketService.IsConnected == false)
+            {
+                const string notConnectedMessage = "MerchantPrizeInfo check skipped: WebSocket is not connected (guard-check).";
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(RunMerchantPrizeInfoCheck)}] {notConnectedMessage}");
+                _rawResponse.SetValue(notConnectedMessage);
+                return;
+            }
+
+            LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(RunMerchantPrizeInfoCheck)}] Sending GetMerchantPrizeInfoRequest");
+            _webSocketCommandHandler.SendGetMerchantPrizeInfoRequestCommand(
+                OnGetMerchantPrizeInfoSuccessHandler,
+                OnGetMerchantPrizeInfoFailureHandler);
+        }
+
+        private void OnGetMerchantPrizeInfoSuccessHandler(MerchantPrizeInfoResponse response)
+        {
+            if (response == null)
+            {
+                const string nullResponseMessage = "GetMerchantPrizeInfo success callback returned null response.";
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnGetMerchantPrizeInfoSuccessHandler)}] {nullResponseMessage}");
+                _rawResponse.SetValue(nullResponseMessage);
+                return;
+            }
+
+            if (response.IsActive == false || response.Payload == null)
+            {
+                const string inactiveMessage = "Merchant prize is inactive. is_active=false, payload=null (expected case).";
+                LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnGetMerchantPrizeInfoSuccessHandler)}] {inactiveMessage}");
+                _rawResponse.SetValue(inactiveMessage);
+                return;
+            }
+
+            var payload = response.Payload;
+            var successMessage =
+                $"Merchant prize active. campaign_id={payload.CampaignId}, prize_name={payload.PrizeName}, goal_score={payload.GoalScore}, dynamic_hardness={payload.DynamicHardness}, prize_image_url={payload.PrizeImageUrl}";
+            LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnGetMerchantPrizeInfoSuccessHandler)}] {successMessage}");
+            _rawResponse.SetValue(successMessage);
+        }
+
+        private void OnGetMerchantPrizeInfoFailureHandler(int code, string error)
+        {
+            var failureMessage = $"GetMerchantPrizeInfo failed. code={code}, error={error}";
+            LoggerHelper.Log($"[{DateTime.Now}][{GetType().Name}][{nameof(OnGetMerchantPrizeInfoFailureHandler)}] {failureMessage}");
+            _rawResponse.SetValue(failureMessage);
+        }
+
         private void OnMobileOrientationBackButtonClickedHandler()
         {
             _mobileDetectionDemo.Activate();
             _mobileOrientationExamplePanelHandler.HidePanel();
+        }
+
+        private void CheckForDiagnostic()
+        {
+            if (_arcadeButtonMappingDiagnosticBehaviour.ShouldUseMappingDiagnostic)
+            {
+                OnControlTestButtonClickedHandler();
+            }
         }
         
         #region For Storage
@@ -291,6 +367,7 @@ namespace Luxodd.Game.Example.Scripts
             _mainMenuPanelViewHandler.HideMainMenuPanel();
             _controlExamplePanelHandler.ShowPanel();
             _controlExampleBehaviour.ActivateProcess();
+            _arcadeButtonMappingDiagnosticBehaviour.Activate();
         }
 
         private void OnControlTestBackButtonCLickedHandler()
@@ -298,6 +375,7 @@ namespace Luxodd.Game.Example.Scripts
             _controlExamplePanelHandler.HidePanel();
             _mainMenuPanelViewHandler.ShowMainMenuPanel();
             _controlExampleBehaviour.DeactivateProcess();
+            _arcadeButtonMappingDiagnosticBehaviour.Deactivate();
         }
 
         private void OnControlArcadeButtonButtonClickedHandler(ArcadeButtonColor buttonColor, bool state)

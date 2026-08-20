@@ -31,6 +31,14 @@ namespace Parabox
         Vector2Int lastNavigationDirection;
         float nextNavigationRepeat;
 
+        // Cabinet sticks rarely return a perfectly stable zero. Using the same threshold to engage
+        // and release lets a noisy axis bounce across that boundary while it is still held, which
+        // turns one physical tilt into two or three logical moves. A wide hysteresis band fixes the
+        // hardware behaviour without adding a timer or changing any puzzle mechanic: engage only
+        // on a deliberate tilt, then stay latched until the stick is genuinely back at centre.
+        const float MoveEngageThreshold = 0.58f;
+        const float MoveReleaseThreshold = 0.22f;
+
         // The Luxodd prefab normally creates this adapter. Keep a standalone fallback so cabinet
         // input still works when networking or the runtime prefab is unavailable.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -62,15 +70,15 @@ namespace Parabox
             // ArcadeControls already handles both the cabinet HID joystick and its SDK-defined
             // gamepad fallback. Reading Gamepad again here caused a single physical press to map to
             // two different actions, so this adapter keeps Luxodd as the only mapping authority.
-            Stick = ArcadeControls.GetStick().Vector;
-            Direction = Quantize(Stick);
+            Stick = ArcadeControls.GetJoystick();
+            Direction = Quantize(Stick, MoveEngageThreshold);
             MovePulse = false;
             NavigationPulse = false;
 
             // A puzzle move is a discrete arcade gesture, never a frame/time repeat. Once the
             // joystick leaves neutral, gameplay stays latched until it returns to neutral. This
             // prevents one held direction from silently spending several moves.
-            MovePulse = ConsumeMoveGesture(Direction, ref moveLatched);
+            MovePulse = ConsumeMoveGesture(Direction, Stick, ref moveLatched);
 
             // Menu focus is non-destructive, so it retains a deliberate hold repeat independent
             // from gameplay's one-tilt/one-move latch.
@@ -101,9 +109,8 @@ namespace Parabox
             // Luxodd system overlay remains the sole owner of its response.
         }
 
-        static Vector2Int Quantize(Vector2 value)
+        static Vector2Int Quantize(Vector2 value, float threshold)
         {
-            const float threshold = 0.52f;
             float ax = Mathf.Abs(value.x);
             float ay = Mathf.Abs(value.y);
             if (Mathf.Max(ax, ay) < threshold) return Vector2Int.zero;
@@ -112,18 +119,31 @@ namespace Parabox
                 : new Vector2Int(0, value.y >= 0f ? 1 : -1);
         }
 
-        // Kept as one small pure state transition so the editor audit can prove held and rotated
-        // input cannot spend extra moves without returning to neutral.
-        static bool ConsumeMoveGesture(Vector2Int direction, ref bool latched)
+        // Kept as one small pure state transition so the editor audit can prove that held, rotated
+        // and noisy input cannot spend extra moves without a real return to neutral.
+        static bool ConsumeMoveGesture(Vector2Int direction, Vector2 rawStick, ref bool latched)
         {
-            if (direction == Vector2Int.zero)
+            float strongestAxis = Mathf.Max(Mathf.Abs(rawStick.x), Mathf.Abs(rawStick.y));
+            if (latched)
             {
-                latched = false;
+                if (strongestAxis <= MoveReleaseThreshold)
+                    latched = false;
                 return false;
             }
-            if (latched) return false;
+
+            if (direction == Vector2Int.zero) return false;
             latched = true;
             return true;
+        }
+
+        // In the Unity Editor the Luxodd legacy axes can mirror the same arrow/WASD press that
+        // GameManager already received from the Input System. The legacy axis often rises a frame
+        // later, so a frame-only debounce cannot stop that second move. Claiming the gesture here
+        // keeps the arcade path latched until the shared physical control returns to neutral.
+        public void ClaimCurrentMoveGesture()
+        {
+            moveLatched = true;
+            MovePulse = false;
         }
     }
 }

@@ -121,6 +121,13 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
                 .SendGetBettingSessionMissionsRequestCommand);
         }
 
+        public static Task<MerchantPrizeInfoResponse> GetMerchantPrizeInfoAsync(
+            this WebSocketCommandHandler handler)
+        {
+            return handler.WrapAsync<MerchantPrizeInfoResponse>(handler
+                .SendGetMerchantPrizeInfoRequestCommand);
+        }
+
         public static Task SendStrategicBettingResultAsync(this WebSocketCommandHandler handler,
             System.Collections.Generic.List<MissionResultDto> missionResultList)
         {

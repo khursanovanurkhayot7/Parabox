@@ -8,6 +8,9 @@ using Luxodd.Game.Scripts.Missions;
 using Luxodd.Game.Scripts.Network.Payloads;
 using UnityEngine;
 using UnityEngine.Serialization;
+#if NEWTONSOFT_JSON
+using Newtonsoft.Json;
+#endif
 
 namespace Luxodd.Game.Scripts.Network.CommandHandler
 {
@@ -71,6 +74,16 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
             commandHandler.SendCommand(
                 () => OnChargeUserBalanceRequestSuccessHandler(commandHandler, onSuccess, onFailureCallback), amount,
                 pinCode);
+        }
+
+        public void SendGetMerchantPrizeInfoRequestCommand(Action<MerchantPrizeInfoResponse> onSuccessCallback,
+            Action<int, string> onFailureCallback)
+        {
+            _commandProcessStateChangeEvent.Notify(CommandProcessState.Sent);
+
+            var commandHandler = _commandHandlers[CommandRequestType.GetMerchantPrizeInfoRequest];
+            commandHandler.SendCommand(() =>
+                OnSendGetMerchantPrizeInfoRequestSuccessHandler(commandHandler, onSuccessCallback, onFailureCallback));
         }
 
         public void SendHealthCheckStatusCommand(Action onSuccessCallback, Action<int, string> onFailureCallback)
@@ -250,6 +263,22 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
             onSuccessCallback?.Invoke();
         }
 
+        private void OnSendGetMerchantPrizeInfoRequestSuccessHandler(BaseCommandHandler handler,
+            Action<MerchantPrizeInfoResponse> onSuccessCallback, Action<int, string> onFailureCallback)
+        {
+            _commandProcessStateChangeEvent.Notify(CommandProcessState.Received);
+
+            if (handler.ResponseStatus != CommandResponseStatus.Ok)
+            {
+                onFailureCallback?.Invoke(handler.StatusCode, handler.ErrorMessage);
+                _errorHandlerService.HandleGameError(
+                    $"Send get merchant prize info request failed, error: {handler.ErrorMessage}");
+                return;
+            }
+
+            onSuccessCallback?.Invoke((MerchantPrizeInfoResponse)handler.ResponseHandler.Payload);
+        }
+
         private void OnHealthCheckStatusSuccessHandler(BaseCommandHandler handler, Action onSuccessCallback,
             Action<int, string> onFailureCallback)
         {
@@ -300,6 +329,18 @@ namespace Luxodd.Game.Scripts.Network.CommandHandler
                     $"Send level end request failed, error: {handler.ErrorMessage}");
                 return;
             }
+
+#if UNITY_WEBGL && !UNITY_EDITOR && NEWTONSOFT_JSON
+            var levelEndPayload = handler.ResponseHandler.Payload as LevelEndResponsePayload;
+            if (levelEndPayload?.PrizeTickets != null && levelEndPayload.PrizeTickets.Count > 0)
+            {
+                var prizeTicketsJson = JsonConvert.SerializeObject(levelEndPayload.PrizeTickets);
+                LoggerHelper.Log(
+                    $"[{DateTime.Now}][{GetType().Name}][{nameof(OnLevelEndRequestSuccessHandler)}] " +
+                    $"OK, event=prize_won, ticketCount={levelEndPayload.PrizeTickets.Count}, forwarding=WebGL");
+                _webSocketService.NotifyPrizeWon(prizeTicketsJson);
+            }
+#endif
 
             onSuccessCallback?.Invoke();
         }

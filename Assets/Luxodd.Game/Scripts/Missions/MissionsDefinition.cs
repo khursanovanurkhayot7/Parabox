@@ -22,7 +22,8 @@ namespace Luxodd.Game.Scripts.Missions
         Easy,
         Medium,
         Hard,
-        ExtraHard
+        ExtraHard,
+        None
     }
     
 }

@@ -194,7 +194,7 @@ namespace Parabox
         {
             if (arcade == null) return false;
             return HandleChoiceInput(arcade.Direction, arcade.NavigationPulse, arcade.ConfirmDown,
-                arcade.LevelsDown || arcade.BackDown);
+                arcade.LevelsDown || arcade.BackDown || arcade.UndoDown);
         }
 
         public bool HandleKeyboardInput(Keyboard keyboard)
