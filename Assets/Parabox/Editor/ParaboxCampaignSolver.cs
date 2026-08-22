@@ -20,7 +20,8 @@ namespace Parabox.EditorTools
         };
 
         public static string FindShortest(GameObject prefab, int minimumDepth, int maximumDepth,
-                                          int nodeLimit = 1500000)
+                                          int nodeLimit = 1500000,
+                                          Func<bool> cancellationRequested = null)
         {
             LevelModel model = LevelParser.Parse(prefab);
             if (model.player == null) return null;
@@ -31,7 +32,9 @@ namespace Parabox.EditorTools
             {
                 var seen = new Dictionary<string, int>(4096, StringComparer.Ordinal);
                 var route = new StringBuilder(depth);
-                if (Search(model, depth, route, seen, ref nodes, nodeLimit))
+                if (Search(
+                        model, depth, route, seen, ref nodes, nodeLimit,
+                        cancellationRequested))
                     return route.ToString();
                 if (nodes >= nodeLimit) break;
             }
@@ -39,10 +42,14 @@ namespace Parabox.EditorTools
         }
 
         static bool Search(LevelModel model, int remaining, StringBuilder route,
-                           Dictionary<string, int> seen, ref int nodes, int nodeLimit)
+                           Dictionary<string, int> seen, ref int nodes, int nodeLimit,
+                           Func<bool> cancellationRequested)
         {
             if (model.IsWon()) return true;
             if (remaining == 0 || ++nodes > nodeLimit) return false;
+            if ((nodes & 2047) == 0 && cancellationRequested != null
+                && cancellationRequested())
+                throw new OperationCanceledException("Parabox solution search cancelled.");
 
             string key = StateKey(model);
             if (seen.TryGetValue(key, out int previousRemaining) && previousRemaining >= remaining)
@@ -54,7 +61,9 @@ namespace Parabox.EditorTools
                 var move = Moves[i];
                 if (!model.TryMovePlayer(move.direction)) continue;
                 route.Append(move.code);
-                if (Search(model, remaining - 1, route, seen, ref nodes, nodeLimit)) return true;
+                if (Search(
+                        model, remaining - 1, route, seen, ref nodes, nodeLimit,
+                        cancellationRequested)) return true;
                 route.Length--;
                 model.Undo();
                 if (nodes >= nodeLimit) return false;

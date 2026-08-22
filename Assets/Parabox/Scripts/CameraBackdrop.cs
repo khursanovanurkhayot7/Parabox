@@ -45,6 +45,10 @@ namespace Parabox
         {
             if (cam == null) cam = GetComponentInParent<Camera>();
             EnsureFilmGrid();
+            // Never expose the old teal scene clear colour while the runtime background is being
+            // constructed. This also makes the menu look correct on its very first rendered frame.
+            if (Application.isPlaying && cam != null)
+                cam.backgroundColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
             RenderPipelineManager.beginCameraRendering -= BeforeCameraRender;
             RenderPipelineManager.beginCameraRendering += BeforeCameraRender;
             FitToCamera();
@@ -64,16 +68,25 @@ namespace Parabox
         {
             int chapter = Mathf.Clamp(tier, 0, 4);
             EnsureFilmGrid();
+            if (HasPregeneratedArtwork())
+            {
+                ApplyPregeneratedArtwork();
+                return;
+            }
             if (filmGrid != null) filmGrid.SetChapter(chapter);
-            bool filmStyle = filmGrid != null;
+            bool premiumStyle = filmGrid != null;
+            bool menuArtwork = gameObject.scene.name == "MainMenu";
             Color accent = ChapterAccent(chapter);
             // When a real background photo is present, keep the procedural glows/rays subtle so
             // the art shows. Chapter V still needs enough cool light to separate its deep nested
             // shells from the cabinet, so it uses a slightly stronger (but never coloured-wash)
             // atmosphere.
-            // The MP4 background is a live flat graphic, not a photograph. Hiding the legacy art
-            // prevents its static grid from doubling the seven animated rows built by FilmGrid.
-            if (bgPhoto != null) bgPhoto.enabled = !filmStyle;
+            // The premium background is a live flat graphic, not a photograph. Hiding the legacy
+            // art prevents its static grid from doubling the animated rows built at runtime.
+            // Gameplay replaces its old static plate. The main menu's plate also contains the
+            // logo, diorama and button faces, so keep it and render only edge-safe animated light
+            // accents above it.
+            if (bgPhoto != null) bgPhoto.enabled = menuArtwork || !premiumStyle;
             bool photo = bgPhoto != null && bgPhoto.enabled && bgPhoto.sprite != null;
             float atmos = photo ? 0.40f : 1f;
 
@@ -82,7 +95,7 @@ namespace Parabox
             // Existing early-chapter values remain the foundation, while a restrained chapter tint
             // makes all five environments identifiable even behind the shared chamber artwork.
             baseColor = Color.Lerp(baseColor, Color.Lerp(Color.black, accent, 0.19f), 0.30f);
-            if (filmStyle)
+            if (premiumStyle && !menuArtwork)
                 baseColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
             if (cam != null) cam.backgroundColor = baseColor;
 
@@ -110,10 +123,10 @@ namespace Parabox
                 ray = Color.clear;
             }
 
-            if (filmStyle)
+            if (premiumStyle)
             {
-                // The exact film reference has a clean navy field. Its light is provided by the
-                // live cyan/violet lines and particles, not the scene's old nebula/god-ray sprites.
+                // A clean navy field lets the live cyan/violet lines and particles provide the
+                // light instead of layering on the scene's old nebula/god-ray sprites.
                 baseColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
                 glowA = Color.clear;
                 glowB = Color.clear;
@@ -134,22 +147,28 @@ namespace Parabox
             if (rays != null)
                 foreach (var r in rays) if (r != null)
                 {
-                    r.enabled = !filmStyle;
+                    r.enabled = !premiumStyle;
                     r.color = Fade(ray, photo ? 0.6f : 1f);
                 }
             if (bgPhoto != null && bgPhoto.enabled && bgPhoto.sprite != null)
-                bgPhoto.color = chapter == 4
+                bgPhoto.color = menuArtwork
+                    ? Color.white
+                    : chapter == 4
                     ? Color.white
                     : Color.Lerp(Color.white, accent, 0.055f);
-            // The film uses a very soft edge falloff rather than a hard frame. This low-alpha
-            // vignette blends the linework into the navy field and keeps attention on the puzzle.
+            // A soft edge falloff blends the linework into the navy field and keeps attention on
+            // the puzzle.
             if (vignette != null)
             {
-                vignette.enabled = filmStyle;
-                vignette.color = filmStyle
-                    ? new Color(0f, 0.004f, 0.018f, 0.18f)
+                vignette.enabled = premiumStyle && !menuArtwork;
+                vignette.color = premiumStyle && !menuArtwork
+                    ? new Color(0f, 0.004f, 0.018f, 0.15f)
                     : Color.clear;
             }
+
+            // Apply the material and camera-cover scale on the same frame. This is intentionally
+            // repeated by LateUpdate because the menu fly-in can animate the camera afterwards.
+            FitToCamera();
         }
 
         static Color Configured(Color[] colors, int chapter, Color fallback)
@@ -173,12 +192,41 @@ namespace Parabox
 
         static Color Fade(Color c, float m) => new Color(c.r, c.g, c.b, c.a * m);
 
+        bool HasPregeneratedArtwork()
+        {
+            return bgPhoto != null && bgPhoto.sprite != null;
+        }
+
+        void ApplyPregeneratedArtwork()
+        {
+            // MainMenuApproved.png and GameBGApproved.png already contain the complete visual.
+            // Keep them unchanged in Play Mode: no runtime material, tint, glow or generated grid.
+            bgPhoto.enabled = true;
+            bgPhoto.color = Color.white;
+
+            if (filmGrid != null) filmGrid.enabled = false;
+            if (glow1 != null) glow1.enabled = false;
+            if (glow2 != null) glow2.enabled = false;
+            if (vignette != null) vignette.enabled = false;
+            if (rays != null)
+                foreach (SpriteRenderer ray in rays)
+                    if (ray != null) ray.enabled = false;
+
+            if (cam != null)
+                cam.backgroundColor = new Color(0.0025f, 0.006f, 0.028f, 1f);
+            FitToCamera();
+        }
+
         void EnsureFilmGrid()
         {
-            if (!Application.isPlaying || gameObject.scene.name != "Game") return;
             if (filmGrid == null) filmGrid = GetComponent<FilmGridBackdrop>();
-            if (filmGrid == null) filmGrid = gameObject.AddComponent<FilmGridBackdrop>();
-            filmGrid.cam = cam;
+            // Runtime-generated backgrounds are intentionally retired. Existing scenes retain the
+            // component disabled for backwards compatibility, but it must never be auto-created.
+            if (filmGrid != null)
+            {
+                filmGrid.cam = cam;
+                if (HasPregeneratedArtwork()) filmGrid.enabled = false;
+            }
         }
 
         void LateUpdate()
@@ -202,7 +250,10 @@ namespace Parabox
                 {
                     // Cover the view without distorting the artwork. A non-16:9 cabinet crops a
                     // little at the edge instead of stretching the mechanical frame or cubes.
-                    float fit = Mathf.Max(w / bs.x, h / bs.y);
+                    // A small menu overscan prevents a coloured matte from appearing because of
+                    // rounding, Game-view toolbar resizing or the opening camera animation.
+                    float overscan = gameObject.scene.name == "MainMenu" ? 1.035f : 1f;
+                    float fit = Mathf.Max(w / bs.x, h / bs.y) * overscan;
                     bgPhoto.transform.localScale = new Vector3(fit, fit, 1f);
                 }
                 bgPhoto.transform.localPosition = new Vector3(0f, 0f, 0.1f);

@@ -17,6 +17,10 @@ namespace Parabox
         // the board's frame (sized to the LEVEL) shows through as a second, level-shaped outline —
         // which is why the O looked like a wide dash instead of a letter.
         public bool hideFrame;
+        // Tutorial RenderTextures shrink the board enough that the normal five-layer contour reads
+        // as stacked stray lines. Tutorial boards request one quiet structural edge instead; normal
+        // gameplay and the main-menu board keep their existing premium contour treatment.
+        public bool simplifyBoundaryContours;
         public Sprite floorTex;
         public Color floorTexTint;
     }
@@ -1707,6 +1711,13 @@ namespace Parabox
         // Greedy merging keeps the hierarchy and WebGL draw count low even on the largest boards.
         static void PaintOptionOneWalkableFloor(Transform root, PRoom room, BoardAssets a, Color floorColor)
         {
+            // Nested-room shells deliberately use deep chapter colours. Their old walkable floor
+            // used almost the same colour, so the route disappeared when the camera entered the
+            // room. Lift only the playable surface; this keeps the shell premium and dark while
+            // making every legal path readable at a glance.
+            if (room.id > 0)
+                floorColor = ReadableNestedPathColor(floorColor);
+
             var used = new bool[room.width, room.height];
 
             for (int y = 0; y < room.height; y++)
@@ -1819,7 +1830,20 @@ namespace Parabox
         {
             if (!edge.touchesOutside || room.containerBox == null || model == null) return false;
             if (!model.rooms.TryGetValue(room.containerBox.roomId, out PRoom parentRoom)) return false;
-            return HasUsableParentSide(room.containerBox, parentRoom, BoundaryOutward(edge));
+            Vector2Int direction = BoundaryOutward(edge);
+            if (!HasUsableParentSide(room.containerBox, parentRoom, direction)) return false;
+
+            // Existing advanced levels intentionally allow their established free-edge recursive
+            // exits. Level 1 opts into the explicit doorway lesson, so only its real doorway edge
+            // is removed from the contour.
+            if (!model.useAuthoredDoorwayExits) return true;
+
+            Vector2Int cell = direction.x != 0
+                ? new Vector2Int(direction.x > 0 ? room.width - 1 : 0,
+                    Mathf.Min(edge.start.y, edge.end.y))
+                : new Vector2Int(Mathf.Min(edge.start.x, edge.end.x),
+                    direction.y > 0 ? room.height - 1 : 0);
+            return LevelModel.IsExitCell(room, cell, direction);
         }
 
         static void AddBoundaryEdge(List<BoundaryEdge> edges,
@@ -1922,13 +1946,25 @@ namespace Parabox
                     0f);
 
             Material material = BoundaryLineMaterial(a);
-            CreateContourLine(contour.transform, "ContourShadow", points, material,
-                new Color(0f, 0.005f, 0.025f, 0.82f), 0.32f, OrderWall - 1, loop);
+            if (a.simplifyBoundaryContours)
+            {
+                // Tutorials use one restrained structural edge. Keep it in the board's blue/cyan
+                // family so the same near-black seam can never reappear on a lesson board.
+                Color tutorialEdge = Color.Lerp(a.frameColor, OptionOneBevel, 0.45f);
+                tutorialEdge.a = 0.82f;
+                CreateContourLine(contour.transform, "TutorialBoundary", points, material,
+                    tutorialEdge, 0.12f,
+                    OrderWall + 1, loop);
+                return;
+            }
+
+            // Do not draw the old black ContourShadow/NavyRail layers. They protruded past the
+            // coloured boundary at open doorways and concave corners, producing the thin black
+            // horizontal/vertical seams seen in multiple levels. The remaining glow, bevel and
+            // cyan edge preserve a readable premium boundary without a black line artifact.
             CreateContourLine(contour.transform, "CyanGlow", points, material,
                 new Color(a.frameColor.r, a.frameColor.g, a.frameColor.b, 0.30f),
                 0.26f, OrderWall, loop);
-            CreateContourLine(contour.transform, "NavyRail", points, material,
-                a.wallColor, 0.20f, OrderWall + 1, loop);
             CreateContourLine(contour.transform, "CobaltBevel", points, material,
                 OptionOneBevel, 0.135f, OrderWall + 2, loop);
             CreateContourLine(contour.transform, "CyanEdge", points, material,
@@ -2267,6 +2303,14 @@ namespace Parabox
         static Color Lighten(Color c, float t) => Color.Lerp(c, Color.white, t);
         static Color Darken(Color c, float t) => Color.Lerp(c, Color.black, t);
 
+        static Color ReadableNestedPathColor(Color c)
+        {
+            Color visible = Color.Lerp(c, OptionOneCyan, 0.20f);
+            visible = Color.Lerp(visible, Color.white, 0.08f);
+            visible.a = 1f;
+            return visible;
+        }
+
         // Nested shells stay in the same navy/indigo family as the cabinet. Depth is communicated
         // with a separate luminous rim, not by flooding the screen with a flat bright colour.
         static Color NestedShellColor(int roomId)
@@ -2332,6 +2376,10 @@ namespace Parabox
         {
             if (box == null || a == null || a.cellSprite == null || a.floorPrefab == null || room == null
                 || box.transform.Find("NestedDoorways") != null) return;
+
+            // Match the doorway bridge to the brighter nested-room route so the player can
+            // visually follow the path while crossing into or out of the box.
+            floorColor = ReadableNestedPathColor(floorColor);
 
             bool bottomDoor = HasUsableParentSide(container, parentRoom, Vector2Int.down)
                               && HasOpenBoundaryCell(room, false, false);
@@ -2415,39 +2463,18 @@ namespace Parabox
             var frameRenderer = frame != null ? frame.GetComponent<SpriteRenderer>() : null;
             if (frameRenderer == null) return;
 
-            Color accent = frameRenderer.color;
-            int order = frameRenderer.sortingOrder;
             frameRenderer.enabled = false;
 
-            // The full backing becomes a giant coloured slab when the camera zooms through the
-            // recursive room. The generated split rails now provide the shell body themselves,
-            // so keeping that square behind them would expose a tall purple/blue rectangle beside
-            // the miniature board. Remove it together with the old unsplit bevels.
-            DisableSprite(box.transform.Find("Backing"));
+            // Do not generate the old split-frame rail. Its horizontal and vertical SpriteRenderer
+            // bars overlapped at every corner, producing the thin doubled square and little cross
+            // marks shown in the reference screenshot. Keep the backing, miniature room and real
+            // doorway bridges; only this decorative line layer is removed on every level.
             DisableSprite(box.transform.Find("NestedShellHighlightTop"));
             DisableSprite(box.transform.Find("NestedShellHighlightLeft"));
 
+            // Keep a marker so repeated setup calls do not try to construct the removed rail.
             var root = new GameObject("NestedSplitFrame").transform;
             root.SetParent(box.transform, false);
-
-            List<Vector2> bottomGaps = bottomDoor
-                ? DoorwayGaps(room, roomScale, false, false) : new List<Vector2>();
-            List<Vector2> topGaps = topDoor
-                ? DoorwayGaps(room, roomScale, false, true) : new List<Vector2>();
-            List<Vector2> leftGaps = leftDoor
-                ? DoorwayGaps(room, roomScale, true, false) : new List<Vector2>();
-            List<Vector2> rightGaps = rightDoor
-                ? DoorwayGaps(room, roomScale, true, true) : new List<Vector2>();
-
-            const float side = 0.405f;
-            CreateSplitFrameSide(root, a.cellSprite, accent, order, bottomGaps,
-                false, -side, "Bottom");
-            CreateSplitFrameSide(root, a.cellSprite, accent, order, topGaps,
-                false, side, "Top");
-            CreateSplitFrameSide(root, a.cellSprite, accent, order, leftGaps,
-                true, -side, "Left");
-            CreateSplitFrameSide(root, a.cellSprite, accent, order, rightGaps,
-                true, side, "Right");
         }
 
         static void DisableSprite(Transform target)
@@ -2597,20 +2624,24 @@ namespace Parabox
                                   Color floorColor, string suffix, Vector2 position,
                                   float width, float height)
         {
-            // Use the same fully opaque sliced floor as the room itself. The old Cell sprite has a
-            // vertical lighting gradient, so overlapping doorway pieces visibly changed colour.
-            // This bridge sits below every goal/entity but above the shell backing.
-            var floor = Object.Instantiate(floorPrefab, parent);
-            floor.name = $"NestedDoorwayFloor_{suffix}";
-            floor.transform.localPosition = new Vector3(position.x, position.y, 0f);
-            floor.transform.localRotation = Quaternion.identity;
-            floor.transform.localScale = Vector3.one;
-            var floorRenderer = floor.GetComponent<SpriteRenderer>();
-            floorRenderer.drawMode = SpriteDrawMode.Sliced;
-            floorRenderer.size = new Vector2(width + 0.016f, height + 0.016f);
-            floorColor.a = 1f;
-            floorRenderer.color = floorColor;
-            floorRenderer.sortingOrder = OrderFloorBase - 1;
+            // The logical boundary cell stops at the scaled miniature-room edge, while the orange
+            // recursive shell continues to the edge of the gameplay piece. SpriteMask behaviour
+            // varies with material/platform, so a mask alone can leave an orange strip across a
+            // real doorway (especially in tutorial RenderTextures). Paint one narrow, flush bridge
+            // with the exact same sliced floor prefab, material and tint used by WalkableFloor.
+            // The old cellSprite bridge received the same colour value through a different sprite
+            // texture, so it still rendered as a visibly separate blue rectangle. Keep the shared
+            // floor panel on the floor-decoration layer: order 55 placed this blue
+            // bridge above the player and cargo inside a SortingGroup, cutting moving objects in
+            // half at every recursive threshold. OrderGoal - 1 still covers the shell backing and
+            // ordinary floor, while every goal and gameplay entity remains fully visible above it.
+            // Its span is exactly one authored boundary opening and its depth is only the distance
+            // to the shell edge, so it cannot create the old square protrusion.
+            if (floorPrefab != null && width > 0.001f && height > 0.001f)
+            {
+                CreateSlicedPanel(parent, floorPrefab, $"NestedDoorwayFloor_{suffix}",
+                    new Vector2(width, height), floorColor, OrderGoal - 1, position);
+            }
 
             var maskObject = new GameObject($"NestedDoorwayMask_{suffix}");
             maskObject.transform.SetParent(parent, false);

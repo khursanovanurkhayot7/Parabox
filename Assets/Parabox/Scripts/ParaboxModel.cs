@@ -108,6 +108,7 @@ namespace Parabox
         public readonly Dictionary<int, PRoom> rooms = new Dictionary<int, PRoom>();
         public readonly List<PEntity> entities = new List<PEntity>();
         public PEntity player;
+        public bool useAuthoredDoorwayExits;
 
         // Whirlpool links: entering the key cell relocates the entity to the value cell. Both
         // directions are stored. Built by LevelParser (pairs sorted by roomId,x,y — the SAME order
@@ -577,6 +578,13 @@ namespace Parabox
             {
                 var container = room.containerBox;
                 if (container == null) return false; // main room edge — blocked
+
+                // A boundary may contain one or more authored openings. The renderer marks the
+                // centre of each contiguous opening as its doorway, so collision must use that
+                // exact same cell. This prevents an entity slipping through the solid-looking part
+                // of a wide opening (Level 1 requires left, then up) while preserving deliberately
+                // offset side doors in later recursive levels.
+                if (useAuthoredDoorwayExits && !IsExitCell(room, e.pos, dir)) return false;
                 return TryMoveInto(e, container.roomId, container.pos + dir, dir, guard);
             }
 
@@ -719,6 +727,36 @@ namespace Parabox
             if (dir == Vector2Int.left) return new Vector2Int(room.width - 1, room.height / 2);
             if (dir == Vector2Int.up) return new Vector2Int(room.width / 2, 0);
             return new Vector2Int(room.width / 2, room.height - 1);
+        }
+
+        // Returns true only for the rendered doorway cell at the centre of the contiguous open run
+        // containing `cell`. Boundary walls split a side into separate authored doorways.
+        public static bool IsExitCell(PRoom room, Vector2Int cell, Vector2Int outwardDirection)
+        {
+            if (room == null || !room.InBounds(cell) || room.wall[cell.x, cell.y]) return false;
+
+            bool horizontal = outwardDirection == Vector2Int.up
+                              || outwardDirection == Vector2Int.down;
+            if (horizontal)
+            {
+                int y = outwardDirection == Vector2Int.up ? room.height - 1 : 0;
+                if (cell.y != y) return false;
+                int start = cell.x;
+                int end = cell.x;
+                while (start > 0 && !room.wall[start - 1, y]) start--;
+                while (end + 1 < room.width && !room.wall[end + 1, y]) end++;
+                return cell.x == (start + end) / 2;
+            }
+
+            if (outwardDirection != Vector2Int.left && outwardDirection != Vector2Int.right)
+                return false;
+            int x = outwardDirection == Vector2Int.right ? room.width - 1 : 0;
+            if (cell.x != x) return false;
+            int bottom = cell.y;
+            int top = cell.y;
+            while (bottom > 0 && !room.wall[x, bottom - 1]) bottom--;
+            while (top + 1 < room.height && !room.wall[x, top + 1]) top++;
+            return cell.y == (bottom + top) / 2;
         }
     }
 }

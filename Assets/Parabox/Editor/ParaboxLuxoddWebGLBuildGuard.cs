@@ -30,7 +30,7 @@ namespace Parabox.EditorTools
         {
             ApplyRequiredSettings(true);
             Debug.Log("Parabox Luxodd WebGL settings applied: custom full-screen template, " +
-                      "uncompressed files and browser caching disabled.");
+                      "Gzip .unityweb fallback and browser caching disabled.");
         }
 
         [MenuItem("Tools/Parabox/Build Luxodd WebGL Upload")]
@@ -73,8 +73,12 @@ namespace Parabox.EditorTools
             }
 
             PlayerSettings.WebGL.template = TemplateName;
-            PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
-            PlayerSettings.WebGL.decompressionFallback = false;
+            // Luxodd's upload host does not reliably return application/wasm for plain .wasm
+            // files. Unity's decompression fallback gives compressed build files the neutral
+            // .unityweb extension and decompresses them in the loader, so the browser no longer
+            // depends on server-controlled MIME/Content-Encoding headers.
+            PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Gzip;
+            PlayerSettings.WebGL.decompressionFallback = true;
             PlayerSettings.WebGL.dataCaching = false;
 
             // Most of the approved menu/map is world-space artwork, while its clickable

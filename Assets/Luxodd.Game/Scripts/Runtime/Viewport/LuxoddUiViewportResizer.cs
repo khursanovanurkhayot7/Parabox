@@ -17,10 +17,10 @@ namespace Luxodd.Game.Scripts.Runtime.Viewport
         private void Awake()
         {
             if (_watcher == null)
-                _watcher = FindFirstObjectByType<LuxoddViewportWatcher>();
+                _watcher = FindAnyObjectByType<LuxoddViewportWatcher>();
 
             if (_canvasScaler == null)
-                _canvasScaler = FindFirstObjectByType<CanvasScaler>();
+                _canvasScaler = FindAnyObjectByType<CanvasScaler>();
         }
 
         private void OnEnable()

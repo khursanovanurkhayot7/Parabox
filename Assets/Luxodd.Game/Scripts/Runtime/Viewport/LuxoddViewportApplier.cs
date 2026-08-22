@@ -21,7 +21,7 @@ namespace Luxodd.Game.Scripts.Runtime.Viewport
         private void Reset()
         {
             _camera = Camera.main;
-            _watcher = FindFirstObjectByType<LuxoddViewportWatcher>();
+            _watcher = FindAnyObjectByType<LuxoddViewportWatcher>();
         }
 
         private void Awake()
@@ -33,7 +33,7 @@ namespace Luxodd.Game.Scripts.Runtime.Viewport
         private void OnEnable()
         {
             if (_watcher == null)
-                _watcher = FindFirstObjectByType<LuxoddViewportWatcher>();
+                _watcher = FindAnyObjectByType<LuxoddViewportWatcher>();
 
             if (_watcher != null)
                 _watcher.Changed += OnViewportChanged;

@@ -17,7 +17,7 @@ namespace Luxodd.Game.Example.Scripts.MobileDetectionDemo
         private void Awake()
         {
             if (_watcher == null)
-                _watcher = FindFirstObjectByType<LuxoddViewportWatcher>();
+                _watcher = FindAnyObjectByType<LuxoddViewportWatcher>();
         }
 
         private void OnEnable()

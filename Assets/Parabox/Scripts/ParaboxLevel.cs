@@ -31,5 +31,12 @@ namespace Parabox
         // replays this on the real board, so the demonstration is not a scripted mock-up: it is
         // the game playing itself, and it is provably a winning line.
         public string solution = "";
+
+        // Solution repair may replace stale proof metadata without being allowed to rebalance the
+        // board around a different route. When this lock is enabled, LevelParser keeps using the
+        // pre-repair proof below for its route-safe runtime decoration. These fields are hidden
+        // because they are a preservation contract, not level-design controls.
+        [HideInInspector] public bool preserveRuntimeLayoutProof = false;
+        [HideInInspector] public string runtimeLayoutProof = "";
     }
 }

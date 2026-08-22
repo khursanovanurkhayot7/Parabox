@@ -18,6 +18,8 @@ namespace Parabox.EditorTools
         const string GamePath = "Assets/Parabox/Scenes/Game.unity";
         const string ReportName = "ParaboxPrebuiltUiValidation.txt";
         const string RequestName = "ParaboxGeneratePrebuiltUi.request";
+        const string ValidationRequestName = "ParaboxValidatePrebuiltUi.request";
+        const string ValidationResultName = "ParaboxValidatePrebuiltUi.result";
         static double nextRequestPoll;
 
         // Lets the already-open Editor run the prebuilder after a script recompile. This avoids a
@@ -39,6 +41,25 @@ namespace Parabox.EditorTools
                 || EditorApplication.isPlayingOrWillChangePlaymode) return;
 
             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string validationRequest = Path.Combine(projectRoot, "Library", ValidationRequestName);
+            if (File.Exists(validationRequest))
+            {
+                File.Delete(validationRequest);
+                try
+                {
+                    ValidateSilent();
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", ValidationResultName),
+                        "success=1\nMainMenu and Game prebuilt UI, references, input and missing-script checks passed.\n");
+                }
+                catch (System.Exception exception)
+                {
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", ValidationResultName),
+                        "success=0\n" + exception + "\n");
+                    Debug.LogException(exception);
+                }
+                return;
+            }
+
             string request = Path.Combine(projectRoot, "Library", RequestName);
             if (!File.Exists(request)) return;
             File.Delete(request);
@@ -129,8 +150,8 @@ namespace Parabox.EditorTools
                 if (!menu.IsStaticUiPrebuilt)
                     problems.Add("MainMenu timer or one of the 50 completion badges is not prebuilt.");
 
-                ValidateHitTarget(menu.playButton, "PLAY", problems);
-                ValidateHitTarget(menu.levelsButton, "LEVEL SELECT", problems);
+                ValidateVisibleHomeButton(menu.playButton, "PLAY", problems);
+                ValidateVisibleHomeButton(menu.levelsButton, "LEVEL SELECT", problems);
                 ValidateHitTarget(menu.levelBoardBackButton, "BACK", problems);
                 if (menu.levelButtons == null || menu.levelButtons.Length != 50)
                     problems.Add("MainMenu must contain exactly 50 serialized level buttons.");
@@ -239,6 +260,29 @@ namespace Parabox.EditorTools
                 problems.Add(label + " root hit target is visible and will draw a rectangular background.");
         }
 
+        static void ValidateVisibleHomeButton(Button button, string label, List<string> problems)
+        {
+            if (button == null)
+            {
+                problems.Add(label + " button reference is missing.");
+                return;
+            }
+
+            CanvasGroup group = button.GetComponent<CanvasGroup>();
+            Image image = button.GetComponent<Image>();
+            if (group == null || image == null)
+            {
+                problems.Add(label + " does not have its visible Button face and CanvasGroup.");
+                return;
+            }
+            if (group.alpha < 0.99f)
+                problems.Add(label + " is still an invisible artwork hotspot instead of a visible Button.");
+            if (image.color.a < 0.99f || image.sprite == null)
+                problems.Add(label + " is missing its rounded visible Button face.");
+            if (button.targetGraphic != image || !image.raycastTarget)
+                problems.Add(label + " does not use its visible face as the complete click target.");
+        }
+
         static void ValidateHiddenLossAction(Button button, string label, List<string> problems)
         {
             if (button == null) return;
@@ -276,16 +320,21 @@ namespace Parabox.EditorTools
             if (prefabs == null || prefabs.Length < 10) return;
             MechanicCatalog.Id[][] expected =
             {
-                new[] { MechanicCatalog.Id.Navigation, MechanicCatalog.Id.OneWay },
-                new[] { MechanicCatalog.Id.Crate },
-                new[] { MechanicCatalog.Id.DeepWater },
+                new[]
+                {
+                    MechanicCatalog.Id.Navigation,
+                    MechanicCatalog.Id.Crate,
+                    MechanicCatalog.Id.OneWay,
+                },
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
                 new[] { MechanicCatalog.Id.ButtonGate },
-                new[] { MechanicCatalog.Id.BreakableRock },
-                new[] { MechanicCatalog.Id.Updraft },
-                new[] { MechanicCatalog.Id.SlidingCargo },
-                new[] { MechanicCatalog.Id.Trench, MechanicCatalog.Id.Ice },
-                new[] { MechanicCatalog.Id.StickyFloor },
-                new[] { MechanicCatalog.Id.Cage },
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
+                System.Array.Empty<MechanicCatalog.Id>(),
             };
 
             for (int level = 0; level < expected.Length; level++)

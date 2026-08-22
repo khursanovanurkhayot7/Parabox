@@ -316,14 +316,12 @@ namespace Parabox.EditorTools
             LayoutHomeTitle(ui);
             InstallFiveChapterBoardMap(ui);
 
-            // The approved artwork already contains the exact button faces. These serialized
-            // Buttons remain as invisible hit targets so mouse, keyboard and Luxodd input keep
-            // using the original callbacks without duplicating any visible artwork.
-            LayoutButton(ui.playButton, new Vector2(-225f, -330f), new Vector2(345f, 112f));
-            StyleArtworkHotspot(ui.playButton);
+            // The approved background no longer contains painted button faces. Keep PLAY and
+            // LEVEL SELECT as visible serialized controls; PrebuildStaticUi below applies their
+            // rounded faces, colours and complete hit targets.
+            LayoutButton(ui.playButton, new Vector2(-225f, -335f), new Vector2(345f, 112f));
 
-            LayoutButton(ui.levelsButton, new Vector2(225f, -330f), new Vector2(370f, 112f));
-            StyleArtworkHotspot(ui.levelsButton);
+            LayoutButton(ui.levelsButton, new Vector2(225f, -335f), new Vector2(370f, 112f));
 
             LayoutButton(ui.levelBoardBackButton, new Vector2(0f, -440f), new Vector2(520f, 122f));
             ArcadeActionButtonStyle.ApplyLevelMapBack(ui.levelBoardBackButton);
@@ -807,9 +805,14 @@ namespace Parabox.EditorTools
             photo.transform.localPosition = new Vector3(0f, 0f, 0.1f);
             var sr = photo.AddComponent<SpriteRenderer>();
             sr.sprite = sprite;
+            sr.sharedMaterial = AssetDatabase.GetBuiltinExtraResource<Material>("Sprites-Default.mat");
             sr.color = Color.white;
             sr.sortingOrder = -206;
             ui.backdrop.bgPhoto = sr;
+
+            FilmGridBackdrop generatedBackdrop = backdrop.GetComponent<FilmGridBackdrop>();
+            if (generatedBackdrop != null) generatedBackdrop.enabled = false;
+            DestroyNamed(backdrop, "AnimatedGridBackdropFX");
 
             // The generated plate already contains its own lighting, particles and vignette.
             // Disable the old procedural overlay so the scene does not become noisy or washed out.
@@ -1197,9 +1200,14 @@ namespace Parabox.EditorTools
             photo.transform.localPosition = new Vector3(0f, 0f, 0.1f);
             var renderer = photo.AddComponent<SpriteRenderer>();
             renderer.sprite = sprite;
+            renderer.sharedMaterial = AssetDatabase.GetBuiltinExtraResource<Material>("Sprites-Default.mat");
             renderer.color = Color.white;
             renderer.sortingOrder = -206;
             backdrop.bgPhoto = renderer;
+
+            FilmGridBackdrop generatedBackdrop = root.GetComponent<FilmGridBackdrop>();
+            if (generatedBackdrop != null) generatedBackdrop.enabled = false;
+            DestroyNamed(root, "AnimatedGridBackdropFX");
 
             // The selected chamber art already contains its own blue halo and vignette.
             backdrop.baseColors = new[] { Hex("020A14"), Hex("020812"), Hex("01060D") };

@@ -477,6 +477,7 @@ namespace Luxodd.Game.Example.Scripts
         }
     }
 #else
+#pragma warning disable 0414 // Serialized compatibility fields are intentionally inert without Input System.
     public class ArcadeButtonMappingDiagnosticBehaviour : MonoBehaviour
     {
         [field: SerializeField] public bool ShouldUseMappingDiagnostic { get; private set; }
@@ -531,5 +532,6 @@ namespace Luxodd.Game.Example.Scripts
             }
         }
     }
+#pragma warning restore 0414
 #endif
 }

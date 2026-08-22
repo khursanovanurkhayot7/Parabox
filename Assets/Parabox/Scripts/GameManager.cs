@@ -157,21 +157,24 @@ namespace Parabox
         int lastTutorialMoveFrame = -1;
         bool suppressMirroredArcadeMove;
         GameObject mechanicSpotlightRoot;
-        bool tutorialFromMainPlay;
         bool editorPreviewMode;
         [Header("Prebuilt finale")]
         public FinaleFx finaleOverlay;
         bool finaleSequenceActive;
         bool lossTransactionRequested;
+        Canvas tutorialTimerCanvas;
+        Vector2 gameplayTimerAnchoredPosition;
+        bool gameplayTimerPositionCaptured;
+        const float TutorialTimerDrop = 140f;
 
-        // Any terminal state — won, timed out, or out of moves. Every input guard tests this, so a
-        // new failure kind can never accidentally leave the board still playable. The tutorial
-        // counts too: while the game is demonstrating itself, the player's keys must do nothing
-        // and the clock must not run.
-        bool Ended => won || timedUp || outOfMoves || Tutoring;
+        // Terminal means this attempt is over. Ended also includes the tutorial because player
+        // input must stay locked while the demonstration is driving the screen; the countdown is
+        // deliberately governed by Terminal instead so tutorial-video time can consume the clock.
+        bool Terminal => won || timedUp || outOfMoves;
+        bool Ended => Terminal || Tutoring;
         // The whole onboarding — cinematic AND the choice panel that follows it. While this is true
-        // the board is not the player's: no input, no clock. GameManager owns the flag (it owns the
-        // timeline), so there is one source of truth rather than a reach into the UI component.
+        // the board is not the player's. GameManager owns the flag (it owns the timeline), so there
+        // is one source of truth rather than a reach into the UI component.
         bool Tutoring => cinematic;
         bool cinematic;
         // Lost, specifically — the win branch needs its own handling (Space = next level).
@@ -229,21 +232,13 @@ namespace Parabox
             levelIndex = Mathf.Clamp(editorPreviewLevel >= 0
                 ? editorPreviewLevel
                 : PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
-            tutorialFromMainPlay = PlayerPrefs.GetInt(MainMenuUI.MainPlayTutorialKey, 0) == 1;
-            if (tutorialFromMainPlay)
-            {
-                PlayerPrefs.DeleteKey(MainMenuUI.MainPlayTutorialKey);
-                PlayerPrefs.Save();
-            }
             ApplyLevelTheme(levelIndex / 10);   // Beginner / Intermediate / Advanced skin
             ConfigureChapterPresentation(levelIndex / 10);
             if (loseFx != null) loseFx.SetLeaderboardTheme(frameColor, gutterColor);
             model = LevelParser.Parse(levelPrefabs[levelIndex]);
             BuildView();
             SyncViews(true);
-            // arriving from the main-menu "dive": fly the camera in from far out into the board.
-            // The level-1 cinematic owns the camera from the first frame, so the normal fly-in is
-            // suppressed there (the flag is still consumed so it can't leak into a later level).
+            // Arriving from level-select: fly the camera in from far out into the board.
             if (PlayerPrefs.GetInt("Parabox.FlyIn", 0) == 1)
             {
                 PlayerPrefs.DeleteKey("Parabox.FlyIn");
@@ -275,11 +270,9 @@ namespace Parabox
             var levelInfo = levelPrefabs[levelIndex].GetComponent<ParaboxLevel>();
             par = levelInfo != null ? levelInfo.par : 0;
 
-            // The countdown scales with the PUZZLE, not the level number. It used to be
-            // 10 + levelIndex, which was fine while every level sat near the same par — but pars
-            // now run from 1 to 22, and that formula handed level 20 a 22-move puzzle and 29
-            // seconds. Roughly three seconds a move plus a thinking cushion, and never under 20s,
-            // so the clock is pressure rather than a dexterity test.
+            // The campaign timer follows CampaignProgression's reviewed rule. Chapters I-IV use
+            // their +3-second progression and tutorial allowances; Chapter V starts at 100
+            // seconds on Level 41 and rises by two seconds through Level 50.
             timeLimit = TimeLimitForLevel(levelIndex, par);
             timeLeft = timeLimit;
             countdownArmed = false;
@@ -290,9 +283,6 @@ namespace Parabox
             // seamless menu-entry: the HUD is already "there" — skip the timer's scale/fade-in
             timerIntro = PlayerPrefs.GetInt("Parabox.Seamless", 0) == 1 ? IntroDur : 0f;
 
-            // A fresh run first plays the one-time origin film, then hands the untouched board
-            // directly to playable Level 1. Mechanic tutorial cinematics are intentionally off.
-            StartCoroutine(BeginOnboarding());
             tickBump = 0f;
             lastSecond = -1;
             int tier = Mathf.Clamp(levelIndex / 10, 0,
@@ -311,6 +301,7 @@ namespace Parabox
             if (timerRoot != null)
                 timerRoot.gameObject.SetActive(GameplayCountdownEnabled && !editorPreviewMode);
             if (GameplayCountdownEnabled && !editorPreviewMode) AnimateTimer();
+            MaybeTutorial();
             LuxoddGameService.ReportLevelBegin(levelIndex);
         }
 
@@ -845,7 +836,7 @@ namespace Parabox
             // Only a successful PLAYER move starts the gameplay clock.
             countdownArmed = true;
 
-            SyncViews(false);
+            SyncViews(false, dir);
 
             // Squash every entity that actually moved, in the move direction.
             var moveDir = new Vector2(dir.x, dir.y);
@@ -1076,7 +1067,7 @@ namespace Parabox
             }
         }
 
-        void SyncViews(bool instant)
+        void SyncViews(bool instant, Vector2Int portalDirection = default)
         {
             foreach (var e in model.entities)
             {
@@ -1097,7 +1088,20 @@ namespace Parabox
                 if (!v.gameObject.activeSelf) v.gameObject.SetActive(true);
                 v.Unsink();   // restore a rock that undo brought back (cheap no-op otherwise)
                 var room = model.rooms[e.roomId];
-                v.SetTarget(roomRoots[e.roomId], Cell(room, e.pos), instant);
+                Transform targetParent = roomRoots[e.roomId];
+                bool crossedRoomBoundary = moveStartPositions.TryGetValue(e, out var start)
+                    && start.room != e.roomId;
+                // Recursive cargo changes coordinate spaces exactly like the player. Using the
+                // generic reparent animation made an UP push appear to fly sideways/outside the
+                // chamber even though the model had correctly placed the cargo in its parent.
+                // Give every cross-room entity the same cardinal hand-off animation so the visual
+                // direction always matches the joystick direction and the logical grid state.
+                if ((ReferenceEquals(e, model.player) || crossedRoomBoundary)
+                    && v.transform.parent != targetParent
+                    && portalDirection != Vector2Int.zero)
+                    v.SetPortalTarget(targetParent, Cell(room, e.pos), portalDirection, instant);
+                else
+                    v.SetTarget(targetParent, Cell(room, e.pos), instant);
             }
 
             // Terrain that changes as you play. All of it is read straight off the model, so undo
@@ -1141,14 +1145,45 @@ namespace Parabox
             foreach (var kv in tiles.locks) Show(kv.Value, !unlocked);
 
             var playerRoom = model.rooms[model.player.roomId];
+            int presentationRoomId = playerRoom.id;
+
+            // In the finale, cargo can leave the room the player is still standing inside. The
+            // old camera continued to frame only that inner room, so the correctly transferred
+            // cargo appeared to float into black space with no destination. For that hand-off
+            // frame, open the view to the immediate parent room. The player remains logically in
+            // the child and the next input is unchanged; this only reveals the real playable cell
+            // that accepted the cargo. A blocked parent side never reaches this branch because
+            // LevelModel refuses that push.
+            if (levelIndex >= 40 && portalDirection != Vector2Int.zero
+                && moveStartPositions.TryGetValue(model.player, out var playerStart)
+                && playerStart.room == model.player.roomId)
+            {
+                foreach (PEntity entity in model.entities)
+                {
+                    if (entity == null || entity.sunk || !entity.IsCrate
+                        || entity.interiorRoomId >= 0
+                        || !moveStartPositions.TryGetValue(entity, out var entityStart)
+                        || entityStart.room == entity.roomId
+                        || entityStart.room != playerStart.room
+                        || !model.rooms.TryGetValue(entityStart.room, out PRoom sourceRoom)
+                        || sourceRoom.containerBox == null
+                        || sourceRoom.containerBox.roomId != entity.roomId)
+                        continue;
+
+                    presentationRoomId = entity.roomId;
+                    break;
+                }
+            }
+
+            PRoom presentationRoom = model.rooms[presentationRoomId];
             if (hiddenDiscovery != null) hiddenDiscovery.Refresh();
-            FocusRoom(playerRoom.id);
+            FocusRoom(presentationRoomId);
             // The active nested room lives inside a larger coloured meta-box shell. Frame both,
             // not just the miniature room geometry, so the shell remains completely visible like
             // a playable room-container instead of becoming cropped cyan bands at screen edges.
-            float nestedFraming = playerRoom.id == 0 ? 1f : 1.45f;
-            cameraFollow.SetTargetRoom(roomRoots[playerRoom.id], playerRoom.width,
-                playerRoom.height, instant, nestedFraming);
+            float nestedFraming = presentationRoomId == 0 ? 1f : 1.45f;
+            cameraFollow.SetTargetRoom(roomRoots[presentationRoomId], presentationRoom.width,
+                presentationRoom.height, instant, nestedFraming);
         }
 
         // Keep the complete recursive board rendered during room transitions. Only simplify the
@@ -1811,8 +1846,8 @@ namespace Parabox
         // -------------------------------------------------- timer
         void TickTimer()
         {
-            if (Ended || !countdownArmed) return;
-            timeLeft -= Time.deltaTime;
+            if (Terminal || !countdownArmed) return;
+            timeLeft = Mathf.Max(0f, timeLeft - Time.deltaTime);
             if (timeLeft <= 0f)
                 TimeUp();
         }
@@ -1830,7 +1865,7 @@ namespace Parabox
             int secs = Mathf.CeilToInt(Mathf.Max(0f, timeLeft));
             if (secs != lastSecond)
             {
-                if (lastSecond >= 0 && !Ended)
+                if (lastSecond >= 0 && !Terminal)
                 {
                     tickBump = 1f; // pop on each new second
                     if (secs > 0 && secs <= 5) Sfx.TimerWarning();
@@ -1842,7 +1877,7 @@ namespace Parabox
             if (timerLabel != null) timerLabel.transform.localScale = Vector3.one * (1f + tickBump * 0.16f);
 
         // Turn the visible countdown red as soon as it reaches 5 seconds.
-        bool danger = secs > 0 && secs <= 5 && !Ended;
+        bool danger = secs > 0 && secs <= 5 && !Terminal;
         if (timerLabel != null)
             timerLabel.color = danger ? TimerWarn : Color.white;
         if (timerFill != null)
@@ -1866,9 +1901,36 @@ namespace Parabox
 
         void TimeUp()
         {
-            if (Ended) return;
+            if (Terminal) return;
+            if (Tutoring) EndTutorialForTimeout();
             timedUp = true;
             ShowLose("TIME'S UP", "The clock ran out on this one.");
+        }
+
+        // A tutorial video can now spend the level allowance. If it reaches zero, tear down the
+        // off-screen lesson cleanly before showing the normal loss presentation; otherwise the
+        // cinematic canvas would remain above the TIME'S UP screen.
+        void EndTutorialForTimeout()
+        {
+            if (_cine != null)
+            {
+                StopCoroutine(_cine);
+                _cine = null;
+            }
+            countdownArmed = false;
+            tutorialInteractive = false;
+            tutorialExiting = false;
+            ClearGoalGlow();
+            ClearMechanicSpotlights();
+            ReleaseRT();
+            if (tutorialFx != null) tutorialFx.RevealGameplayImmediately();
+            if (cameraFollow != null) cameraFollow.enabled = true;
+            SetTutorialTimerPresentation(false);
+            SetHud(1f, false);
+            cinematic = false;
+            tutorialSequence.Clear();
+            tutorialSequenceIndex = 0;
+            if (model != null && model.player != null) FocusRoom(model.player.roomId);
         }
 
         void OutOfMoves()
@@ -1879,25 +1941,13 @@ namespace Parabox
             ShowLose("OUT OF MOVES", $"0 / {moveLimit} MOVES LEFT");
         }
 
-        // ============================================ chapter-start onboarding (cinematic)
+        // ============================================ retired chapter-start tutorial system
         //
         // A dedicated chapter cinematic, not an overlay on gameplay. The entire HUD is hidden and
         // one clean mini-puzzle introduces the chapter. It never plays the current board
         // or reads its solution. The end choice always enters the untouched campaign level;
         // players never practise inside the separate teaching board.
         public const string TutorialKey = "Parabox.Tutorial.Seen";
-        // Kept for compatibility with older local/cloud progress. Playback no longer uses this
-        // persistent value: the origin film is intentionally shown once per launched game session.
-        public const string OriginFilmKey = "Parabox.OriginFilm.Seen";
-        static bool originFilmPlayedThisSession;
-
-        // SubsystemRegistration also runs when Unity enters Play Mode with domain reload disabled,
-        // so closing/reopening the build and every fresh Editor Play session reliably gets the film.
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetOriginFilmSession()
-        {
-            originFilmPlayedThisSession = false;
-        }
         // The versioned prefix invalidates older solution replays and abstract rule cards. Existing
         // players receive each spoiler-free gameplay mini-board once after a presentation upgrade.
         const string MechanicBriefingPrefix = TutorialVideoVersion.MechanicSeenPrefix;
@@ -1916,6 +1966,7 @@ namespace Parabox
         BoardTiles tutorialTiles;
         Blinker tutorialPlayerBlinker;
         readonly List<MechanicCatalog.Id> tutorialSequence = new List<MechanicCatalog.Id>();
+        readonly HashSet<string> missingTutorialWarnings = new HashSet<string>();
         int tutorialSequenceIndex;
         bool tutorialInteractive;
         const float TutorialStageOffset = 4096f;
@@ -1927,7 +1978,11 @@ namespace Parabox
             => seconds / TutorialPlaybackRate;
 
         List<MechanicCatalog.Id> CurrentTutorialMechanics()
-            => MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
+        {
+            // Chapter openers always replay their explanation. Chapter I also stages two focused
+            // introductions: button/gate before Level 7. Sliding cargo was removed from Chapter I.
+            return MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
+        }
 
         bool CurrentTutorialIsNewMechanic()
         {
@@ -1940,50 +1995,36 @@ namespace Parabox
 
         bool CanSkipCurrentTutorial() => !CurrentTutorialIsNewMechanic();
 
-        // The origin movie is the complete onboarding. Campaign levels now begin immediately;
-        // the old mechanic mini-board system remains serialized only for scene compatibility.
-        bool WillTutorial() => false;
-
-        void MaybeTutorial() { }
-
-        System.Collections.IEnumerator BeginOnboarding()
+        // Tutorials replay whenever their associated level is entered. This includes chapter
+        // explanations at 1/11/21/31/41 plus the focused Chapter I lessons at Levels 5 and 7.
+        bool WillTutorial()
         {
-            // Show the film on the first gameplay entry of every app session, regardless of saved
-            // campaign progress. Editor preview tools remain fast and never consume the real launch.
-            bool playOrigin = !editorPreviewMode && !originFilmPlayedThisSession;
-            if (playOrigin)
+            if (editorPreviewMode) return false;
+            if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
-                cinematic = true;
-                if (hudReveal != null) hudReveal.StandDown();
-                SetHud(0f, false);
-                if (cameraFollow != null) cameraFollow.enabled = false;
-
-                var film = gameObject.AddComponent<OriginFilmPlayer>();
-                yield return film.Play();
-                bool filmStarted = film != null && film.PlaybackStarted;
-                if (film != null) Destroy(film);
-
-                // Completion and Skip count as watched. A loading or codec failure does not, so
-                // the player receives another chance instead of silently losing the film forever.
-                if (filmStarted)
-                {
-                    originFilmPlayedThisSession = true;
-                    // Preserve the legacy analytics/cloud field, but never use it to suppress a
-                    // future launch. SubsystemRegistration above is the playback authority.
-                    PlayerPrefs.SetInt(OriginFilmKey, 1);
-                    PlayerPrefs.Save();
-                    LuxoddGameService.SyncProgress();
-                }
-                cinematic = false;
+                Debug.LogError("[Parabox] Real tutorial video references are missing from Game.unity.");
+                return false;
             }
 
-            bool tutorialWillRun = WillTutorial();
-            MaybeTutorial();
-            if (!tutorialWillRun && playOrigin)
+            List<MechanicCatalog.Id> lessons = CurrentTutorialMechanics();
+            if (lessons.Count == 0 || string.IsNullOrWhiteSpace(MechanicCatalog.Lesson(lessons)))
+                return false;
+            foreach (MechanicCatalog.Id lesson in lessons)
             {
-                SetHud(1f, true);
-                if (cameraFollow != null) cameraFollow.enabled = true;
+                if (TutorialPuzzleLibrary.Exists(levelIndex, lesson)) continue;
+                string path = TutorialPuzzleLibrary.ResourcePath(levelIndex, lesson);
+                if (missingTutorialWarnings.Add(path))
+                    Debug.LogWarning($"[Parabox] Tutorial asset is not ready yet: {path}. "
+                        + "Gameplay continues; the Edit-Mode repair will create it after Play Mode exits.");
+                return false;
             }
+            return true;
+        }
+
+        void MaybeTutorial()
+        {
+            if (!WillTutorial()) return;
+            _cine = StartCoroutine(TutorialCinematic(true));
         }
 
         // Keep mechanic briefings visually clean. Earlier versions placed large cyan focus rings
@@ -2009,6 +2050,7 @@ namespace Parabox
         {
             TutorialPlaybackSerial++;
             cinematic = true;
+            countdownArmed = true;
             tutorialInteractive = false;
             if (resetSequence || tutorialSequence.Count == 0)
             {
@@ -2039,6 +2081,8 @@ namespace Parabox
             }
             if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
+                countdownArmed = false;
+                SetTutorialTimerPresentation(false);
                 cinematic = false;
                 if (tutorialFx != null) tutorialFx.HideSkip();
                 Debug.LogError("[Parabox] The prebuilt real tutorial video is missing. "
@@ -2048,15 +2092,19 @@ namespace Parabox
 
             // Dedicate the display to the lesson while leaving the gameplay model untouched.
             if (hudReveal != null) hudReveal.StandDown();
+            SetTutorialTimerPresentation(true);
             SetHud(0f, false);
             if (cameraFollow != null) cameraFollow.enabled = false;
 
             tutorialFx.CoverInstant();
             tutorialFx.SetVideo(null);
-            tutorialFx.PanelIn(TutorialDuration(tutorialFromMainPlay ? 0.8f : 0.5f));
-            yield return WaitU(TutorialDuration(tutorialFromMainPlay ? 0.9f : 0.6f));
+            tutorialFx.PanelIn(TutorialDuration(0.5f));
+            yield return WaitU(TutorialDuration(0.6f));
 
             yield return RunTutorialPuzzle(tutorialSequence[tutorialSequenceIndex]);
+            // The demonstrated video spends time; the choice card does not punish the player for
+            // reading. Keep the remaining value visible and resume it on the next video or move.
+            countdownArmed = false;
             yield return tutorialFx.ShowChoice();
             _cine = null;
         }
@@ -2077,6 +2125,7 @@ namespace Parabox
             tutorialModel = LevelParser.Parse(prefab);
             tutorialTiles = new BoardTiles();
             BoardAssets tutorialAssets = BuildAssets();
+            tutorialAssets.simplifyBoundaryContours = true;
             tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
                 tutorialRoomRoots, tutorialViews, tutorialTiles);
             tutorialBoardRoot.name = "TutorialMiniPuzzle";
@@ -2095,10 +2144,15 @@ namespace Parabox
             tutorialBgCamera.targetTexture = _rt;
             tutorialBgCamera.enabled = true;
             tutorialFx.SetVideo(_rt);
+            bool chapterFiveWalkthrough = levelIndex == 40
+                && mechanic == MechanicCatalog.Id.ColourCargo;
             string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex, mechanic);
-            tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleLesson)
-                ? bundleLesson
-                : $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
+            if (chapterFiveWalkthrough)
+                ShowChapterFiveTutorialStep(1);
+            else
+                tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleLesson)
+                    ? bundleLesson
+                    : $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
 
             SyncTutorialViews(true);
             SetTutorialCameraRoom(tutorialModel.player.roomId, true);
@@ -2113,6 +2167,8 @@ namespace Parabox
             }
 
             var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+            int finaleLessonStep = chapterFiveWalkthrough ? 1 : 0;
+            int finaleCargoBoundaryCrossings = 0;
             foreach (char command in route)
             {
                 if (!cinematic || tutorialExiting || tutorialModel == null) yield break;
@@ -2122,6 +2178,7 @@ namespace Parabox
                     before[entity] = (entity.roomId, entity.pos);
 
                 int roomBefore = tutorialModel.player.roomId;
+                bool gateWasOpen = chapterFiveWalkthrough && tutorialModel.GatesOpen();
                 Vector2Int direction = TutorialDirection(command);
                 if (direction == Vector2Int.zero || !tutorialModel.TryMovePlayer(direction))
                 {
@@ -2129,16 +2186,34 @@ namespace Parabox
                     yield break;
                 }
 
-                SyncTutorialViews(false);
+                SyncTutorialViews(false, direction, before);
                 Vector2 squashDirection = new Vector2(direction.x, direction.y);
                 foreach (PEntity entity in tutorialModel.entities)
                 {
                     if (!before.TryGetValue(entity, out var start)
                         || start.room != entity.roomId || start.pos != entity.pos)
                         tutorialViews[entity].Squash(squashDirection);
+                    if (chapterFiveWalkthrough && entity.IsCrate && entity.interiorRoomId < 0
+                        && entity.colour > 0 && before.TryGetValue(entity, out start)
+                        && start.room != entity.roomId)
+                        finaleCargoBoundaryCrossings++;
                 }
                 if (tutorialPlayerBlinker != null)
                     tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
+
+                if (chapterFiveWalkthrough)
+                {
+                    int nextStep = finaleLessonStep;
+                    if (tutorialModel.player.roomId == 1) nextStep = Mathf.Max(nextStep, 2);
+                    if (tutorialModel.player.roomId == 2) nextStep = Mathf.Max(nextStep, 3);
+                    if (finaleCargoBoundaryCrossings >= 2) nextStep = Mathf.Max(nextStep, 4);
+                    if (!gateWasOpen && tutorialModel.GatesOpen()) nextStep = 5;
+                    if (nextStep > finaleLessonStep)
+                    {
+                        finaleLessonStep = nextStep;
+                        ShowChapterFiveTutorialStep(finaleLessonStep);
+                    }
+                }
 
                 if (roomBefore != tutorialModel.player.roomId)
                     yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId,
@@ -2153,6 +2228,29 @@ namespace Parabox
                 yield break;
             }
             yield return WaitU(TutorialDuration(0.9f));
+        }
+
+        void ShowChapterFiveTutorialStep(int step)
+        {
+            if (tutorialFx == null) return;
+            switch (Mathf.Clamp(step, 1, 5))
+            {
+                case 1:
+                    tutorialFx.ShowCaptionPersistent("1 / 5  •  ENTER THE BLUE ROOM");
+                    break;
+                case 2:
+                    tutorialFx.ShowCaptionPersistent("2 / 5  •  ENTER THE INNER TEAL ROOM");
+                    break;
+                case 3:
+                    tutorialFx.ShowCaptionPersistent("3 / 5  •  PUSH CORAL CARGO OUT THROUGH BOTH ROOMS");
+                    break;
+                case 4:
+                    tutorialFx.ShowCaptionPersistent("4 / 5  •  PARK CORAL ON THE MATCHING BUTTON TARGET");
+                    break;
+                default:
+                    tutorialFx.ShowCaptionPersistent("5 / 5  •  CROSS THE GATE AND FOLLOW THE ONE-WAY");
+                    break;
+            }
         }
 
         // Retained for editor-authored tutorial diagnostics. The player-facing TRY IT YOURSELF
@@ -2187,6 +2285,7 @@ namespace Parabox
             tutorialModel = LevelParser.Parse(prefab);
             tutorialTiles = new BoardTiles();
             BoardAssets tutorialAssets = BuildAssets();
+            tutorialAssets.simplifyBoundaryContours = true;
             tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
                 tutorialRoomRoots, tutorialViews, tutorialTiles);
             tutorialBoardRoot.name = "TutorialPracticePuzzle";
@@ -2229,7 +2328,7 @@ namespace Parabox
             }
 
             Sfx.Move();
-            SyncTutorialViews(false);
+            SyncTutorialViews(false, direction, before);
             Vector2 squashDirection = new Vector2(direction.x, direction.y);
             foreach (PEntity entity in tutorialModel.entities)
             {
@@ -2282,7 +2381,8 @@ namespace Parabox
             }
         }
 
-        void SyncTutorialViews(bool instant)
+        void SyncTutorialViews(bool instant, Vector2Int portalDirection = default,
+                               Dictionary<PEntity, (int room, Vector2Int pos)> before = null)
         {
             if (tutorialModel == null) return;
             foreach (PEntity entity in tutorialModel.entities)
@@ -2302,7 +2402,38 @@ namespace Parabox
                 if (!view.gameObject.activeSelf) view.gameObject.SetActive(true);
                 view.Unsink();
                 PRoom room = tutorialModel.rooms[entity.roomId];
-                view.SetTarget(tutorialRoomRoots[entity.roomId], Cell(room, entity.pos), instant);
+                Transform targetParent = tutorialRoomRoots[entity.roomId];
+                bool crossedRoomBoundary = before != null
+                    && before.TryGetValue(entity, out var start) && start.room != entity.roomId;
+                if ((ReferenceEquals(entity, tutorialModel.player) || crossedRoomBoundary)
+                    && view.transform.parent != targetParent
+                    && portalDirection != Vector2Int.zero)
+                    view.SetPortalTarget(targetParent, Cell(room, entity.pos), portalDirection, instant);
+                else
+                    view.SetTarget(targetParent, Cell(room, entity.pos), instant);
+            }
+
+            // Keep the Chapter V walkthrough visually identical to the real game: when cargo
+            // exits while the player is still inside, reveal the parent room that received it.
+            if (levelIndex >= 40 && before != null
+                && before.TryGetValue(tutorialModel.player, out var tutorialPlayerStart)
+                && tutorialPlayerStart.room == tutorialModel.player.roomId)
+            {
+                foreach (PEntity entity in tutorialModel.entities)
+                {
+                    if (entity == null || entity.sunk || !entity.IsCrate
+                        || entity.interiorRoomId >= 0
+                        || !before.TryGetValue(entity, out var entityStart)
+                        || entityStart.room == entity.roomId
+                        || entityStart.room != tutorialPlayerStart.room
+                        || !tutorialModel.rooms.TryGetValue(entityStart.room, out PRoom sourceRoom)
+                        || sourceRoom.containerBox == null
+                        || sourceRoom.containerBox.roomId != entity.roomId)
+                        continue;
+
+                    SetTutorialCameraRoom(entity.roomId, instant);
+                    break;
+                }
             }
 
             if (tutorialTiles == null) return;
@@ -2409,6 +2540,7 @@ namespace Parabox
         // scrim still covers the display, then reveal the untouched campaign puzzle underneath.
         System.Collections.IEnumerator TutorialExitToPlay()
         {
+            countdownArmed = false;
             tutorialInteractive = false;
             if (tutorialFx != null)
             {
@@ -2439,13 +2571,15 @@ namespace Parabox
             SetHud(1f, true);
             if (cameraFollow != null) cameraFollow.enabled = true;   // resumes at the gameplay pose
             ReleaseRT();
+            SetTutorialTimerPresentation(false);
 
             CompleteTutorialExit();
         }
 
         void CompleteTutorialExit()
         {
-            timeLeft = timeLimit;                   // the demo cost no clock; the player starts fresh
+            // Preserve the tutorial video's time cost. The remaining allowance resumes with the
+            // player's first successful campaign move rather than during the fade/choice card.
             countdownArmed = false;
             cinematic = false;                      // gameplay is live from here
             tutorialExiting = false;
@@ -2553,12 +2687,14 @@ namespace Parabox
 
         void RecoverFromTutorialRewindFailure()
         {
+            countdownArmed = false;
             ClearGoalGlow();
             ClearMechanicSpotlights();
             CleanupTutorialPuzzle();
             ReleaseRT();
             if (tutorialFx != null) tutorialFx.RevealGameplayImmediately();
             if (cameraFollow != null) cameraFollow.enabled = true;
+            SetTutorialTimerPresentation(false);
             SetHud(1f, true);
             cinematic = false;
             tutorialInteractive = false;
@@ -2633,6 +2769,48 @@ namespace Parabox
             hudGroup.alpha = alpha;
             hudGroup.interactable = interactive;
             hudGroup.blocksRaycasts = interactive;
+        }
+
+        // The tutorial has its own screen-space canvas at sorting order 100, while the ordinary
+        // timer lives inside the gameplay HUD at order 0. Promote only the timer above the lesson
+        // and let its CanvasGroup ignore the hidden HUD parent, so the exact same countdown stays
+        // visible without duplicating UI or state.
+        void SetTutorialTimerPresentation(bool visible)
+        {
+            if (timerRoot == null || editorPreviewMode) return;
+
+            timerRoot.gameObject.SetActive(GameplayCountdownEnabled);
+            if (!gameplayTimerPositionCaptured)
+            {
+                gameplayTimerAnchoredPosition = timerRoot.anchoredPosition;
+                gameplayTimerPositionCaptured = true;
+            }
+            // The purple Skip control owns the upper-right corner. During tutorials, give the
+            // timer a separate row below it; restore the normal gameplay position on exit.
+            timerRoot.anchoredPosition = visible
+                ? gameplayTimerAnchoredPosition + Vector2.down * TutorialTimerDrop
+                : gameplayTimerAnchoredPosition;
+            if (timerCanvas != null)
+            {
+                timerCanvas.ignoreParentGroups = visible;
+                timerCanvas.interactable = false;
+                timerCanvas.blocksRaycasts = false;
+            }
+
+            // Do not use ?? here. Unity can return a destroyed/missing native component wrapper
+            // that is not a CLR null but does compare equal to null through UnityEngine.Object.
+            // Accessing that wrapper caused the MissingComponentException shown in the Console.
+            if (tutorialTimerCanvas == null)
+            {
+                tutorialTimerCanvas = timerRoot.GetComponent<Canvas>();
+                if (tutorialTimerCanvas == null)
+                    tutorialTimerCanvas = timerRoot.gameObject.AddComponent<Canvas>();
+            }
+            if (tutorialTimerCanvas == null) return;
+
+            tutorialTimerCanvas.overrideSorting = visible;
+            tutorialTimerCanvas.sortingOrder = visible ? 110 : 0;
+            if (visible) timerRoot.SetAsLastSibling();
         }
 
         // The goal the box has to reach — a soft glow breathes behind it. Order 3 sits above the wall

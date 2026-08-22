@@ -41,6 +41,8 @@ namespace Parabox
         bool controlledPlayerMotion;
         SpriteRenderer motionGlow;
         Color motionGlowBase;
+        bool hasPortalTravelDirection;
+        Vector2 portalTravelDirection;
 
         // Five pre-created sprites form a short trail of tiny player-coloured rectangles. They are
         // pooled once per actor (never allocated per move), then stamped behind the departing body.
@@ -293,9 +295,26 @@ namespace Parabox
             }
         }
 
+        // A recursive-room transfer changes both parent transform and scale. Preserving the old
+        // world pose across that reparent can convert a horizontal move into a local position above
+        // or below the doorway. Supply the logical input direction for every recursive entity
+        // transfer so the hand-off remains visually cardinal: RIGHT always travels right into the
+        // new cell, LEFT travels left, and the vertical directions behave the same way. This is
+        // required for cargo as well as the player; both can cross a room boundary in one push.
+        public void SetPortalTarget(Transform parent, Vector3 localPos, Vector2 direction,
+                                    bool instant)
+        {
+            hasPortalTravelDirection = !instant && direction.sqrMagnitude > 0.001f;
+            portalTravelDirection = hasPortalTravelDirection ? direction.normalized : Vector2.zero;
+            SetTarget(parent, localPos, instant);
+            hasPortalTravelDirection = false;
+            portalTravelDirection = Vector2.zero;
+        }
+
         public void SetTarget(Transform parent, Vector3 localPos, bool instant)
         {
-            if (transform.parent != parent)
+            bool parentChanged = transform.parent != parent;
+            if (parentChanged)
             {
                 transform.SetParent(parent, true); // keep world pose across the reparent
                 // Deep recursive rooms can differ by more than 100x in world scale. Keeping that
@@ -309,18 +328,32 @@ namespace Parabox
                     1f);
                 transform.localScale = settle;
 
-                curPos = transform.localPosition;
-                Vector3 transition = curPos - localPos;
-                const float maxTransitionDistance = 1.35f;
-                if (transition.sqrMagnitude > maxTransitionDistance * maxTransitionDistance)
+                if (hasPortalTravelDirection)
                 {
-                    curPos = localPos + transition.normalized * maxTransitionDistance;
+                    // Begin just outside the destination cell, on the side opposite travel. This
+                    // is long enough to read as entering/exiting a recursive room but short enough
+                    // to stay inside the doorway while the camera performs its portal zoom.
+                    const float portalLeadDistance = 0.72f;
+                    moveDirection = portalTravelDirection;
+                    lastHoriz = Mathf.Abs(moveDirection.x) >= Mathf.Abs(moveDirection.y);
+                    curPos = localPos - (Vector3)portalTravelDirection * portalLeadDistance;
                     transform.localPosition = curPos;
+                }
+                else
+                {
+                    curPos = transform.localPosition;
+                    Vector3 transition = curPos - localPos;
+                    const float maxTransitionDistance = 1.35f;
+                    if (transition.sqrMagnitude > maxTransitionDistance * maxTransitionDistance)
+                    {
+                        curPos = localPos + transition.normalized * maxTransitionDistance;
+                        transform.localPosition = curPos;
+                    }
                 }
                 SyncStepEchoParent(parent);
             }
 
-            if (localPos != targetLocalPos)
+            if (localPos != targetLocalPos || parentChanged)
             {
                 Vector3 d = localPos - curPos;
                 bool wasMoving = moving;

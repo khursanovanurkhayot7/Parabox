@@ -9,14 +9,12 @@ namespace Parabox
     [RequireComponent(typeof(AudioSource))]
     public class MusicPlayer : MonoBehaviour
     {
-        const string FunMusicResource = "Music/NeonPuzzleParty";
         public static MusicPlayer Instance;
 
         public AudioClip clip;
-        [Range(0f, 1f)] public float volume = 0.45f;
+        [Range(0f, 1f)] public float volume = 0.22f;
 
         AudioSource src;
-        bool cinematicDuck;
 
         void Awake()
         {
@@ -24,14 +22,8 @@ namespace Parabox
             Instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // Prefer the generated, project-owned neon arcade loop. Keeping the serialized clip as
-            // a fallback means an older scene still opens safely before the Editor audio baker runs.
-            AudioClip funClip = Resources.Load<AudioClip>(FunMusicResource);
-            if (funClip != null) clip = funClip;
-
-            // This release replaces the previous music track. Clear the stale saved mute once so
-            // existing test cabinets hear it; later mute choices still persist normally.
-            Sfx.EnsureAudibleForMusicUpgrade("Parabox.AudioUpgrade.NeonPuzzleParty.v1");
+            // Keep the scene's original Flowerbed Fields loop. Both MainMenu and Game serialize
+            // that same clip, so the persistent player carries it across scenes without a restart.
             Sfx.Init();   // make sure the saved mute state is loaded
 
             src = GetComponent<AudioSource>();
@@ -49,8 +41,7 @@ namespace Parabox
             // stay in sync with the shared mute toggle
             if (src == null) return;
             src.mute = Sfx.Muted;
-            float targetVolume = cinematicDuck ? 0f : volume;
-            src.volume = Mathf.MoveTowards(src.volume, targetVolume, Time.unscaledDeltaTime * 1.8f);
+            src.volume = Mathf.MoveTowards(src.volume, volume, Time.unscaledDeltaTime * 1.8f);
 
             // Browsers and some arcade machines can briefly suspend their audio context while a
             // scene starts. Recover automatically once audio is allowed instead of leaving the
@@ -85,8 +76,5 @@ namespace Parabox
                 Debug.LogWarning($"[Parabox] Background music failed to load: {clip.name}.");
         }
 
-        // The origin film carries its own soundtrack. Fade the menu loop away for the movie and
-        // restore it smoothly when the Level 1 tutorial begins.
-        public void SetCinematicDuck(bool active) => cinematicDuck = active;
     }
 }

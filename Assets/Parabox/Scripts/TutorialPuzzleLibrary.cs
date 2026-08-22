@@ -2,9 +2,9 @@ using UnityEngine;
 
 namespace Parabox
 {
-    // Resolves prebuilt tutorial mini-puzzles. Chapter boards are used at Levels 1/11/21/31/41;
-    // at most one focused Mechanic_* board is used for the first supported new rule in each
-    // chapter. Later new rules never create extra tutorial interruptions.
+    // Resolves prebuilt tutorial mini-puzzles. Chapter boards are used at Levels 1/11/21/31/41.
+    // Chapter I additionally stages focused sliding-cargo and button/gate boards before Levels 5
+    // and 7; later chapters keep the single supported-mechanic lesson rule.
     public static class TutorialPuzzleLibrary
     {
         const string Root = "Parabox/Tutorials/";

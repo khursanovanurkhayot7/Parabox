@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using UnityEditor;
+using UnityEditor.Build.Profile;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
@@ -18,6 +19,7 @@ namespace Parabox.EditorTools
         const string LevelFolder = "Assets/Parabox/Prefabs/Levels";
         const string MainMenuScene = "Assets/Parabox/Scenes/MainMenu.unity";
         const string GameScene = "Assets/Parabox/Scenes/Game.unity";
+        const string PlayTransitionSessionKey = "Parabox.Editor.PlayTransition";
         // One campaign-wide contract keeps chapter boundaries from resetting the difficulty.
         // The authored proof may be longer than the floor, but never shorter. Room counts are
         // exact because each recursive room is an intentional dependency, not visual decoration.
@@ -27,7 +29,11 @@ namespace Parabox.EditorTools
             15, 16, 18, 19, 19, 19, 20, 21, 21, 22,
             23, 24, 24, 25, 26, 27, 27, 28, 29, 31,
             32, 32, 33, 34, 34, 35, 36, 38, 39, 40,
-            41, 44, 45, 46, 46, 47, 51, 55, 58, 64
+            // Chapter V difficulty is protected by recursive depth, five-or-more simultaneous
+            // completion jobs, unique mastery rules, gate/portal dependencies and the rising
+            // one-way ladder. Keep the authored route floors aligned with the reviewed extreme
+            // boards instead of demanding filler walking (the generator caps finale routes at 64).
+            47, 47, 47, 48, 48, 56, 56, 59, 59, 59
         };
 
         static readonly int[] ExpectedRoomCounts =
@@ -36,7 +42,9 @@ namespace Parabox.EditorTools
             2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
             2, 2, 3, 2, 2, 2, 3, 3, 2, 2,
             2, 3, 4, 2, 3, 3, 3, 4, 4, 3,
-            3, 3, 3, 4, 4, 4, 3, 5, 5, 4
+            // Extreme Chapter V: Levels 41-45 use four connected scales; Levels 46-50 use five.
+            // Every extra room is visited and participates in the stored winning route.
+            4, 4, 4, 4, 4, 5, 5, 5, 5, 5
         };
 
         static double nextPlayModeRequestPoll;
@@ -44,7 +52,18 @@ namespace Parabox.EditorTools
         [InitializeOnLoadMethod]
         static void RegisterPlayModeRequestWatcher()
         {
-            ConfigurePlayModeStartScene();
+            EditorApplication.playModeStateChanged -= TrackPlayModeTransition;
+            EditorApplication.playModeStateChanged += TrackPlayModeTransition;
+
+            // AssetDatabase and Build Profile writes are unsafe while Unity is reconstructing the
+            // domain for Play Mode. isPlaying briefly reports false inside that reconstruction,
+            // so SessionState carries an explicit guard across the domain reload.
+            if (!SessionState.GetBool(PlayTransitionSessionKey, false)
+                && !EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                EditorApplication.delayCall -= ConfigurePlayModeStartScene;
+                EditorApplication.delayCall += ConfigurePlayModeStartScene;
+            }
             // Lets local recovery request Enter/Exit Play Mode without macOS Accessibility
             // permissions. Polling also works if a maximized Game view stops accepting clicks.
             EditorApplication.update -= PollPlayModeRequests;
@@ -53,11 +72,30 @@ namespace Parabox.EditorTools
             PollPlayModeRequests();
         }
 
+        static void TrackPlayModeTransition(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingEditMode
+                || state == PlayModeStateChange.EnteredPlayMode
+                || state == PlayModeStateChange.ExitingPlayMode)
+            {
+                SessionState.SetBool(PlayTransitionSessionKey, true);
+                return;
+            }
+
+            if (state != PlayModeStateChange.EnteredEditMode) return;
+            SessionState.SetBool(PlayTransitionSessionKey, false);
+            EditorApplication.delayCall -= ConfigurePlayModeStartScene;
+            EditorApplication.delayCall += ConfigurePlayModeStartScene;
+        }
+
         // Pressing Unity's normal Play button must always boot through the title screen. Starting
         // directly from Game.unity bypasses the menu hand-off flags and can leave the gameplay
         // camera showing an empty board. Unity restores the developer's edited scene after Stop.
         static void ConfigurePlayModeStartScene()
         {
+            if (SessionState.GetBool(PlayTransitionSessionKey, false)
+                || EditorApplication.isPlayingOrWillChangePlaymode) return;
+
             // Use Unity's normal domain + scene reload. Fast Play Mode kept references to prefab
             // assets across imports; after regenerating levels those objects were destroyed while
             // GameManager still held them, producing MissingReferenceException and unstable test
@@ -65,9 +103,76 @@ namespace Parabox.EditorTools
             EditorSettings.enterPlayModeOptionsEnabled = false;
             EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
 
+            EnsurePlayableScenesInBuildProfile();
+
             SceneAsset mainMenu = AssetDatabase.LoadAssetAtPath<SceneAsset>(MainMenuScene);
             if (mainMenu != null && EditorSceneManager.playModeStartScene != mainMenu)
                 EditorSceneManager.playModeStartScene = mainMenu;
+        }
+
+        // Unity 6 keeps a global scene list and can also keep a separate override on the active
+        // Build Profile. The project YAML can therefore look correct while the running Editor has
+        // an empty overridden list. SceneManager then unloads the level, refuses to load MainMenu,
+        // and the Game view is left at "No cameras rendering". Keep both the shared list and the
+        // active profile view synchronized whenever scripts reload.
+        static void EnsurePlayableScenesInBuildProfile()
+        {
+            var requiredScenes = new[]
+            {
+                new EditorBuildSettingsScene(MainMenuScene, true),
+                new EditorBuildSettingsScene(GameScene, true)
+            };
+            bool changed = false;
+
+            if (!SceneListsMatch(EditorBuildSettings.globalScenes, requiredScenes))
+            {
+                EditorBuildSettings.globalScenes = requiredScenes;
+                changed = true;
+            }
+
+            BuildProfile activeProfile = BuildProfile.GetActiveBuildProfile();
+            if (activeProfile != null && activeProfile.overrideGlobalScenes)
+            {
+                // Both scenes are campaign infrastructure rather than profile-specific content.
+                // Using the shared list prevents Web, desktop, and local Play Mode from drifting.
+                activeProfile.overrideGlobalScenes = false;
+                EditorUtility.SetDirty(activeProfile);
+                changed = true;
+            }
+
+            // Reassigning this property refreshes Unity's in-memory list for the active platform
+            // profile. That refresh is required when files were regenerated by a batch process
+            // while the main Editor was already open.
+            if (!SceneListsMatch(EditorBuildSettings.scenes, requiredScenes))
+            {
+                EditorBuildSettings.scenes = requiredScenes;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                AssetDatabase.SaveAssets();
+                Debug.Log("[Parabox] Repaired Build Profile scenes: MainMenu, Game.");
+            }
+        }
+
+        static bool SceneListsMatch(EditorBuildSettingsScene[] actual,
+                                    EditorBuildSettingsScene[] expected)
+        {
+            if (actual == null || actual.Length != expected.Length) return false;
+            for (int i = 0; i < expected.Length; i++)
+            {
+                if (!actual[i].enabled || actual[i].path != expected[i].path) return false;
+            }
+            return true;
+        }
+
+        [MenuItem("Tools/Parabox/Repair Build Profile Scene List")]
+        public static void RepairBuildProfileSceneList()
+        {
+            EnsurePlayableScenesInBuildProfile();
+            ConfigurePlayModeStartScene();
+            Debug.Log("[Parabox] Build Profile scene list is ready for Play Mode.");
         }
 
         // "Play Maximized" was saved into this project's editor layout and could create a zero-size
@@ -139,7 +244,6 @@ namespace Parabox.EditorTools
                     {
                         ForceSafeGameViewMode();
                         PlayerPrefs.SetInt("Parabox.Level", 0);
-                        PlayerPrefs.SetInt(MainMenuUI.MainPlayTutorialKey, 1);
                         PlayerPrefs.Save();
                         EditorSceneManager.OpenScene(GameScene, OpenSceneMode.Single);
                         EditorApplication.isPlaying = true;
@@ -386,7 +490,6 @@ namespace Parabox.EditorTools
 
             ForceSafeGameViewMode();
             PlayerPrefs.SetInt(GameManager.EditorPreviewLevelKey, zeroBasedLevel);
-            PlayerPrefs.DeleteKey(MainMenuUI.MainPlayTutorialKey);
             PlayerPrefs.Save();
 
             SceneAsset game = AssetDatabase.LoadAssetAtPath<SceneAsset>(GameScene);
@@ -760,9 +863,31 @@ namespace Parabox.EditorTools
                 if (targets == 0)
                     Failure(report, ref failures, index, "level has no completion target");
                 int dependencyLimit = LevelLayoutRebalancer.DependencyBudgetForLevel(index);
-                if (model.rebalanceObjectives > dependencyLimit)
+                int authoredGateLimit = LevelLayoutRebalancer.AuthoredGateReuseBudgetForLevel(index);
+                int premiumTaskTarget = LevelLayoutRebalancer.PremiumTaskTargetForLevel(index);
+                if (index >= 10 && index < 20
+                    && model.rebalanceObjectives != dependencyLimit)
                     Failure(report, ref failures, index,
-                        $"cross-mechanic dependencies {model.rebalanceObjectives} exceed planned limit {dependencyLimit}");
+                        $"Chapter II retained {model.rebalanceObjectives}/{dependencyLimit} required "
+                        + "progressive cargo/gate dependencies");
+                else if (index >= 40 && index < 50)
+                {
+                    if (targets < premiumTaskTarget)
+                        Failure(report, ref failures, index,
+                            $"Chapter V exposes only {targets}/{premiumTaskTarget} visible premium "
+                            + "completion jobs");
+                    int premiumJobsAdded = model.rebalanceObjectives - authoredGateLimit;
+                    if (premiumJobsAdded < 0 || premiumJobsAdded > premiumTaskTarget
+                        || authoredGateLimit <= 0)
+                        Failure(report, ref failures, index,
+                            $"Chapter V retained an invalid delivery/gate task budget: "
+                            + $"O{model.rebalanceObjectives}, G{authoredGateLimit}, "
+                            + $"target {premiumTaskTarget}");
+                }
+                else if (model.rebalanceObjectives > dependencyLimit + authoredGateLimit)
+                    Failure(report, ref failures, index,
+                        $"cross-mechanic dependencies {model.rebalanceObjectives} exceed planned limit "
+                        + (dependencyLimit + authoredGateLimit));
                 int cleanWallLimit = index == 29 ? 8
                     : index < 10 ? 1 : index < 20 ? 2
                     : index < 30 ? 3 : index < 40 ? 4 : 5;
@@ -772,20 +897,29 @@ namespace Parabox.EditorTools
                 int focusedAccentLimit = Mathf.Max(
                     index < 10 ? 1 : index < 30 ? 2 : 3,
                     LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(index));
-                if (model.rebalanceOneWays > focusedAccentLimit
+                int requiredOneWays = LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(index);
+                if (((index >= 10 && index < 20) || index >= 40)
+                    && model.rebalanceOneWays != requiredOneWays)
+                    Failure(report, ref failures, index,
+                        $"Chapter {(index < 20 ? "II" : "V")} retained "
+                        + $"{model.rebalanceOneWays}/{requiredOneWays} required one-way commitments");
+                else if (model.rebalanceOneWays > focusedAccentLimit
                     || model.rebalanceHazards > focusedAccentLimit)
                     Failure(report, ref failures, index,
                         "focused mechanic accents exceed the readable per-level limit");
                 int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
-                if (roomCount > 1)
-                {
-                    float minimumThinkingTime = info.par * 1.25f + 20f;
-                    float actualTime = CampaignProgression.TimeLimit(index, info.par);
-                    if (actualTime + 0.01f < minimumThinkingTime)
-                        Failure(report, ref failures, index,
-                            $"recursive timer {actualTime:0.0}s is below the route/read minimum " +
-                            $"{minimumThinkingTime:0.0}s");
-                }
+                float expectedTime = index >= 40
+                    ? 100f + (index - 40) * 2f
+                    : index == 0 || index == 4
+                        ? 35f
+                        : 20f + index * 3f
+                            + (CampaignProgression.ReceivesChapterTutorialTimeBonus(index) ? 15f : 0f);
+                float actualTime = CampaignProgression.TimeLimit(index, info.par);
+                if (Mathf.Abs(actualTime - expectedTime) > 0.01f)
+                    Failure(report, ref failures, index,
+                        $"timer {actualTime:0.0}s does not match the campaign rule " +
+                        $"(Level {index + 1} must be {expectedTime:0.0}s: Chapter V uses "
+                        + "100s +2s/level; earlier chapters keep their reviewed timer rules)");
 
                 // Level 1 may introduce one action plainly. After that, the early campaign must
                 // never regress to a corridor solved by holding one direction. This is measured by
@@ -885,7 +1019,15 @@ namespace Parabox.EditorTools
                         Failure(report, ref failures, index,
                             $"route moves {movedCargo.Count}/{authoredCargo} authored cargo objects; " +
                             "cargo cannot be decorative");
-                    if (authoredCargo > 0 && roomCount > 1 && cargoRoomTransitions == 0)
+                    // Chapter II's route-local foundation crates are mandatory jobs, but are not
+                    // authored room-transfer cargo. Subtract them before enforcing the separate
+                    // recursive-boundary requirement.
+                    int insertedFoundationCargo = index >= 10 && index < 20
+                        ? Mathf.Max(0, model.rebalanceObjectives
+                            - (model.curriculumReuses.Contains(MechanicCatalog.Id.ButtonGate) ? 1 : 0))
+                        : 0;
+                    int authoredBoundaryCargo = Mathf.Max(0, authoredCargo - insertedFoundationCargo);
+                    if (authoredBoundaryCargo > 0 && roomCount > 1 && cargoRoomTransitions == 0)
                         Failure(report, ref failures, index,
                             "recursive cargo never crosses a room boundary");
                 }
@@ -966,23 +1108,21 @@ namespace Parabox.EditorTools
                     report.AppendLine($"FAIL  Chapter {chapter + 1}: expected exactly one tutorial " +
                         $"checkpoint at its opener, found {chapterIntroductions[chapter]}");
                 }
-                bool chapterHasMechanicVideo = false;
+                int chapterMechanicVideos = 0;
                 int chapterStart = chapter * 10;
                 for (int level = chapterStart; level < chapterStart + 10; level++)
                 {
                     if (!MechanicCatalog.TryGetNewMechanicTutorial(
                             campaignPrefabs, level, out _)) continue;
-                    chapterHasMechanicVideo = true;
-                    break;
+                    chapterMechanicVideos++;
                 }
-                int expectedChapterVideos = chapterHasMechanicVideo ? 2 : 1;
+                int expectedChapterVideos = 1 + chapterMechanicVideos;
                 if (chapterTutorialVideos[chapter] != expectedChapterVideos)
                 {
                     failures++;
                     report.AppendLine($"FAIL  Chapter {chapter + 1}: expected " +
-                        $"{expectedChapterVideos} tutorial video(s) (one chapter video" +
-                        (chapterHasMechanicVideo ? " plus one mechanic video" :
-                            "; no supported new mechanic exists") +
+                        $"{expectedChapterVideos} tutorial video(s) (one chapter video plus " +
+                        $"{chapterMechanicVideos} staged mechanic video(s)" +
                         $"), found {chapterTutorialVideos[chapter]}");
                 }
                 if (!chapterHasTeach[chapter] || !chapterHasCombine[chapter] || !chapterHasMastery[chapter])

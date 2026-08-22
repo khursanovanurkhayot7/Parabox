@@ -9,7 +9,14 @@ namespace Parabox
     {
         public static LevelModel Parse(GameObject levelPrefab)
         {
-            var model = new LevelModel();
+            int levelIndex = LevelIndex(levelPrefab.name);
+            var model = new LevelModel
+            {
+                // Level 1 deliberately teaches that the recursive shell has a real doorway:
+                // from the shown start the diver must move left, then up. Later authored levels
+                // retain their established free-edge recursive rule and stored solutions.
+                useAuthoredDoorwayExits = levelIndex == 0
+            };
 
             foreach (var rm in levelPrefab.GetComponentsInChildren<RoomMarker>(true))
             {
@@ -270,8 +277,10 @@ namespace Parabox
             // and restores the prefab's stored solution, then adds walls and directional choke
             // points only where that route remains untouched.
             var levelInfo = levelPrefab.GetComponent<ParaboxLevel>();
-            LevelLayoutRebalancer.Apply(model, LevelIndex(levelPrefab.name),
-                levelInfo != null ? levelInfo.solution : string.Empty);
+            string runtimeLayoutProof = levelInfo != null && levelInfo.preserveRuntimeLayoutProof
+                ? levelInfo.runtimeLayoutProof
+                : levelInfo != null ? levelInfo.solution : string.Empty;
+            LevelLayoutRebalancer.Apply(model, levelIndex, runtimeLayoutProof);
 
             return model;
         }

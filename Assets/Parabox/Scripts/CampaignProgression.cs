@@ -39,7 +39,7 @@ namespace Parabox
 
         static readonly string[] ChapterNames =
         {
-            "Foundations", "Inside the Box", "Room Transfers", "Room Maneuvers", "Recursive Mastery"
+            "Foundations", "Inside the Box", "Room Transfers", "Room Maneuvers", "Recursive Finale"
         };
 
         static readonly string[] ChapterPhilosophies =
@@ -47,7 +47,7 @@ namespace Parabox
             "Master four readable foundation rules", "Enter rooms that are also boxes",
             "Transfer cargo through rooms and choose useful exits",
             "Dock, enter and re-enter rooms as puzzle pieces",
-            "Master deep room chains, sibling transfers and multi-stage extraction"
+            "Synthesize nested rooms, portal exits, one-way commitments and cargo-held gates"
         };
 
         // One concise design contract for every board in final campaign order. These are not UI
@@ -57,16 +57,16 @@ namespace Parabox
         // Chapter V combines both ideas across the deepest recursive chains in the campaign.
         static readonly string[] MechanicFocus =
         {
-            "Read a bent one-way route around an ivory pillar",
-            "Approach cargo from below, turn it onto its goal and return separately",
-            "Stop sliding cargo at the far wall, then take the lower return path",
-            "Solve two opposed deliveries before returning to the player target",
-            "Keep one crate on the button while delivering another beyond its gate",
-            "Complete an ordinary delivery, slide a second crate onto the button, then cross its opened gate",
-            "Hold the button with one crate, send the other through the gate, then recover and deliver both",
-            "Complete three deliveries from three approach sides around the central wall and one-way crossing",
-            "Hold the gate with ordinary cargo while ordinary and sliding cargo cross the divider",
-            "Open the circuit with one crate, route sliding cargo through it, then finish three deliveries and exit",
+            "Commit to the one-way lane, deliver the crate and unwind to the player target",
+            "Turn one crate around the corner, then take a separate route to the exit",
+            "Plan two opposed deliveries without blocking either crate's required approach",
+            "Finish the left delivery before making an irreversible one-way crossing",
+            "Choose the delivery order for two cargo pieces without blocking their shared approach lanes",
+            "Coordinate two ordinary cargo deliveries inside one tight shared workspace",
+            "Leave one crate on the button while the second delivery and player cross the gate",
+            "Assign three crates to two deliveries and one permanent gate-holding job",
+            "Open the divider, transfer the second crate, then recover and deliver the holding crate",
+            "Hold the first gate while two cargo pieces cross, then open the sealed final exit",
 
             "Enter one fixed room, solve its bent inner route and leave through a different edge",
             "Exit a fixed room, circle outside and re-enter it from another side before finishing",
@@ -94,23 +94,23 @@ namespace Parabox
             "Extract cargo outward, then reposition its former room for the exit",
             "Solve one nested branch before crossing into its sibling branch",
             "Route cargo around an inner pillar before aligning the parent room",
-            "Travel through two connected rooms without losing the outer route",
-            "Send cargo inward first, then bring it back through a different side",
-            "Relay one cargo piece outward across two boundaries, then finish outside",
-            "Carry one object through three connected room scales",
-            "Dock three room pieces without blocking the next approach",
-            "Push the child room to its stop, enter it and extract from the new side",
+            "Finish the multi-room manifest, then use the mandatory portal to enter the sealed exit pocket",
+            "Relay cargo across three spaces before committing to the portal-only player exit",
+            "Transfer the colour convoy between sibling rooms, then portal into the sealed finish",
+            "Extract through three connected room scales before taking the portal exit",
+            "Complete the five-space return route, then cross the portal into the final pocket",
+            "Resolve the branching room chain and use the portal-only exit to finish Chapter IV",
 
-            "Carry cargo through two nested rooms, then dock the parent to finish",
-            "Plan a long inner relay whose return path changes after each transfer",
-            "Turn cargo around the deepest corner before rebuilding the outer route",
-            "Relay cargo across four boundaries while preserving the exit path",
-            "Extract from one branch and deliver into a different sibling branch",
-            "Choose the room position that creates the correct final exit side",
-            "Move back through a nested pocket and recover cargo from a new approach",
-            "Push, pin and re-enter across five spaces before extracting the cargo",
-            "Coordinate a branching five-room chain with ordered cargo transfers",
-            "Complete the final four-room recursion where every boundary crossing matters"
+            "Resolve every authored job across four room scales, hold the exit gate and take the sealed portal",
+            "Sequence the anchored sibling jobs without losing the portal-side return",
+            "Turn deep cargo from the useful docking side before completing every delivery and teleporting out",
+            "Preserve the return path across four room scales while the cargo holds the gate route open",
+            "Extract both branches, complete their jobs and commit to the sealed portal pocket",
+            "Invert the five-space entry order and cross the held gate before teleporting",
+            "Reverse the movable child and recover the only portal approach after every delivery",
+            "Push, pin and re-enter five spaces while sequencing the gated jobs before the portal",
+            "Order every job across the mirrored five-room branch before committing to its exit",
+            "Solve the final authored jobs where every room, cargo hold, one-way, gate and portal is mandatory"
         };
 
         // This serialized flag marks the five guaranteed chapter-tutorial checkpoints. Focused
@@ -169,19 +169,24 @@ namespace Parabox
 
         public static float TimeLimit(int levelIndex, int par)
         {
-            int level = Mathf.Clamp(levelIndex + 1, 1, 50);
+            int index = Mathf.Clamp(levelIndex, 0, 49);
 
-            // A predictable arcade curve: Level 2 starts at exactly 20 seconds. Multi-delivery and
-            // recursive boards also scale from their authored route length so the player has time
-            // to read the board and plan instead of losing to the clock while learning.
-            if (level <= 2) return 20f;
-            if (level <= 10)
-                return Mathf.Max(20f + (level - 2), par * 1.35f + 12f);
-            if (level <= 20) return Mathf.Max(20f + (level - 2), par * 1.5f + 22f);
-            if (level <= 30) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
-            if (level <= 40) return Mathf.Max(20f + (level - 2), par * 1.5f + 20f);
-            int chapterStep = level - 41;
-            return Mathf.Max(76f + chapterStep * 3f, par * 1.65f + 30f);
+            // Chapter V has its own finale clock: Level 41 starts at 100 seconds and each next
+            // level adds two seconds, ending at 118 on Level 50. Earlier chapters keep the normal
+            // +3-second progression, the two 35-second teaching overrides, and the +15-second
+            // tutorial bonus at Levels 11, 21 and 31.
+            if (index >= 40) return 100f + (index - 40) * 2f;
+            if (index == 0 || index == 4) return 35f;
+
+            float seconds = 20f + index * 3f;
+            if (ReceivesChapterTutorialTimeBonus(index)) seconds += 15f;
+            return seconds;
+        }
+
+        public static bool ReceivesChapterTutorialTimeBonus(int levelIndex)
+        {
+            int index = Mathf.Clamp(levelIndex, 0, 49);
+            return index == 10 || index == 20 || index == 30;
         }
 
         public static string TutorialLine(int levelIndex)
@@ -191,7 +196,7 @@ namespace Parabox
                 case 1: return "A room can also be a box. If it cannot move, enter it and leave through another edge.";
                 case 2: return "Carry cargo through room boundaries. Choose the exit side before you start pushing.";
                 case 3: return "A room is also a movable piece. Pin it to enter, leave from another side, then dock it.";
-                case 4: return "Combine everything: move, pin and enter rooms, then relay cargo through several connected spaces.";
+                case 4: return "Final synthesis: cross four or five rooms inside rooms, hold the cargo gate, obey the one-way and use the sealed portal exit.";
                 default: return "Move one tile at a time and reach the bright player target.";
             }
         }
@@ -205,8 +210,7 @@ namespace Parabox
             {
                 case 0:  return "ONE-WAY  Follow the arrow and route around the ivory pillar.";
                 case 1:  return "PUSH  The arrow remains. Get behind the amber cargo and push it away from you.";
-                case 2:  return "SLIDING CARGO  A pushed sliding crate continues until a wall stops it.";
-                case 4:  return "BUTTON + GATE  Leave cargo on the button to hold its matching gate open.";
+                case 6:  return "BUTTON + GATE  Leave cargo on the button to hold its matching gate open.";
                 case 10: return "NESTED BOARD  A room is also a box. When it cannot move, the player enters it.";
                 case 11: return "PEARL + LOCK  Collect the pearl before crossing the gold lock.";
                 case 12: return "MAGNET  Aligned cargo is pulled after every move.";
@@ -218,12 +222,10 @@ namespace Parabox
                 case 24: return "BOULDER  Move in the same direction first to build a pushing run-up.";
                 case 27: return "KELP  The diver can pass through it, but cargo cannot.";
                 case 30: return "MOVABLE ROOM  If the room cannot be pushed, you enter it. Exit from another side to reposition it.";
-                case 32: return "GRAVITY WELL  Aligned cargo is pulled one cell after every move.";
-                case 33: return "NARROW GAP  Cargo fits through; the diver must find another route.";
-                case 39: return "PULSE  The barrier advances through a three-beat open-and-closed cycle.";
+                case 34: return "PORTAL  Enter one cyan whirlpool and emerge from its paired space.";
                 case 18: return "MULTI-STAGE RECURSION  One move can carry the player or cargo between connected rooms.";
                 case 29: return "CHAMBER CHAIN  Track the same cargo through every connected coordinate space.";
-                case 40: return "COLOUR CARGO  Match coral, sky and green crates to targets with the same colour and mark.";
+                case 40: return "FINALE CHAIN  Cross every nested room, complete the cargo jobs, hold the gate, obey the one-way and portal into the sealed finish.";
                 default: return string.Empty;
             }
         }

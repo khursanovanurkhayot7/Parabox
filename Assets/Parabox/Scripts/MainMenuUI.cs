@@ -77,7 +77,6 @@ namespace Parabox
         public const int PerCategory = 10;
 
         const string LevelKey = "Parabox.Level";
-        public const string MainPlayTutorialKey = "Parabox.Tutorial.FromMainPlay";
         const int NewGameLevel = 0;
         const int CampaignLevelCount = 50;
         static string BestKey(int level) => "Parabox.Best." + level;
@@ -179,6 +178,12 @@ namespace Parabox
 
         void OnEnable()
         {
+            // The approved background is button-free. These are real Unity controls, not
+            // invisible hotspots painted over artwork, so restore their visible faces every time
+            // this screen is enabled. This also covers fast Enter Play Mode without scene reload.
+            EnsureHomeActionButton(playButton, "PLAY", true);
+            EnsureHomeActionButton(levelsButton, "LEVEL SELECT", false);
+
             // During the current difficulty playtest all 50 map nodes must remain selectable on
             // every menu visit. The normal completion visuals still use Beaten(), so unlocking a
             // level for testing does not falsely mark it as completed.
@@ -238,13 +243,12 @@ namespace Parabox
             Sfx.Init();
             HideMusicCredit();
 
-            // The approved menu/map artwork already contains the visible button faces. Unity
-            // Buttons sit over those faces as transparent hit targets. A CanvasGroup at EXACTLY
-            // zero alpha can be culled by Unity 6's GraphicRaycaster, which leaves a beautiful
-            // button that cannot receive a click. Keep the hit target imperceptibly non-zero and
-            // repair older baked scenes at runtime as well as newly baked ones.
-            EnsureArtworkHitTarget(playButton);
-            EnsureArtworkHitTarget(levelsButton);
+            // PLAY and LEVEL SELECT used to be pictures painted into the menu background with
+            // nearly invisible Button components laid over them. Keep their approved layout, but
+            // render the supplied button artwork from the real Button hierarchy so hover, press,
+            // controller focus and the complete rectangular hit area all belong to one object.
+            EnsureHomeActionButton(playButton, "PLAY", true);
+            EnsureHomeActionButton(levelsButton, "LEVEL SELECT", false);
             EnsureArtworkHitTarget(levelBoardBackButton);
             // The BACK face is painted into the full-screen map artwork. Keep its transparent
             // Unity hotspot above every decorative map layer so pointer clicks cannot be swallowed
@@ -374,6 +378,143 @@ namespace Parabox
             Graphic[] graphics = button.GetComponentsInChildren<Graphic>(true);
             for (int i = 0; i < graphics.Length; i++)
                 if (graphics[i] != null) graphics[i].raycastTarget = graphics[i] == hitTarget;
+        }
+
+        static void EnsureHomeActionButton(Button button, string label, bool isPlay)
+        {
+            if (button == null) return;
+            button.gameObject.SetActive(true);
+            button.interactable = true;
+            button.transition = Selectable.Transition.ColorTint;
+
+            // Keep both home actions low on the cabinet floor, with a small safe-area margin.
+            // Enforcing this here also covers fast Enter Play Mode without a scene reload.
+            RectTransform buttonRect = button.transform as RectTransform;
+            if (buttonRect != null)
+            {
+                buttonRect.anchoredPosition = new Vector2(isPlay ? -225f : 225f, -335f);
+                buttonRect.sizeDelta = new Vector2(isPlay ? 345f : 370f, 112f);
+            }
+
+            CanvasGroup group = button.GetComponent<CanvasGroup>();
+            if (group == null) group = button.gameObject.AddComponent<CanvasGroup>();
+            group.alpha = 1f;
+            group.interactable = true;
+            group.blocksRaycasts = true;
+
+            Image face = button.GetComponent<Image>();
+            if (face == null) face = button.gameObject.AddComponent<Image>();
+
+            // Reuse the rounded sliced sprite already shipped in the button's Gloss child. This
+            // replaces the old plain/transparent root with a proper rounded face without adding a
+            // second texture or depending on the menu-background picture.
+            Image gloss = FindHomeButtonImage(button.transform, "Gloss");
+            if (gloss != null && gloss.sprite != null)
+            {
+                face.sprite = gloss.sprite;
+                face.type = gloss.type;
+            }
+            face.color = Color.white;
+            face.raycastTarget = true;
+            face.canvasRenderer.cullTransparentMesh = false;
+            button.targetGraphic = face;
+
+            UIGradient gradient = face.GetComponent<UIGradient>();
+            if (gradient == null) gradient = face.gameObject.AddComponent<UIGradient>();
+            gradient.top = isPlay
+                ? new Color(0.33333334f, 0.8627451f, 0.29803923f, 1f)
+                : new Color(1f, 0.84705883f, 0.23921569f, 1f);
+            gradient.bottom = isPlay
+                ? new Color(0.08627451f, 0.52156866f, 0.21176471f, 1f)
+                : new Color(0.9019608f, 0.60784316f, 0.04313726f, 1f);
+            face.SetVerticesDirty();
+
+            Text text = FindHomeButtonLabel(button);
+            if (text != null)
+            {
+                text.text = label;
+                text.raycastTarget = false;
+                text.gameObject.SetActive(true);
+            }
+
+            EnsureHomeButtonIcon(button, text, isPlay);
+
+            Graphic[] graphics = button.GetComponentsInChildren<Graphic>(true);
+            for (int i = 0; i < graphics.Length; i++)
+                if (graphics[i] != null) graphics[i].raycastTarget = graphics[i] == face;
+
+            ColorBlock colors = button.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(1.12f, 1.12f, 1.12f, 1f);
+            colors.selectedColor = colors.highlightedColor;
+            colors.pressedColor = new Color(0.72f, 0.78f, 0.82f, 1f);
+            colors.disabledColor = new Color(0.42f, 0.46f, 0.50f, 0.70f);
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.08f;
+            button.colors = colors;
+
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (hover == null) hover = button.gameObject.AddComponent<UIHoverScale>();
+            hover.hover = 1.05f;
+            hover.press = 0.965f;
+        }
+
+        static Image FindHomeButtonImage(Transform parent, string objectName)
+        {
+            Image[] images = parent.GetComponentsInChildren<Image>(true);
+            for (int i = 0; i < images.Length; i++)
+                if (images[i] != null && images[i].gameObject.name == objectName)
+                    return images[i];
+            return null;
+        }
+
+        static Text FindHomeButtonLabel(Button button)
+        {
+            Text fallback = null;
+            Text[] labels = button.GetComponentsInChildren<Text>(true);
+            for (int i = 0; i < labels.Length; i++)
+            {
+                if (labels[i] == null) continue;
+                if (fallback == null) fallback = labels[i];
+                if (labels[i].gameObject.name == "Lbl" || labels[i].gameObject.name == "Label")
+                    return labels[i];
+            }
+            return fallback;
+        }
+
+        static void EnsureHomeButtonIcon(Button button, Text label, bool isPlay)
+        {
+            Transform existing = button.transform.Find("ButtonIcon");
+            Text icon;
+            if (existing != null)
+            {
+                icon = existing.GetComponent<Text>();
+                if (icon == null) icon = existing.gameObject.AddComponent<Text>();
+            }
+            else
+            {
+                GameObject iconObject = new GameObject("ButtonIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+                iconObject.layer = button.gameObject.layer;
+                iconObject.transform.SetParent(button.transform, false);
+                icon = iconObject.GetComponent<Text>();
+            }
+
+            RectTransform rect = icon.rectTransform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(isPlay ? -112f : -132f, 0f);
+            rect.sizeDelta = new Vector2(54f, 62f);
+
+            icon.text = isPlay ? "\u25B6" : "\u25A6";
+            icon.font = label != null && label.font != null
+                ? label.font
+                : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            icon.fontSize = isPlay ? 35 : 34;
+            icon.fontStyle = FontStyle.Bold;
+            icon.alignment = TextAnchor.MiddleCenter;
+            icon.color = label != null ? label.color : Color.white;
+            icon.raycastTarget = false;
+            icon.gameObject.SetActive(true);
+            icon.transform.SetAsLastSibling();
         }
 
         // Hide the old track credit even when Unity has retained an older in-memory copy of
@@ -782,8 +923,8 @@ namespace Parabox
         // only updates these serialized objects; it never creates menu panels, badges or hit areas.
         public void PrebuildStaticUi()
         {
-            EnsurePrebuiltArtworkHitTarget(playButton);
-            EnsurePrebuiltArtworkHitTarget(levelsButton);
+            EnsurePrebuiltHomeActionButton(playButton, "PLAY", true);
+            EnsurePrebuiltHomeActionButton(levelsButton, "LEVEL SELECT", false);
             EnsurePrebuiltArtworkHitTarget(levelBoardBackButton);
             if (levelButtons != null)
                 for (int i = 0; i < levelButtons.Length; i++)
@@ -812,6 +953,16 @@ namespace Parabox
             if (button.GetComponent<Image>() == null)
                 button.gameObject.AddComponent<Image>();
             EnsureArtworkHitTarget(button);
+        }
+
+        static void EnsurePrebuiltHomeActionButton(Button button, string label, bool isPlay)
+        {
+            if (button == null) return;
+            if (button.GetComponent<CanvasGroup>() == null)
+                button.gameObject.AddComponent<CanvasGroup>();
+            if (button.GetComponent<Image>() == null)
+                button.gameObject.AddComponent<Image>();
+            EnsureHomeActionButton(button, label, isPlay);
         }
 #endif
 
@@ -2027,10 +2178,7 @@ namespace Parabox
                 PlayerPrefs.DeleteKey(GameManager.MechanicBriefingKey(i));
             }
             ScoreSystem.Reset(levelButtons.Length);
-            // A fresh start has to include the first-run demonstration, or "reset" quietly means
-            // "reset everything except the one thing only a new player sees".
             PlayerPrefs.DeleteKey(GameManager.TutorialKey);
-            PlayerPrefs.DeleteKey(GameManager.OriginFilmKey);
             PlayerPrefs.Save();
             RefreshStates();
             RefreshGates();
@@ -2248,15 +2396,9 @@ namespace Parabox
         void BeginStart()
         {
             if (transitioning) return;
-            // Preserve the title-to-game transition hint. Whether a tutorial appears is decided by
-            // the resumed level's first-unseen mechanic, never by replaying that puzzle's solution.
-            PlayerPrefs.SetInt(MainPlayTutorialKey, 1);
-            PlayerPrefs.Save();
+            // PLAY always begins the campaign at Level 1.
             transitioning = true;
-            int resumeLevel = levelPrefabs != null && levelPrefabs.Length > 0
-                ? Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel), 0, levelPrefabs.Length - 1)
-                : NewGameLevel;
-            StartCoroutine(DiveIntoBoard(resumeLevel));
+            StartCoroutine(DiveIntoBoard(NewGameLevel));
         }
 
         // Physically fly the menu camera INTO the world board — from the O framing to the EXACT gameplay
@@ -2270,27 +2412,6 @@ namespace Parabox
                 // No board was shown on the static menu, so this is a normal game entrance rather
                 // than a seamless camera hand-off.
                 LoadGame(level, false);
-                yield break;
-            }
-
-            // Level 1 opens with the tutorial cinematic, which covers the screen the INSTANT the game
-            // loads. Flying the board in first would just show a board that's about to be hidden — so
-            // for level 1 skip the dive entirely and fade straight out, and the tutorial appears
-            // directly instead of "board flies in → gets covered → tutorial".
-            if (level == 0)
-            {
-                float ft = 0f, fdur = 0.3f;
-                while (ft < fdur)
-                {
-                    ft += Time.unscaledDeltaTime;
-                    float a = 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(ft / fdur));
-                    if (homeGroup != null) homeGroup.alpha = a;
-                    if (backgroundGroup != null) backgroundGroup.alpha = a;
-                    yield return null;
-                }
-                if (homeGroup != null) homeGroup.alpha = 0f;
-                if (backgroundGroup != null) backgroundGroup.alpha = 0f;
-                LoadGame(level, true);
                 yield break;
             }
 
