@@ -59,12 +59,12 @@ namespace Parabox
         {
             "Commit to the one-way lane, deliver the crate and unwind to the player target",
             "Turn one crate around the corner, then take a separate route to the exit",
-            "Plan two opposed deliveries without blocking either crate's required approach",
-            "Finish the left delivery before making an irreversible one-way crossing",
-            "Choose the delivery order for two cargo pieces without blocking their shared approach lanes",
-            "Coordinate two ordinary cargo deliveries inside one tight shared workspace",
-            "Leave one crate on the button while the second delivery and player cross the gate",
-            "Assign three crates to two deliveries and one permanent gate-holding job",
+            "Complete two readable deliveries in separate lanes, then take the player exit",
+            "Sequence two deliveries around one genuine one-way commitment",
+            "Park one crate on the button and cross the newly opened gate",
+            "Hold the button, cross the gate and turn one cargo piece onto its goal",
+            "Keep the gate open while routing one delivery around a visible corner",
+            "Maintain the gate hold while completing two independent deliveries",
             "Open the divider, transfer the second crate, then recover and deliver the holding crate",
             "Hold the first gate while two cargo pieces cross, then open the sealed final exit",
 

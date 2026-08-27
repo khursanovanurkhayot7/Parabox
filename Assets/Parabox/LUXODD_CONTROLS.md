@@ -10,12 +10,12 @@ gameplay actions.
 |---|---:|---|---|
 | Black | `JoystickButton0` | Confirm / activate selected button | A / Cross |
 | Red | `JoystickButton1` | Undo | X / Square |
-| Green | `JoystickButton2` | Restart level | Y / Triangle |
-| Yellow | `JoystickButton3` | Open/close Level Select | Start / Options |
-| Blue | `JoystickButton4` | Mute | Left shoulder |
+| Green | `JoystickButton2` | No game action | Y / Triangle |
+| Yellow | `JoystickButton3` | Restart level | Start / Options |
+| Blue | `JoystickButton4` | No game action | Left shoulder |
 | Purple | `JoystickButton5` | Skip the active walkthrough | Right shoulder |
 | Orange | `JoystickButton8` | Luxodd system help/overlay | Select / View |
-| White | `JoystickButton9` | Back / cancel | B / Circle |
+| White | `JoystickButton9` | No game action | B / Circle |
 
 The arcade stick, standard-gamepad left stick, and standard-gamepad D-pad all produce the same
 direction signal. If an idle cabinet joystick and an active standard gamepad are connected at the
@@ -27,25 +27,23 @@ while held because it cannot alter the puzzle or consume the move allowance.
 
 ## Screen behavior
 
-- Main menu: stick/D-pad changes focus; Black/A activates; Yellow/Start toggles Level Select;
-  White/B returns; Blue/LB mutes.
+- Main menu: stick/D-pad changes focus; Black/A activates. Other game buttons do nothing.
 - Level Select: stick/D-pad follows the authored level route; Black/A opens the selected level;
-  Yellow/Start or White/B returns.
+  the visible Back button can be selected and activated with Black/A.
 - Every walkthrough: the prebuilt purple `SKIP` button is visible for the entire demonstration;
   Purple/RB skips immediately and restores the untouched board with full time and moves. Mouse/touch
   can click the same button, and Tab is the keyboard shortcut.
 - Tutorial choice: stick/D-pad selects `REPEAT` or `TRY IT YOURSELF`; Black/A activates the
-  selected choice. Purple/RB remains available as Skip.
+  selected choice. Skip disappears when these two choices appear.
 - First mechanic appearances: a prebuilt `NEW MECHANIC` briefing appears before the first playable
   frame. Full solve demonstrations run only when that exact chapter opener introduces a new rule;
   familiar-mechanic chapter recaps are not presented as late tutorials.
-- Gameplay: stick/D-pad moves; Red/X undoes; Green/Y restarts; Yellow/Start or White/B opens the
-  menu; Blue/LB mutes.
+- Gameplay: stick/D-pad moves; Red/X undoes; Yellow/Start restarts. Green, Blue and White do
+  nothing unless a future authored action is assigned to them.
 - Level complete: Black/A continues.
 - Loss: the game intentionally blocks local controller actions while the Luxodd transaction owns
   the screen. Luxodd Continue restores the exact failed board state with full time and moves.
-- Campaign finale: stick/D-pad selects `PLAY AGAIN` or `LEVEL SELECT`; Black/A activates;
-  Yellow/Start or White/B chooses Level Select.
+- Campaign finale: stick/D-pad selects `PLAY AGAIN` or `LEVEL SELECT`; Black/A activates.
 
 ## Input ownership
 

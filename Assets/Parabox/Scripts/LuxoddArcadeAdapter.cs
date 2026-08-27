@@ -13,21 +13,20 @@ namespace Parabox
 
         public Vector2 Stick { get; private set; }
         public Vector2Int Direction { get; private set; }
-        // Gameplay pulse: exactly once per neutral -> tilted joystick gesture.
+        // Gameplay pulse: once for each deliberate cardinal tilt or direction change.
         public bool MovePulse { get; private set; }
         // UI pulse: menus may repeat while held so long lists remain convenient to navigate.
         public bool NavigationPulse { get; private set; }
 
         public bool ConfirmDown { get; private set; }  // Black
         public bool UndoDown { get; private set; }     // Red
-        public bool RestartDown { get; private set; }  // Green
-        public bool LevelsDown { get; private set; }   // Yellow
-        public bool MuteDown { get; private set; }     // Blue
+        public bool BackDown { get; private set; }     // Red while a menu/selection screen owns input
+        public bool RestartDown { get; private set; }  // Yellow
         public bool SkipDown { get; private set; }     // Purple (skip the active walkthrough)
         public bool SystemDown { get; private set; }   // Orange (Luxodd overlay owns the response)
-        public bool BackDown { get; private set; }     // White
 
         bool moveLatched;
+        Vector2Int lastMoveDirection;
         Vector2Int lastNavigationDirection;
         float nextNavigationRepeat;
 
@@ -38,6 +37,7 @@ namespace Parabox
         // on a deliberate tilt, then stay latched until the stick is genuinely back at centre.
         const float MoveEngageThreshold = 0.58f;
         const float MoveReleaseThreshold = 0.22f;
+        const float DirectionSwitchBias = 0.16f;
 
         // The Luxodd prefab normally creates this adapter. Keep a standalone fallback so cabinet
         // input still works when networking or the runtime prefab is unavailable.
@@ -71,14 +71,14 @@ namespace Parabox
             // gamepad fallback. Reading Gamepad again here caused a single physical press to map to
             // two different actions, so this adapter keeps Luxodd as the only mapping authority.
             Stick = ArcadeControls.GetJoystick();
-            Direction = Quantize(Stick, MoveEngageThreshold);
+            Direction = QuantizeStable(Stick, Direction);
             MovePulse = false;
             NavigationPulse = false;
 
-            // A puzzle move is a discrete arcade gesture, never a frame/time repeat. Once the
-            // joystick leaves neutral, gameplay stays latched until it returns to neutral. This
-            // prevents one held direction from silently spending several moves.
-            MovePulse = ConsumeMoveGesture(Direction, Stick, ref moveLatched);
+            // A held direction never frame-repeats. A deliberate turn to another cardinal direction
+            // does emit immediately, so fast grid movement does not require a stop at neutral.
+            MovePulse = ConsumeMoveGesture(Direction, Stick,
+                ref moveLatched, ref lastMoveDirection);
 
             // Menu focus is non-destructive, so it retains a deliberate hold repeat independent
             // from gameplay's one-tilt/one-move latch.
@@ -99,40 +99,75 @@ namespace Parabox
 
             ConfirmDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Black);
             UndoDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Red);
-            RestartDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Green);
-            LevelsDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Yellow);
-            MuteDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Blue);
+            BackDown = UndoDown;
+            RestartDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Yellow);
             SkipDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Purple);
             SystemDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Orange);
-            BackDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.White);
-            // Purple belongs to walkthrough Skip. Orange is observed for diagnostics only; the
-            // Luxodd system overlay remains the sole owner of its response.
+            // Green, Blue and White are deliberately not polled: they have no authored Parabox
+            // action and must not trigger a hidden shortcut. Orange remains owned by Luxodd.
         }
 
-        static Vector2Int Quantize(Vector2 value, float threshold)
+        // Resolve diagonals with hysteresis. Once an axis owns the gesture, the other axis must be
+        // clearly stronger before it can take over; small cabinet noise near 45 degrees therefore
+        // cannot alternate left/right movement with up/down movement from frame to frame.
+        static Vector2Int QuantizeStable(Vector2 value, Vector2Int currentDirection)
         {
             float ax = Mathf.Abs(value.x);
             float ay = Mathf.Abs(value.y);
-            if (Mathf.Max(ax, ay) < threshold) return Vector2Int.zero;
-            return ax >= ay
+            float strongest = Mathf.Max(ax, ay);
+            if (strongest <= MoveReleaseThreshold) return Vector2Int.zero;
+            if (currentDirection != Vector2Int.zero && strongest < MoveEngageThreshold)
+                return currentDirection;
+            if (currentDirection == Vector2Int.zero && strongest < MoveEngageThreshold)
+                return Vector2Int.zero;
+
+            Vector2Int candidate = ax >= ay
                 ? new Vector2Int(value.x >= 0f ? 1 : -1, 0)
                 : new Vector2Int(0, value.y >= 0f ? 1 : -1);
+            if (currentDirection == Vector2Int.zero || candidate == currentDirection)
+                return candidate;
+
+            // Reversing on the same axis is always deliberate once the new side reaches engage.
+            bool opposite = candidate == -currentDirection;
+            if (opposite) return candidate;
+
+            float candidateStrength = candidate.x != 0 ? ax : ay;
+            float currentStrength = currentDirection.x != 0 ? ax : ay;
+            return candidateStrength >= MoveEngageThreshold
+                   && candidateStrength >= currentStrength + DirectionSwitchBias
+                ? candidate : currentDirection;
         }
 
-        // Kept as one small pure state transition so the editor audit can prove that held, rotated
-        // and noisy input cannot spend extra moves without a real return to neutral.
-        static bool ConsumeMoveGesture(Vector2Int direction, Vector2 rawStick, ref bool latched)
+        // Kept as one small pure state transition so the editor audit can prove that held and noisy
+        // input cannot repeat, while a deliberate cardinal turn remains immediately responsive.
+        static bool ConsumeMoveGesture(Vector2Int direction, Vector2 rawStick, ref bool latched,
+                                       ref Vector2Int lastDirection)
         {
             float strongestAxis = Mathf.Max(Mathf.Abs(rawStick.x), Mathf.Abs(rawStick.y));
-            if (latched)
+            if (strongestAxis <= MoveReleaseThreshold)
             {
-                if (strongestAxis <= MoveReleaseThreshold)
-                    latched = false;
+                latched = false;
+                lastDirection = Vector2Int.zero;
                 return false;
             }
 
             if (direction == Vector2Int.zero) return false;
-            latched = true;
+            if (!latched)
+            {
+                latched = true;
+                lastDirection = direction;
+                return true;
+            }
+
+            // ClaimCurrentMoveGesture can latch before the mirrored legacy axis has risen.
+            if (lastDirection == Vector2Int.zero)
+            {
+                lastDirection = direction;
+                return false;
+            }
+            if (direction == lastDirection) return false;
+
+            lastDirection = direction;
             return true;
         }
 
@@ -143,6 +178,7 @@ namespace Parabox
         public void ClaimCurrentMoveGesture()
         {
             moveLatched = true;
+            lastMoveDirection = Direction;
             MovePulse = false;
         }
     }

@@ -39,10 +39,14 @@ namespace Parabox
         public float dimDur = 0.50f;
         public float titleDur = 0.42f;
         public float dimTo = 0.72f;        // not full black — the debris stays readable through it
-        public float transactionDelay = 3.5f; // leaderboard reading time before Luxodd takes focus
+        public float transactionDelay = 5f; // visible GAME OVER countdown before returning to Luxodd
 
         Coroutine running;
+        Coroutine countdownRunning;
         Vector2 titleRest;
+        string returnReason;
+        bool showReturnCountdown;
+        float returnDeadlineRealtime;
 
         void Awake()
         {
@@ -71,6 +75,12 @@ namespace Parabox
             if (leaderboard != null) leaderboard.ApplyTheme(accent, backing);
         }
 
+        public void SetScoreSummary(int levelScore, int totalScore)
+        {
+            if (leaderboard != null)
+                leaderboard.SetPlayerScoreSummary(levelScore, totalScore);
+        }
+
 #if UNITY_EDITOR
         public void PrebuildStaticUi()
         {
@@ -96,6 +106,9 @@ namespace Parabox
 
         public void Play(string title, string sub, Action onTransactionReady)
         {
+            showReturnCountdown = false;
+            if (countdownRunning != null) StopCoroutine(countdownRunning);
+            countdownRunning = null;
             gameObject.SetActive(true);
             if (titleText != null) titleText.text = title;
             if (subText != null) subText.text = sub;
@@ -103,11 +116,40 @@ namespace Parabox
             running = StartCoroutine(Run(onTransactionReady));
         }
 
+        public void PlayGameOver(string reason, Action onReturnToArcade)
+        {
+            showReturnCountdown = true;
+            returnReason = string.IsNullOrWhiteSpace(reason) ? "SESSION ENDED" : reason.Trim().ToUpperInvariant();
+            gameObject.SetActive(true);
+            if (titleText != null) titleText.text = "GAME OVER";
+            returnDeadlineRealtime = Time.realtimeSinceStartup + Mathf.Max(0f, transactionDelay);
+            SetReturnCountdownText(Mathf.CeilToInt(Mathf.Max(1f, transactionDelay)));
+            if (running != null) StopCoroutine(running);
+            running = StartCoroutine(Run(onReturnToArcade));
+            if (countdownRunning != null) StopCoroutine(countdownRunning);
+            countdownRunning = StartCoroutine(UpdateReturnCountdown());
+        }
+
+        public static string ReturnMessage(string reason, int seconds)
+        {
+            string clearReason = string.IsNullOrWhiteSpace(reason)
+                ? "SESSION ENDED" : reason.Trim().ToUpperInvariant();
+            return clearReason + "  •  RETURNING TO THE ARCADE IN "
+                + Mathf.Max(1, seconds) + "...";
+        }
+
+        void SetReturnCountdownText(int seconds)
+        {
+            if (subText != null) subText.text = ReturnMessage(returnReason, seconds);
+        }
+
         public void DismissImmediate()
         {
             if (running != null) StopCoroutine(running);
             StopAllCoroutines();
             running = null;
+            countdownRunning = null;
+            showReturnCountdown = false;
 
             if (dim != null)
             {
@@ -273,9 +315,11 @@ namespace Parabox
             // ---- 5. the top ten settles beside the verdict -------------------------------
             yield return RevealLeaderboard();
 
-            // The leaderboard gets a calm reading beat before the official Luxodd transaction
-            // takes focus. There are intentionally no local actions on this screen.
-            float delay = Mathf.Max(0f, transactionDelay);
+            // Keep the end state explicit while the leaderboard remains readable. There are no
+            // local actions: expiry returns ownership to the Luxodd arcade shell automatically.
+            float delay = showReturnCountdown
+                ? Mathf.Max(0f, returnDeadlineRealtime - Time.realtimeSinceStartup)
+                : Mathf.Max(0f, transactionDelay);
             while (delay > 0f)
             {
                 delay -= Time.unscaledDeltaTime;
@@ -284,6 +328,24 @@ namespace Parabox
 
             running = null;
             onTransactionReady?.Invoke();
+        }
+
+        IEnumerator UpdateReturnCountdown()
+        {
+            int displayedSecond = -1;
+            while (showReturnCountdown)
+            {
+                float remaining = returnDeadlineRealtime - Time.realtimeSinceStartup;
+                if (remaining <= 0f) break;
+                int second = Mathf.Max(1, Mathf.CeilToInt(remaining));
+                if (second != displayedSecond)
+                {
+                    displayedSecond = second;
+                    SetReturnCountdownText(second);
+                }
+                yield return null;
+            }
+            countdownRunning = null;
         }
 
         IEnumerator RevealLeaderboard()

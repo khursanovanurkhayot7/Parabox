@@ -27,8 +27,8 @@ namespace Parabox.EditorTools
         {
              8, 10, 12, 16, 18, 19, 30, 34, 39, 42,
             15, 16, 18, 19, 19, 19, 20, 21, 21, 22,
-            23, 24, 24, 25, 26, 27, 27, 28, 29, 31,
-            32, 32, 33, 34, 34, 35, 36, 38, 39, 40,
+            23, 27, 29, 32, 35, 42, 45, 46, 54, 65,
+            21, 26, 32, 35, 41, 47, 49, 57, 59, 61,
             // Chapter V difficulty is protected by recursive depth, five-or-more simultaneous
             // completion jobs, unique mastery rules, gate/portal dependencies and the rising
             // one-way ladder. Keep the authored route floors aligned with the reviewed extreme
@@ -40,8 +40,8 @@ namespace Parabox.EditorTools
         {
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
             2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-            2, 2, 3, 2, 2, 2, 3, 3, 2, 2,
-            2, 3, 4, 2, 3, 3, 3, 4, 4, 3,
+            2, 2, 2, 2, 2, 3, 3, 3, 3, 4,
+            2, 2, 3, 3, 3, 4, 4, 5, 5, 5,
             // Extreme Chapter V: Levels 41-45 use four connected scales; Levels 46-50 use five.
             // Every extra room is visited and participates in the stored winning route.
             4, 4, 4, 4, 4, 5, 5, 5, 5, 5
@@ -288,6 +288,18 @@ namespace Parabox.EditorTools
                     if (result.failures == 0) Debug.Log(result.report);
                     else Debug.LogError(result.report);
                 }
+                return;
+            }
+
+            // Targeted repair hook used by local regression checks. The generator performs a
+            // disposable solver preflight before it replaces only Level_11.prefab.
+            string repairLevelElevenRequest = Path.Combine(
+                projectRoot, "Library", "ParaboxRepairLevelEleven.request");
+            if (File.Exists(repairLevelElevenRequest))
+            {
+                File.Delete(repairLevelElevenRequest);
+                if (!EditorApplication.isPlayingOrWillChangePlaymode)
+                    ParaboxSetupWizard.RegenerateLevelElevenSilent();
                 return;
             }
 
@@ -604,6 +616,1012 @@ namespace Parabox.EditorTools
             Debug.Log(report.ToString());
         }
 
+        // Focused gate requested for the current review: replay only Chapters I and II through
+        // the real runtime model. This avoids unrelated later-chapter authoring work while proving
+        // that every Level 1-20 prefab remains solvable within its visible move allowance.
+        public static void ValidateChaptersOneAndTwoFromCommandLine()
+        {
+            const int checkedLevels = 20;
+            var report = new StringBuilder(2048);
+            int failures = 0;
+            for (int index = 0; index < checkedLevels; index++)
+            {
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"{LevelFolder}/Level_{index + 1}.prefab");
+                ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
+                if (prefab == null || info == null || string.IsNullOrWhiteSpace(info.solution))
+                {
+                    Failure(report, ref failures, index,
+                        "missing prefab metadata or stored solution");
+                    continue;
+                }
+
+                LevelModel model;
+                try { model = LevelParser.Parse(prefab); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index, $"parse failed: {exception.Message}");
+                    continue;
+                }
+
+                bool nestedReferenceValid = index < 10;
+                foreach (PEntity entity in model.entities)
+                {
+                    if (entity.interiorRoomId < 0) continue;
+                    if (!model.rooms.ContainsKey(entity.interiorRoomId))
+                    {
+                        Failure(report, ref failures, index,
+                            $"nested box references missing room {entity.interiorRoomId}");
+                        nestedReferenceValid = false;
+                        break;
+                    }
+                    nestedReferenceValid = true;
+                }
+                if (index >= 10 && !nestedReferenceValid)
+                {
+                    Failure(report, ref failures, index,
+                        "Chapter II level has no valid room-inside-box relationship");
+                    continue;
+                }
+
+                bool routeValid = true;
+                for (int step = 0; step < info.solution.Length; step++)
+                {
+                    if (!TryDirection(info.solution[step], out Vector2Int direction)
+                        || !model.TryMovePlayer(direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"stored solution failed at move {step + 1} ({info.solution[step]})");
+                        routeValid = false;
+                        break;
+                    }
+                }
+
+                int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
+                if (routeValid && model.IsWon() && model.MoveCount <= moveLimit)
+                    report.AppendLine($"PASS L{index + 1:00} {info.levelName} "
+                        + $"({model.MoveCount}/{moveLimit} moves)");
+                else if (routeValid)
+                    Failure(report, ref failures, index,
+                        $"route ended won={model.IsWon()} at {model.MoveCount}/{moveLimit} moves");
+            }
+
+            report.AppendLine($"RESULT: {checkedLevels - failures}/{checkedLevels} "
+                + "Chapter I-II levels passed.");
+            if (failures > 0) throw new InvalidOperationException(report.ToString());
+            Debug.Log(report.ToString());
+        }
+
+        // Focused release gate for Chapter III. Besides replaying the real stored routes, this
+        // verifies the review contract: ten different recursive boards, a strictly rising
+        // difficulty curve above Level 20, three or more visible jobs, and the premium cyan
+        // portal tutorial immediately before Level 25 with continued portal use through Level 30.
+        public static void ValidateChapterThreeFromCommandLine()
+        {
+            const int firstIndex = 20;
+            const int lastIndex = 29;
+            var report = new StringBuilder(3072);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var layouts = new HashSet<string>(StringComparer.Ordinal);
+            var prefabs = new GameObject[ExpectedLevels];
+            int failures = 0;
+
+            for (int index = 0; index < prefabs.Length; index++)
+                prefabs[index] = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"{LevelFolder}/Level_{index + 1}.prefab");
+
+            ParaboxLevel levelTwenty = prefabs[19] != null
+                ? prefabs[19].GetComponent<ParaboxLevel>() : null;
+            int previousComplexity = levelTwenty != null ? levelTwenty.designComplexity : -1;
+            if (previousComplexity < 0)
+                throw new InvalidOperationException(
+                    "Level 20 metadata is missing; Chapter III cannot prove it starts harder.");
+
+            for (int index = firstIndex; index <= lastIndex; index++)
+            {
+                int levelNumber = index + 1;
+                GameObject prefab = prefabs[index];
+                ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
+                if (prefab == null || info == null || string.IsNullOrWhiteSpace(info.solution))
+                {
+                    Failure(report, ref failures, index,
+                        "missing prefab metadata or stored solution");
+                    continue;
+                }
+
+                LevelModel model;
+                try { model = LevelParser.Parse(prefab); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index, $"parse failed: {exception.Message}");
+                    continue;
+                }
+
+                if (!names.Add(info.levelName))
+                    Failure(report, ref failures, index,
+                        $"duplicate Chapter III name '{info.levelName}'");
+                string fingerprint = ChapterThreeLayoutFingerprint(model);
+                if (!layouts.Add(fingerprint))
+                    Failure(report, ref failures, index,
+                        "duplicates another Chapter III board layout");
+
+                if (info.designComplexity <= previousComplexity)
+                    Failure(report, ref failures, index,
+                        $"difficulty {info.designComplexity} does not exceed "
+                        + $"the previous level's {previousComplexity}");
+                previousComplexity = info.designComplexity;
+
+                int visibleTasks = 0;
+                foreach (PRoom room in model.rooms.Values)
+                    visibleTasks += room.boxGoals.Count + room.colourGoals.Count
+                                    + room.playerGoals.Count;
+                if (visibleTasks < 3)
+                    Failure(report, ref failures, index,
+                        $"only {visibleTasks} visible completion tasks");
+
+                bool nestedReferenceValid = model.rooms.Count >= 2;
+                foreach (PEntity entity in model.entities)
+                {
+                    if (entity.interiorRoomId < 0) continue;
+                    if (!model.rooms.ContainsKey(entity.interiorRoomId))
+                    {
+                        nestedReferenceValid = false;
+                        Failure(report, ref failures, index,
+                            $"nested box references missing Room {entity.interiorRoomId}");
+                        break;
+                    }
+                }
+                if (!nestedReferenceValid)
+                    Failure(report, ref failures, index,
+                        "has no valid box-inside-box relationship");
+
+                int expectedPortals = levelNumber >= 25 ? 2 : 0;
+                if (model.portalPair.Count != expectedPortals)
+                    Failure(report, ref failures, index,
+                        $"has {model.portalPair.Count}/{expectedPortals} portal cells");
+
+                int expectedOneWays =
+                    LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(index);
+                int expectedGateHolds =
+                    LevelLayoutRebalancer.ChapterThreeGateReuseBudgetForLevel(index);
+                if (model.rebalanceOneWays != expectedOneWays)
+                    Failure(report, ref failures, index,
+                        $"retained {model.rebalanceOneWays}/{expectedOneWays} Chapter I arrows");
+                if (model.rebalanceObjectives < expectedGateHolds)
+                    Failure(report, ref failures, index,
+                        $"retained {model.rebalanceObjectives}/{expectedGateHolds} "
+                        + "Chapter I button/gate dependencies");
+                foreach (MechanicCatalog.Id rehearsal in MechanicCatalog.RehearsalsAt(index))
+                    if (!model.curriculumReuses.Contains(rehearsal))
+                        Failure(report, ref failures, index,
+                            $"winning route did not retain the planned {rehearsal} reuse");
+
+                bool routeValid = true;
+                bool touchedPortal = false;
+                for (int step = 0; step < info.solution.Length; step++)
+                {
+                    char command = info.solution[step];
+                    if (!TryDirection(command, out Vector2Int direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"invalid stored command '{command}' at move {step + 1}");
+                        routeValid = false;
+                        break;
+                    }
+
+                    int beforeRoom = model.player.roomId;
+                    Vector2Int beforeCell = model.player.pos;
+                    if (!model.TryMovePlayer(direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"stored solution failed at move {step + 1} ({command})");
+                        routeValid = false;
+                        break;
+                    }
+
+                    int afterRoom = model.player.roomId;
+                    Vector2Int afterCell = model.player.pos;
+                    if (model.portalPair.ContainsKey((afterRoom, afterCell))
+                        && (beforeRoom != afterRoom
+                            || Mathf.Abs(afterCell.x - beforeCell.x)
+                               + Mathf.Abs(afterCell.y - beforeCell.y) > 1))
+                        touchedPortal = true;
+                }
+
+                int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
+                if (routeValid && (!model.IsWon() || model.MoveCount > moveLimit))
+                    Failure(report, ref failures, index,
+                        $"route ended won={model.IsWon()} at {model.MoveCount}/{moveLimit} moves");
+                if (routeValid && levelNumber >= 25 && !touchedPortal)
+                    Failure(report, ref failures, index,
+                        "winning route never traverses the premium portal pair");
+
+                if (routeValid && model.IsWon() && model.MoveCount <= moveLimit)
+                    report.AppendLine($"PASS L{levelNumber:00} {info.levelName}  "
+                        + $"difficulty {info.designComplexity}, {visibleTasks} tasks, "
+                        + $"{model.MoveCount}/{moveLimit} moves, "
+                        + $"Chapter I reuse arrows={model.rebalanceOneWays} "
+                        + $"gate={expectedGateHolds}");
+            }
+
+            for (int index = firstIndex; index < 24; index++)
+                if (MechanicCatalog.TutorialsAt(prefabs, index)
+                    .Contains(MechanicCatalog.Id.Portal))
+                    Failure(report, ref failures, index,
+                        "premium portal tutorial appears before Level 25");
+
+            List<MechanicCatalog.Id> levelTwentyFiveLessons =
+                MechanicCatalog.TutorialsAt(prefabs, 24);
+            if (!levelTwentyFiveLessons.Contains(MechanicCatalog.Id.Portal))
+                Failure(report, ref failures, 24,
+                    "premium portal tutorial is not scheduled before Level 25");
+            else
+            {
+                GameObject tutorial = TutorialPuzzleLibrary.Load(24, MechanicCatalog.Id.Portal);
+                ParaboxLevel tutorialInfo = tutorial != null
+                    ? tutorial.GetComponent<ParaboxLevel>() : null;
+                if (tutorial == null || tutorialInfo == null
+                    || string.IsNullOrWhiteSpace(tutorialInfo.solution))
+                    Failure(report, ref failures, 24,
+                        "premium portal tutorial prefab or proof route is missing");
+                else
+                {
+                    LevelModel tutorialModel = LevelParser.Parse(tutorial);
+                    bool usedTutorialPortal = false;
+                    bool tutorialRouteValid = tutorialModel.portalPair.Count == 2;
+                    for (int step = 0;
+                         tutorialRouteValid && step < tutorialInfo.solution.Length; step++)
+                    {
+                        if (!TryDirection(tutorialInfo.solution[step], out Vector2Int direction))
+                        {
+                            tutorialRouteValid = false;
+                            break;
+                        }
+                        PRoom room = tutorialModel.rooms[tutorialModel.player.roomId];
+                        Vector2Int target = tutorialModel.player.pos + direction;
+                        if (room.InBounds(target)
+                            && tutorialModel.portalPair.ContainsKey((room.id, target)))
+                            usedTutorialPortal = true;
+                        tutorialRouteValid = tutorialModel.TryMovePlayer(direction);
+                    }
+                    if (!tutorialRouteValid || !tutorialModel.IsWon()
+                        || !usedTutorialPortal)
+                        Failure(report, ref failures, 24,
+                            "premium portal tutorial does not teach and solve the portal route");
+                    else
+                        report.AppendLine("PASS TUTORIAL before L25: premium cyan portal route wins");
+                }
+            }
+
+            report.AppendLine($"RESULT: {10 - Math.Min(10, failures)}/10 Chapter III levels "
+                + "validated; premium portal tutorial checked before Level 25.");
+            if (failures > 0) throw new InvalidOperationException(report.ToString());
+            Debug.Log(report.ToString());
+        }
+
+        static string ChapterThreeLayoutFingerprint(LevelModel model)
+        {
+            var result = new StringBuilder(1024);
+            var roomIds = new List<int>(model.rooms.Keys);
+            roomIds.Sort();
+            foreach (int roomId in roomIds)
+            {
+                PRoom room = model.rooms[roomId];
+                result.Append('R').Append(roomId).Append(':')
+                    .Append(room.width).Append('x').Append(room.height).Append('|');
+                for (int y = 0; y < room.height; y++)
+                    for (int x = 0; x < room.width; x++)
+                    {
+                        var cell = new Vector2Int(x, y);
+                        char symbol = room.IsWall(cell) ? '#' : '.';
+                        if (room.portal != null && room.portal[x, y]) symbol = 'o';
+                        if (room.boxGoals.Contains(cell)) symbol = 'x';
+                        if (room.playerGoals.Contains(cell)) symbol = 'p';
+                        result.Append(symbol);
+                    }
+            }
+
+            var entities = new List<string>(model.entities.Count);
+            foreach (PEntity entity in model.entities)
+                entities.Add($"{entity.roomId}:{entity.pos.x}:{entity.pos.y}:"
+                    + $"{entity.interiorRoomId}:{entity.isPlayer}:{entity.colour}:"
+                    + $"{entity.anchored}");
+            entities.Sort(StringComparer.Ordinal);
+            foreach (string entity in entities) result.Append('|').Append(entity);
+            return result.ToString();
+        }
+
+        // Chapter-IV-only release gate. Each board must be a different recursive-room puzzle,
+        // combine that room play with one-way commitments (L31-34) or a mandatory portal
+        // (L35-40), rise in both campaign complexity and replayed route evidence, and be solvable.
+        public static void ValidateChapterFourFromCommandLine()
+        {
+            const int firstIndex = 30;
+            const int lastIndex = 39;
+            var report = new StringBuilder(4096);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var layouts = new HashSet<string>(StringComparer.Ordinal);
+            int failures = 0;
+
+            GameObject previousPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                $"{LevelFolder}/Level_30.prefab");
+            ParaboxLevel previousInfo = previousPrefab != null
+                ? previousPrefab.GetComponent<ParaboxLevel>() : null;
+            int previousComplexity = previousInfo != null ? previousInfo.designComplexity : -1;
+            int previousRouteEvidence = -1;
+            if (previousComplexity < 0)
+                throw new InvalidOperationException(
+                    "Level 30 metadata is missing; Chapter IV cannot prove its difficulty hand-off.");
+
+            for (int index = firstIndex; index <= lastIndex; index++)
+            {
+                int levelFailuresBefore = failures;
+                int levelNumber = index + 1;
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"{LevelFolder}/Level_{levelNumber}.prefab");
+                ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
+                if (prefab == null || info == null || string.IsNullOrWhiteSpace(info.solution))
+                {
+                    Failure(report, ref failures, index,
+                        "missing prefab metadata or stored solution");
+                    continue;
+                }
+
+                LevelModel model;
+                try { model = LevelParser.Parse(prefab); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index, $"parse failed: {exception.Message}");
+                    continue;
+                }
+
+                if (!names.Add(info.levelName))
+                    Failure(report, ref failures, index,
+                        $"duplicate Chapter IV name '{info.levelName}'");
+                if (!layouts.Add(ChapterThreeLayoutFingerprint(model)))
+                    Failure(report, ref failures, index,
+                        "duplicates another Chapter IV layout");
+
+                if (info.designComplexity <= previousComplexity)
+                    Failure(report, ref failures, index,
+                        $"difficulty {info.designComplexity} does not exceed the previous "
+                        + $"level's {previousComplexity}");
+                previousComplexity = info.designComplexity;
+
+                int expectedOneWays =
+                    LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(index);
+                bool expectsOneWays = levelNumber < 35;
+                if (model.rebalanceOneWays != expectedOneWays
+                    || expectsOneWays != model.curriculumReuses.Contains(MechanicCatalog.Id.OneWay)
+                    || (expectsOneWays && expectedOneWays < 1))
+                    Failure(report, ref failures, index,
+                        $"retained {model.rebalanceOneWays}/{expectedOneWays} purposeful "
+                        + "one-way commitments");
+
+                int expectedPortals = levelNumber >= 35 ? 2 : 0;
+                if (model.portalPair.Count != expectedPortals)
+                    Failure(report, ref failures, index,
+                        $"has {model.portalPair.Count}/{expectedPortals} portal cells");
+
+                int visibleTasks = 0;
+                foreach (PRoom room in model.rooms.Values)
+                    visibleTasks += room.boxGoals.Count + room.colourGoals.Count
+                                    + room.playerGoals.Count;
+                if (visibleTasks + (expectedPortals == 2 ? 1 : 0) < 4)
+                    Failure(report, ref failures, index,
+                        $"only {visibleTasks} visible goals; Chapter IV needs four purposeful tasks");
+
+                int authoredCargo = 0;
+                var authoredRoomBoxes = new List<PEntity>();
+                foreach (PEntity entity in model.entities)
+                {
+                    if (entity.IsCrate && entity.interiorRoomId < 0) authoredCargo++;
+                    if (entity.interiorRoomId >= 0) authoredRoomBoxes.Add(entity);
+                }
+
+                var movedCargo = new HashSet<PEntity>();
+                var movedRooms = new HashSet<PEntity>();
+                var visitedRooms = new HashSet<int> { model.player.roomId };
+                var usedOneWays = new HashSet<(int room, Vector2Int cell)>();
+                bool usedPortal = false;
+                bool routeValid = true;
+
+                for (int step = 0; step < info.solution.Length; step++)
+                {
+                    if (!TryDirection(info.solution[step], out Vector2Int direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"invalid command '{info.solution[step]}' at move {step + 1}");
+                        routeValid = false;
+                        break;
+                    }
+
+                    PRoom playerRoom = model.rooms[model.player.roomId];
+                    Vector2Int intended = model.player.pos + direction;
+                    if (playerRoom.InBounds(intended)
+                        && model.portalPair.ContainsKey((playerRoom.id, intended)))
+                        usedPortal = true;
+
+                    var beforeRooms = new int[model.entities.Count];
+                    var beforePositions = new Vector2Int[model.entities.Count];
+                    for (int entityIndex = 0; entityIndex < model.entities.Count; entityIndex++)
+                    {
+                        beforeRooms[entityIndex] = model.entities[entityIndex].roomId;
+                        beforePositions[entityIndex] = model.entities[entityIndex].pos;
+                    }
+
+                    if (!model.TryMovePlayer(direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"stored route blocks at move {step + 1} ({info.solution[step]})");
+                        routeValid = false;
+                        break;
+                    }
+
+                    visitedRooms.Add(model.player.roomId);
+                    for (int entityIndex = 0; entityIndex < model.entities.Count; entityIndex++)
+                    {
+                        PEntity entity = model.entities[entityIndex];
+                        bool moved = entity.roomId != beforeRooms[entityIndex]
+                                     || entity.pos != beforePositions[entityIndex];
+                        if (!moved) continue;
+                        if (entity.IsCrate && entity.interiorRoomId < 0)
+                            movedCargo.Add(entity);
+                        if (entity.interiorRoomId >= 0) movedRooms.Add(entity);
+
+                        PRoom destination = model.rooms[entity.roomId];
+                        if (destination.oneway != null && destination.InBounds(entity.pos)
+                            && destination.oneway[entity.pos.x, entity.pos.y] != Vector2Int.zero)
+                            usedOneWays.Add((entity.roomId, entity.pos));
+                    }
+                }
+
+                if (!routeValid) continue;
+                if (!model.IsWon())
+                    Failure(report, ref failures, index,
+                        "stored route ends without completing the level");
+                if (visitedRooms.Count != model.rooms.Count)
+                    Failure(report, ref failures, index,
+                        $"winning route visits {visitedRooms.Count}/{model.rooms.Count} rooms");
+                if (movedCargo.Count != authoredCargo)
+                    Failure(report, ref failures, index,
+                        $"winning route moves {movedCargo.Count}/{authoredCargo} cargo objects");
+                foreach (PEntity roomBox in authoredRoomBoxes)
+                    if (!movedRooms.Contains(roomBox)
+                        && !visitedRooms.Contains(roomBox.interiorRoomId))
+                        Failure(report, ref failures, index,
+                            $"Room {roomBox.interiorRoomId} is neither moved nor entered");
+                if (usedOneWays.Count != expectedOneWays)
+                    Failure(report, ref failures, index,
+                        $"winning route uses {usedOneWays.Count}/{expectedOneWays} one-way cells");
+                if (expectedPortals == 2 && !usedPortal)
+                    Failure(report, ref failures, index,
+                        "winning route never uses the mandatory portal");
+
+                int purposefulMechanics = 0;
+                if (visitedRooms.Count == model.rooms.Count && model.rooms.Count > 1)
+                    purposefulMechanics++; // recursive room traversal
+                if (usedOneWays.Count == expectedOneWays && expectedOneWays > 0)
+                    purposefulMechanics++; // learned directional commitment
+                if (movedCargo.Count > 0 || movedRooms.Count > 0)
+                    purposefulMechanics++; // cargo/room manipulation
+                if (expectedPortals == 2 && usedPortal)
+                    purposefulMechanics++; // sealed portal exit
+                if (purposefulMechanics < 2)
+                    Failure(report, ref failures, index,
+                        $"only {purposefulMechanics} mechanics affect the winning route");
+
+                int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
+                if (model.MoveCount > moveLimit)
+                    Failure(report, ref failures, index,
+                        $"solution needs {model.MoveCount}/{moveLimit} moves");
+
+                ChapterFourDifficultyEvidence.Result evidence;
+                try { evidence = ChapterFourDifficultyEvidence.Evaluate(prefab, info.solution); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index,
+                        $"route evidence failed: {exception.Message}");
+                    continue;
+                }
+                if (evidence.score <= previousRouteEvidence)
+                    Failure(report, ref failures, index,
+                        $"route evidence {evidence.score} does not exceed "
+                        + $"the previous Chapter IV level's {previousRouteEvidence}");
+                previousRouteEvidence = evidence.score;
+
+                if (failures == levelFailuresBefore)
+                    report.AppendLine($"PASS L{levelNumber:00} {info.levelName,-22} "
+                        + $"C{info.designComplexity} / E{evidence.score} / "
+                        + $"{visibleTasks} goals / {purposefulMechanics} purposeful mechanics / "
+                        + $"{model.MoveCount}/{moveLimit} moves");
+            }
+
+            report.AppendLine($"RESULT: {10 - Math.Min(10, failures)}/10 Chapter IV levels "
+                + "are unique, progressively harder, purposeful and solver-proven.");
+            if (failures > 0) throw new InvalidOperationException(report.ToString());
+            Debug.Log(report.ToString());
+        }
+
+        // Chapter-V-only release gate. The finale must start above Chapter IV, then rise on every
+        // board through real route evidence. Each level has a distinct layout, five-or-more visible
+        // completion jobs, four/five recursive room scales, and a winning route that actually uses
+        // the nested-room, cargo, one-way, button/gate and sealed-portal systems.
+        public static void ValidateChapterFiveFromCommandLine()
+        {
+            const int firstIndex = 40;
+            const int lastIndex = 49;
+            var report = new StringBuilder(4096);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var layouts = new HashSet<string>(StringComparer.Ordinal);
+            int failures = 0;
+
+            GameObject chapterFourFinale = AssetDatabase.LoadAssetAtPath<GameObject>(
+                $"{LevelFolder}/Level_40.prefab");
+            ParaboxLevel chapterFourInfo = chapterFourFinale != null
+                ? chapterFourFinale.GetComponent<ParaboxLevel>() : null;
+            int previousComplexity = chapterFourInfo != null
+                ? chapterFourInfo.designComplexity : -1;
+            int previousRouteEvidence = -1;
+            if (previousComplexity < 0)
+                throw new InvalidOperationException(
+                    "Level 40 metadata is missing; Chapter V cannot prove its difficulty hand-off.");
+
+            for (int index = firstIndex; index <= lastIndex; index++)
+            {
+                int levelFailuresBefore = failures;
+                int levelNumber = index + 1;
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"{LevelFolder}/Level_{levelNumber}.prefab");
+                ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
+                if (prefab == null || info == null || string.IsNullOrWhiteSpace(info.solution))
+                {
+                    Failure(report, ref failures, index,
+                        "missing prefab metadata or stored solution");
+                    continue;
+                }
+
+                LevelModel model;
+                try { model = LevelParser.Parse(prefab); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index, $"parse failed: {exception.Message}");
+                    continue;
+                }
+
+                if (!names.Add(info.levelName))
+                    Failure(report, ref failures, index,
+                        $"duplicate Chapter V name '{info.levelName}'");
+                if (!layouts.Add(ChapterThreeLayoutFingerprint(model)))
+                    Failure(report, ref failures, index,
+                        "duplicates another Chapter V layout");
+
+                if (info.designComplexity <= previousComplexity)
+                    Failure(report, ref failures, index,
+                        $"difficulty {info.designComplexity} does not exceed the previous "
+                        + $"level's {previousComplexity}");
+                previousComplexity = info.designComplexity;
+
+                int expectedRooms = ExpectedRoomCounts[index];
+                if (model.rooms.Count != expectedRooms)
+                    Failure(report, ref failures, index,
+                        $"contains {model.rooms.Count}/{expectedRooms} recursive room scales");
+
+                int visibleTasks = 0;
+                bool hasButton = false;
+                bool hasGate = false;
+                foreach (PRoom room in model.rooms.Values)
+                {
+                    visibleTasks += room.boxGoals.Count + room.colourGoals.Count
+                                    + room.playerGoals.Count + room.echoGoals.Count
+                                    + room.mirrorGoals.Count;
+                    if (room.button != null)
+                        for (int x = 0; x < room.button.GetLength(0); x++)
+                            for (int y = 0; y < room.button.GetLength(1); y++)
+                                hasButton |= room.button[x, y];
+                    if (room.gate != null)
+                        for (int x = 0; x < room.gate.GetLength(0); x++)
+                            for (int y = 0; y < room.gate.GetLength(1); y++)
+                                hasGate |= room.gate[x, y];
+                }
+                int expectedTasks = LevelLayoutRebalancer.PremiumTaskTargetForLevel(index);
+                if (expectedTasks < 5 || visibleTasks < expectedTasks)
+                    Failure(report, ref failures, index,
+                        $"exposes {visibleTasks}/{expectedTasks} visible completion jobs; "
+                        + "the Chapter V floor is five");
+
+                int expectedOneWays =
+                    LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(index);
+                if (model.rebalanceOneWays != expectedOneWays || expectedOneWays < 1)
+                    Failure(report, ref failures, index,
+                        $"retained {model.rebalanceOneWays}/{expectedOneWays} one-way commitments");
+                if (model.portalPair.Count != 2)
+                    Failure(report, ref failures, index,
+                        $"contains {model.portalPair.Count}/2 cells for the mandatory portal pair");
+                if (!hasButton || !hasGate
+                    || !model.curriculumReuses.Contains(MechanicCatalog.Id.OneWay)
+                    || !model.curriculumReuses.Contains(MechanicCatalog.Id.ButtonGate))
+                    Failure(report, ref failures, index,
+                        "is missing the complete one-way plus button/gate synthesis");
+
+                int authoredCargo = 0;
+                var movableRooms = new List<PEntity>();
+                foreach (PEntity entity in model.entities)
+                {
+                    if (entity.IsCrate && entity.interiorRoomId < 0) authoredCargo++;
+                    if (entity.interiorRoomId >= 0 && !entity.anchored)
+                        movableRooms.Add(entity);
+                }
+
+                var movedCargo = new HashSet<PEntity>();
+                var movedRooms = new HashSet<PEntity>();
+                var visitedRooms = new HashSet<int> { model.player.roomId };
+                var usedOneWays = new HashSet<(int room, Vector2Int cell)>();
+                bool activatedButton = model.GatesOpen();
+                bool crossedOpenGate = false;
+                bool usedPortal = false;
+                bool routeValid = true;
+
+                for (int step = 0; step < info.solution.Length; step++)
+                {
+                    if (!TryDirection(info.solution[step], out Vector2Int direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"invalid command '{info.solution[step]}' at move {step + 1}");
+                        routeValid = false;
+                        break;
+                    }
+
+                    var beforeRooms = new int[model.entities.Count];
+                    var beforePositions = new Vector2Int[model.entities.Count];
+                    for (int entityIndex = 0; entityIndex < model.entities.Count; entityIndex++)
+                    {
+                        beforeRooms[entityIndex] = model.entities[entityIndex].roomId;
+                        beforePositions[entityIndex] = model.entities[entityIndex].pos;
+                    }
+                    int playerIndex = model.entities.IndexOf(model.player);
+                    bool gateWasOpen = model.GatesOpen();
+
+                    if (!model.TryMovePlayer(direction))
+                    {
+                        Failure(report, ref failures, index,
+                            $"stored route blocks at move {step + 1} ({info.solution[step]})");
+                        routeValid = false;
+                        break;
+                    }
+
+                    bool gateIsOpen = model.GatesOpen();
+                    activatedButton |= gateIsOpen;
+                    visitedRooms.Add(model.player.roomId);
+                    if (playerIndex >= 0)
+                    {
+                        int oldRoom = beforeRooms[playerIndex];
+                        Vector2Int oldCell = beforePositions[playerIndex];
+                        usedPortal |= ChapterFivePortalTransition(
+                            model, oldRoom, oldCell, direction);
+                    }
+
+                    for (int entityIndex = 0; entityIndex < model.entities.Count; entityIndex++)
+                    {
+                        PEntity entity = model.entities[entityIndex];
+                        int oldRoom = beforeRooms[entityIndex];
+                        Vector2Int oldCell = beforePositions[entityIndex];
+                        bool moved = oldRoom != entity.roomId || oldCell != entity.pos;
+                        if (!moved) continue;
+
+                        if (entity.IsCrate && entity.interiorRoomId < 0)
+                            movedCargo.Add(entity);
+                        if (entity.interiorRoomId >= 0)
+                            movedRooms.Add(entity);
+
+                        PRoom destination = model.rooms[entity.roomId];
+                        if (destination.oneway != null && destination.InBounds(entity.pos)
+                            && destination.oneway[entity.pos.x, entity.pos.y] != Vector2Int.zero)
+                            usedOneWays.Add((entity.roomId, entity.pos));
+                        if (gateWasOpen || gateIsOpen)
+                            crossedOpenGate |= ChapterFiveSegmentTouches(
+                                model, oldRoom, oldCell, entity.roomId, entity.pos,
+                                (room, cell) => room.gate != null
+                                    && room.gate[cell.x, cell.y]);
+                    }
+                }
+
+                if (!routeValid) continue;
+                if (!model.IsWon())
+                    Failure(report, ref failures, index,
+                        "stored route ends without completing every task");
+                if (visitedRooms.Count != model.rooms.Count)
+                    Failure(report, ref failures, index,
+                        $"winning route visits {visitedRooms.Count}/{model.rooms.Count} rooms");
+                if (movedCargo.Count != authoredCargo)
+                    Failure(report, ref failures, index,
+                        $"winning route moves {movedCargo.Count}/{authoredCargo} cargo objects");
+                if (movedRooms.Count != movableRooms.Count)
+                    Failure(report, ref failures, index,
+                        $"winning route moves {movedRooms.Count}/{movableRooms.Count} movable rooms");
+                if (usedOneWays.Count != expectedOneWays)
+                    Failure(report, ref failures, index,
+                        $"winning route uses {usedOneWays.Count}/{expectedOneWays} one-way cells");
+                if (!activatedButton || !crossedOpenGate)
+                    Failure(report, ref failures, index,
+                        "winning route does not hold the button and cross its opened gate");
+                if (!usedPortal)
+                    Failure(report, ref failures, index,
+                        "winning route never traverses the mandatory portal");
+
+                int purposefulMechanics = 0;
+                if (visitedRooms.Count == model.rooms.Count && model.rooms.Count > 1)
+                    purposefulMechanics++; // recursive room traversal
+                if (movedCargo.Count == authoredCargo && authoredCargo > 0)
+                    purposefulMechanics++; // cargo planning
+                if (usedOneWays.Count == expectedOneWays && expectedOneWays > 0)
+                    purposefulMechanics++; // one-way commitments
+                if (activatedButton && crossedOpenGate)
+                    purposefulMechanics++; // cargo-held button/gate
+                if (model.portalPair.Count == 2 && usedPortal)
+                    purposefulMechanics++; // mandatory portal exit
+                if (purposefulMechanics < 5)
+                    Failure(report, ref failures, index,
+                        $"only {purposefulMechanics}/5 mechanic families affect the winning route");
+
+                int moveLimit = GameManager.MoveLimitForLevel(index, info.par);
+                if (model.MoveCount > moveLimit)
+                    Failure(report, ref failures, index,
+                        $"solution needs {model.MoveCount}/{moveLimit} moves");
+
+                ChapterFiveDifficultyEvidence.Result evidence;
+                try { evidence = ChapterFiveDifficultyEvidence.Evaluate(prefab, info.solution); }
+                catch (Exception exception)
+                {
+                    Failure(report, ref failures, index,
+                        $"route evidence failed: {exception.Message}");
+                    continue;
+                }
+                if (evidence.score <= previousRouteEvidence)
+                    Failure(report, ref failures, index,
+                        $"route evidence {evidence.score} does not exceed "
+                        + $"the previous Chapter V level's {previousRouteEvidence}");
+                previousRouteEvidence = evidence.score;
+
+                if (failures == levelFailuresBefore)
+                    report.AppendLine($"PASS L{levelNumber:00} {info.levelName,-26} "
+                        + $"C{info.designComplexity} / E{evidence.score} / "
+                        + $"{visibleTasks} jobs / {expectedOneWays} one-ways / "
+                        + $"{purposefulMechanics} purposeful mechanics / "
+                        + $"{model.MoveCount}/{moveLimit} moves");
+            }
+
+            report.AppendLine($"RESULT: {10 - Math.Min(10, failures)}/10 Chapter V levels "
+                + "are unique, progressively harder, five-task minimum, purposeful and solver-proven.");
+            if (failures > 0) throw new InvalidOperationException(report.ToString());
+            Debug.Log(report.ToString());
+        }
+
+        static bool ChapterFivePortalTransition(LevelModel model, int oldRoom, Vector2Int oldCell,
+                                                Vector2Int direction)
+        {
+            // Settle may move the player beyond the paired destination in the same command, so
+            // detect the portal at the entered source cell rather than comparing final positions.
+            return model.portalPair.ContainsKey((oldRoom, oldCell + direction));
+        }
+
+        static bool ChapterFiveSegmentTouches(LevelModel model, int oldRoom, Vector2Int oldCell,
+                                              int newRoom, Vector2Int newCell,
+                                              Func<PRoom, Vector2Int, bool> predicate)
+        {
+            if (!model.rooms.TryGetValue(newRoom, out PRoom room)) return false;
+            if (oldRoom != newRoom) return room.InBounds(newCell) && predicate(room, newCell);
+
+            Vector2Int delta = newCell - oldCell;
+            Vector2Int stride = new Vector2Int(
+                delta.x == 0 ? 0 : (delta.x > 0 ? 1 : -1),
+                delta.y == 0 ? 0 : (delta.y > 0 ? 1 : -1));
+            if (stride.x != 0 && stride.y != 0) return predicate(room, newCell);
+            for (Vector2Int cell = oldCell + stride; cell != newCell + stride; cell += stride)
+                if (room.InBounds(cell) && predicate(room, cell)) return true;
+            return false;
+        }
+
+        // High-priority regression gate: Level 11 must be completely self-contained when selected
+        // in a brand-new session. Validate both assets that fresh entry touches—the campaign board
+        // and its Chapter 2 tutorial—without relying on state initialized by Levels 1-10.
+        public static void ValidateLevelElevenFreshLaunchFromCommandLine()
+        {
+            const int index = 10;
+            GameObject level = AssetDatabase.LoadAssetAtPath<GameObject>(
+                $"{LevelFolder}/Level_{index + 1}.prefab");
+            ValidateFreshLaunchPuzzle(level, index, "Level 11", expectedRooms: 2);
+
+            string tutorialPath = TutorialPuzzleLibrary.ResourcePath(
+                index, MechanicCatalog.Id.NestedBoard);
+            if (tutorialPath != "Parabox/Tutorials/Chapter_2")
+                throw new InvalidOperationException(
+                    $"Level 11 resolved the wrong tutorial asset: {tutorialPath}");
+            GameObject tutorial = TutorialPuzzleLibrary.Load(
+                index, MechanicCatalog.Id.NestedBoard);
+            ValidateFreshLaunchPuzzle(tutorial, index, "Chapter 2 tutorial", expectedRooms: 3);
+
+            Debug.Log("[Parabox] PASS: fresh Level 11 and Chapter 2 tutorial parse independently, "
+                + "contain valid nested-room references, and both stored routes win.");
+        }
+
+        // Focused regression gate for the first-launch flow. Chapter I must schedule its own
+        // independent mini-puzzle before Level 1, and the mini-puzzle's stored route must win.
+        public static void ValidateChapterOneTutorialBeforeLevelOneFromCommandLine()
+        {
+            var prefabs = new GameObject[ExpectedLevels];
+            for (int index = 0; index < prefabs.Length; index++)
+            {
+                prefabs[index] = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    $"{LevelFolder}/Level_{index + 1}.prefab");
+                if (prefabs[index] == null)
+                    throw new InvalidOperationException($"Level {index + 1} prefab is missing.");
+            }
+
+            List<MechanicCatalog.Id> lessons = MechanicCatalog.TutorialsAt(prefabs, 0);
+            if (!lessons.Contains(MechanicCatalog.Id.Navigation)
+                || !MechanicCatalog.IsChapterTutorial(0, MechanicCatalog.Id.Navigation))
+                throw new InvalidOperationException(
+                    "Chapter 1 Navigation tutorial is not scheduled before Level 1.");
+            for (int index = 0; index < prefabs.Length; index++)
+                if (MechanicCatalog.TutorialsAt(prefabs, index)
+                    .Contains(MechanicCatalog.Id.OneWay))
+                    throw new InvalidOperationException(
+                        $"Level {index + 1} still schedules the removed standalone one-way tutorial.");
+
+            string path = TutorialPuzzleLibrary.ResourcePath(0, MechanicCatalog.Id.Navigation);
+            if (path != "Parabox/Tutorials/Chapter_1")
+                throw new InvalidOperationException($"Level 1 resolved the wrong tutorial: {path}");
+            GameObject tutorial = TutorialPuzzleLibrary.Load(0, MechanicCatalog.Id.Navigation);
+            ParaboxLevel info = tutorial != null ? tutorial.GetComponent<ParaboxLevel>() : null;
+            if (tutorial == null || info == null || string.IsNullOrWhiteSpace(info.solution))
+                throw new InvalidOperationException(
+                    "Chapter 1 tutorial prefab or its stored route is missing.");
+
+            LevelModel model = LevelParser.Parse(tutorial);
+            if (model == null || model.player == null || model.rooms.Count != 1)
+                throw new InvalidOperationException(
+                    "Chapter 1 tutorial must be a self-contained one-room mini-puzzle.");
+            for (int step = 0; step < info.solution.Length; step++)
+            {
+                if (!TryDirection(info.solution[step], out Vector2Int direction)
+                    || !model.TryMovePlayer(direction))
+                    throw new InvalidOperationException(
+                        $"Chapter 1 tutorial route failed at move {step + 1}.");
+            }
+            if (!model.IsWon())
+                throw new InvalidOperationException(
+                    "Chapter 1 tutorial route ended without completing both targets.");
+
+            string levelOneSeenKey = GameManager.MechanicBriefingKey(0);
+            if (string.IsNullOrWhiteSpace(levelOneSeenKey)
+                || levelOneSeenKey == GameManager.TutorialKey
+                || levelOneSeenKey == GameManager.MechanicBriefingKey(1))
+                throw new InvalidOperationException(
+                    "Chapter 1 tutorial does not have an independent one-time seen key.");
+
+            ValidateChapterOneTutorialRuntimeGate(levelOneSeenKey);
+
+            Debug.Log("[Parabox] PASS: Chapter 1 tutorial is scheduled before Level 1, uses an "
+                + "independent one-time seen key, remains mandatory on first entry, and its "
+                + "stored mini-puzzle route wins.");
+        }
+
+        static void ValidateChapterOneTutorialRuntimeGate(string seenKey)
+        {
+            bool hadSeenValue = PlayerPrefs.HasKey(seenKey);
+            int previousSeenValue = PlayerPrefs.GetInt(seenKey, 0);
+            var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(GameScene);
+            bool openedScene = !scene.IsValid() || !scene.isLoaded;
+
+            try
+            {
+                if (openedScene)
+                    scene = EditorSceneManager.OpenScene(
+                        GameScene, OpenSceneMode.Additive);
+
+                GameManager manager = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    manager = root.GetComponentInChildren<GameManager>(true);
+                    if (manager != null) break;
+                }
+                if (manager == null)
+                    throw new InvalidOperationException(
+                        "Game.unity has no GameManager for the Level 1 tutorial gate.");
+                if (manager.tutorialFx == null || manager.tutorialFx.videoImage == null
+                    || manager.tutorialBgCamera == null)
+                    throw new InvalidOperationException(
+                        "Game.unity is missing the visible tutorial UI or tutorial camera wiring.");
+
+                PlayerPrefs.DeleteKey(seenKey);
+                PlayerPrefs.Save();
+
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                FieldInfo levelField = typeof(GameManager).GetField("levelIndex", flags);
+                FieldInfo previewField = typeof(GameManager).GetField("editorPreviewMode", flags);
+                FieldInfo suppressionField = typeof(GameManager).GetField(
+                    "suppressTutorialForThisLoad", flags);
+                MethodInfo willTutorial = typeof(GameManager).GetMethod("WillTutorial", flags);
+                if (levelField == null || previewField == null || suppressionField == null
+                    || willTutorial == null)
+                    throw new InvalidOperationException(
+                        "Could not inspect the Level 1 tutorial runtime gate.");
+
+                object previousLevel = levelField.GetValue(manager);
+                object previousPreview = previewField.GetValue(manager);
+                object previousSuppression = suppressionField.GetValue(manager);
+                try
+                {
+                    levelField.SetValue(manager, 0);
+                    // Direct Editor preview and restart suppression used to hide the tutorial.
+                    // A first-time Level 1 entry must override both shortcuts.
+                    previewField.SetValue(manager, true);
+                    suppressionField.SetValue(manager, true);
+                    bool shouldShow = (bool)willTutorial.Invoke(manager, null);
+                    if (!shouldShow)
+                        throw new InvalidOperationException(
+                            "A fresh Level 1 entry still skips its tutorial at runtime.");
+                }
+                finally
+                {
+                    levelField.SetValue(manager, previousLevel);
+                    previewField.SetValue(manager, previousPreview);
+                    suppressionField.SetValue(manager, previousSuppression);
+                }
+            }
+            finally
+            {
+                if (hadSeenValue) PlayerPrefs.SetInt(seenKey, previousSeenValue);
+                else PlayerPrefs.DeleteKey(seenKey);
+                PlayerPrefs.Save();
+                if (openedScene && scene.IsValid() && scene.isLoaded)
+                    EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        static void ValidateFreshLaunchPuzzle(GameObject prefab, int campaignIndex,
+                                              string label, int expectedRooms)
+        {
+            if (prefab == null)
+                throw new InvalidOperationException($"{label} prefab is missing.");
+            ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
+            if (info == null || string.IsNullOrWhiteSpace(info.solution))
+                throw new InvalidOperationException($"{label} has no stored winning route.");
+
+            LevelModel model = LevelParser.Parse(prefab);
+            if (model == null || model.player == null)
+                throw new InvalidOperationException($"{label} has no independently initialized player.");
+            if (model.rooms.Count != expectedRooms)
+                throw new InvalidOperationException(
+                    $"{label} has {model.rooms.Count} room(s); expected {expectedRooms}.");
+
+            bool hasValidNestedRoom = false;
+            foreach (PEntity entity in model.entities)
+            {
+                if (entity.interiorRoomId < 0) continue;
+                if (!model.rooms.ContainsKey(entity.interiorRoomId))
+                    throw new InvalidOperationException(
+                        $"{label} references missing inner room {entity.interiorRoomId}.");
+                hasValidNestedRoom = true;
+            }
+            if (!hasValidNestedRoom)
+                throw new InvalidOperationException($"{label} has no room-inside-a-box entity.");
+
+            for (int step = 0; step < info.solution.Length; step++)
+            {
+                if (!TryDirection(info.solution[step], out Vector2Int direction)
+                    || !model.TryMovePlayer(direction))
+                    throw new InvalidOperationException(
+                        $"{label} route failed at move {step + 1} ({info.solution[step]})." );
+            }
+            if (!model.IsWon())
+                throw new InvalidOperationException($"{label} route ended without a win.");
+            if (label == "Level 11"
+                && model.MoveCount > GameManager.MoveLimitForLevel(campaignIndex, info.par))
+                throw new InvalidOperationException($"{label} exceeds its runtime move limit.");
+        }
+
         public struct ValidationResult
         {
             public int failures;
@@ -865,11 +1883,26 @@ namespace Parabox.EditorTools
                 int dependencyLimit = LevelLayoutRebalancer.DependencyBudgetForLevel(index);
                 int authoredGateLimit = LevelLayoutRebalancer.AuthoredGateReuseBudgetForLevel(index);
                 int premiumTaskTarget = LevelLayoutRebalancer.PremiumTaskTargetForLevel(index);
-                if (index >= 10 && index < 20
-                    && model.rebalanceObjectives != dependencyLimit)
-                    Failure(report, ref failures, index,
-                        $"Chapter II retained {model.rebalanceObjectives}/{dependencyLimit} required "
-                        + "progressive cargo/gate dependencies");
+                if (index >= 10 && index < 20)
+                {
+                    int chapterTwoTaskTarget =
+                        LevelLayoutRebalancer.ChapterTwoTaskTargetForLevel(index);
+                    int chapterTwoGateBudget =
+                        LevelLayoutRebalancer.ChapterTwoGateReuseBudgetForLevel(index);
+                    int sourceTargets = prefab.GetComponentsInChildren<GoalMarker>(true).Length;
+                    bool sourceHasButtonGate =
+                        prefab.GetComponentInChildren<SwitchMarker>(true) != null
+                        && prefab.GetComponentInChildren<GateMarker>(true) != null;
+                    int expectedObjectives = Mathf.Max(0, chapterTwoTaskTarget - sourceTargets)
+                        + (chapterTwoGateBudget > 0 && !sourceHasButtonGate ? 1 : 0);
+                    if (targets != chapterTwoTaskTarget)
+                        Failure(report, ref failures, index,
+                            $"Chapter II exposes {targets}/{chapterTwoTaskTarget} completion tasks");
+                    if (model.rebalanceObjectives != expectedObjectives)
+                        Failure(report, ref failures, index,
+                            $"Chapter II retained {model.rebalanceObjectives}/{expectedObjectives} "
+                            + "route-proven cargo/gate objectives");
+                }
                 else if (index >= 40 && index < 50)
                 {
                     if (targets < premiumTaskTarget)
@@ -1011,10 +2044,26 @@ namespace Parabox.EditorTools
                     if (playerRoomTransitions == 0)
                         Failure(report, ref failures, index,
                             "proof never demonstrates entering or leaving a room-box");
-                    if (movedMetaRooms.Count != authoredMovableRooms)
-                        Failure(report, ref failures, index,
-                            $"route moves {movedMetaRooms.Count}/{authoredMovableRooms} authored movable " +
-                            "rooms; room mechanics cannot be decorative");
+                    if (index < 30 || index >= 40)
+                    {
+                        if (movedMetaRooms.Count != authoredMovableRooms)
+                            Failure(report, ref failures, index,
+                                $"route moves {movedMetaRooms.Count}/{authoredMovableRooms} authored movable " +
+                                "rooms; room mechanics cannot be decorative");
+                    }
+                    else
+                    {
+                        // Chapter IV deliberately mixes movable docks with pinned entry chambers.
+                        // A pinned room is purposeful when the winning route enters it; demanding
+                        // physical movement from a wall-braced module incorrectly rejects that
+                        // valid room-inside-a-box use.
+                        foreach (PEntity entity in model.entities)
+                            if (entity.interiorRoomId >= 0
+                                && !movedMetaRooms.Contains(entity)
+                                && !visitedRooms.Contains(entity.interiorRoomId))
+                                Failure(report, ref failures, index,
+                                    $"Room {entity.interiorRoomId} is neither moved nor entered");
+                    }
                     if (movedCargo.Count != authoredCargo)
                         Failure(report, ref failures, index,
                             $"route moves {movedCargo.Count}/{authoredCargo} authored cargo objects; " +
@@ -1621,6 +2670,7 @@ namespace Parabox.EditorTools
             public int metaBoxMoves;
             public int playerBoundaryCrossings;
             public int crossSubtreeTransfers;
+            public int oneWayCommitments;
         }
 
         internal static Result Evaluate(GameObject prefab, string solution)
@@ -1635,6 +2685,7 @@ namespace Parabox.EditorTools
 
             var result = new Result();
             result.directionChanges = DirectionChanges(solution);
+            result.oneWayCommitments = model.rebalanceOneWays;
             foreach (PRoom room in model.rooms.Values)
             {
                 result.maximumDepth = Mathf.Max(result.maximumDepth, ContainmentDepth(model, room.id));
@@ -1717,6 +2768,10 @@ namespace Parabox.EditorTools
                 + result.maximumDepth * 100
                 + result.objectCount * 25
                 + result.targetCount * 20
+                // Every Chapter V one-way is installed only when the stored winning route uses
+                // it. Count that proven commitment so mirrored boards with a stricter directional
+                // ladder cannot be misreported as equal difficulty.
+                + result.oneWayCommitments * 25
                 + result.cargoBoundaryCrossings * 60
                 + result.cargoMoveEvents * 20
                 // Repositioning a room is the planning concept. Repeating the same push down a

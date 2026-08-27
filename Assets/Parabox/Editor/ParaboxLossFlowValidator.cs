@@ -8,8 +8,8 @@ using UnityEngine.UI;
 
 namespace Parabox.EditorTools
 {
-    // Focused release check for the post-loss contract. It proves that Continue restores complete
-    // resources while preserving the exact live LevelModel, including nested-room and terrain state.
+    // Focused release check for the post-loss contract. Production loss is terminal and must show
+    // GAME OVER plus a visible five-second return-to-arcade countdown with no local actions.
     public static class ParaboxLossFlowValidator
     {
         const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -48,10 +48,9 @@ namespace Parabox.EditorTools
             int failures = 0;
 
             ValidateOverlay(ref failures, report);
-            ValidateExactStateContinue(ref failures, report);
 
             string result = failures == 0
-                ? "LOSS FLOW VALIDATION PASSED — hidden local actions, 3.5-second Luxodd delay, exact-state Continue, full timer, full moves."
+                ? "LOSS FLOW VALIDATION PASSED — GAME OVER, hidden local actions and visible five-second arcade return."
                 : $"LOSS FLOW VALIDATION FAILED — {failures} error(s).";
             report.AppendLine(result);
             if (failures > 0) throw new InvalidOperationException(report.ToString());
@@ -67,14 +66,30 @@ namespace Parabox.EditorTools
             buttonObject.transform.SetParent(retry, false);
 
             var fx = root.AddComponent<LoseFx>();
+            fx.titleText = TextChild(root.transform, "GameOverTitle");
+            fx.subText = TextChild(root.transform, "GameOverReturnCountdown");
             fx.restartRT = retry;
             fx.levelsRT = levels;
             Invoke(fx, "Awake");
 
             Check(!retry.gameObject.activeSelf && !levels.gameObject.activeSelf,
                 "legacy Continue and Levels holders are inactive", ref failures, report);
-            Check(fx.transactionDelay >= 3f && fx.transactionDelay <= 4f,
-                $"Luxodd delay is {fx.transactionDelay:0.0}s", ref failures, report);
+            Check(fx.transactionDelay >= 4.9f && fx.transactionDelay <= 5.1f,
+                $"arcade return countdown is {fx.transactionDelay:0.0}s", ref failures, report);
+            MethodInfo formatter = typeof(LoseFx).GetMethod("ReturnMessage",
+                BindingFlags.Public | BindingFlags.Static);
+            string copy = formatter != null
+                ? formatter.Invoke(null, new object[] { "OUT OF MOVES", 5 }) as string
+                : string.Empty;
+            Check(copy != null && copy.Contains("RETURNING TO THE ARCADE IN 5"),
+                "loss copy explicitly announces the five-second arcade return",
+                ref failures, report);
+            Check(typeof(LossLeaderboard).GetMethod("SetPlayerScoreSummary",
+                      BindingFlags.Public | BindingFlags.Instance) != null
+                  && typeof(LoseFx).GetMethod("SetScoreSummary",
+                      BindingFlags.Public | BindingFlags.Instance) != null,
+                "loss UI exposes level-score and submitted-total summary",
+                ref failures, report);
             UnityEngine.Object.DestroyImmediate(root);
         }
 
@@ -132,6 +147,8 @@ namespace Parabox.EditorTools
             Check(!Get<bool>(manager, "timedUp") && !Get<bool>(manager, "outOfMoves")
                   && !Get<bool>(manager, "lossTransactionRequested"),
                 "terminal flags cleared only after Continue", ref failures, report);
+            Check(Get<bool>(manager, "countdownArmed"),
+                "gameplay timer resumes immediately after Continue", ref failures, report);
 
             UnityEngine.Object.DestroyImmediate(root);
         }

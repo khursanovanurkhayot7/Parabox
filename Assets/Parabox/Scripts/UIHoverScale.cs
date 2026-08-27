@@ -13,7 +13,11 @@ namespace Parabox
     {
         public float hover = 1.10f;
         public float press = 0.94f;
+        [System.NonSerialized] public bool selectionChangesScale = true;
         public GameObject highlight;   // glow shown while hovered or selected (optional)
+        public Outline focusOutline;
+        public Color idleOutlineColor = new Color(0.275f, 0.808f, 0.878f, 0.35f);
+        public Color focusOutlineColor = new Color(0.275f, 0.808f, 0.878f, 1f);
 
         // While true, something else owns this transform's scale (the map's progression
         // animation punches a node). Disabling the component instead would re-fire OnEnable on
@@ -38,23 +42,86 @@ namespace Parabox
             baseScale = transform.localScale;
             selectable = GetComponent<Selectable>();
             if (highlight != null) highlight.SetActive(false);
+            if (focusOutline != null) focusOutline.effectColor = idleOutlineColor;
         }
 
-        // Start slightly small so the Update lerp grows it in — a subtle entrance pop.
-        void OnEnable() { target = 1f; cur = 0.85f; vel = 0f; transform.localScale = baseScale * cur; }
+        // Start slightly small so the Update spring grows it in — a subtle entrance pop.
+        void OnEnable()
+        {
+            inside = false;
+            pressed = false;
+            selected = false;
+            target = 1f;
+            cur = 0.85f;
+            vel = 0f;
+            transform.localScale = baseScale * cur;
+            RefreshSelectionFromEventSystem();
+        }
 
         bool Active => selectable == null || selectable.interactable;
         bool Lit => Active && (inside || selected);
+        bool Scaled => Active && (inside || (selected && selectionChangesScale));
 
         void Refresh()
         {
-            if (!pressed) target = Lit ? hover : 1f;
+            if (!pressed) target = Scaled ? hover : 1f;
             if (highlight != null) highlight.SetActive(Lit);
+            if (focusOutline != null)
+                focusOutline.effectColor = Lit ? focusOutlineColor : idleOutlineColor;
         }
 
-        public void OnPointerEnter(PointerEventData e) { inside = true; if (Active) Sfx.Hover(); Refresh(); }
+        public void ConfigureFocusOutline(Outline outline, Color idle, Color focused)
+        {
+            focusOutline = outline;
+            idleOutlineColor = idle;
+            focusOutlineColor = focused;
+            Refresh();
+        }
+
+        // Arcade navigation invokes Button.onClick directly instead of travelling through
+        // EventSystem's Submit handler. Keep the visual state sourced from the EventSystem itself
+        // as well as its callbacks, so PLAY is visibly focused immediately and never loses its
+        // glow when input modules or fast-enter Play Mode initialise in a different order.
+        public void RefreshSelectionFromEventSystem()
+        {
+            bool eventSelected = EventSystem.current != null
+                && EventSystem.current.currentSelectedGameObject == gameObject;
+            if (selected == eventSelected) return;
+            selected = eventSelected;
+            Refresh();
+        }
+
+        public void OnPointerEnter(PointerEventData e)
+        {
+            // PLAY is selected by default, so it may already be resting at its focused scale when
+            // the pointer arrives. Re-arm the spring from 1x in that case; mouse hover now produces
+            // the same visible grow/bounce that LEVEL SELECT gets when the pointer enters it.
+            bool wasAlreadyLit = Lit;
+            inside = true;
+            if (Active) Sfx.Hover();
+            if (Active && wasAlreadyLit && !suspended)
+            {
+                cur = Mathf.Min(cur, 1f);
+                vel = 0f;
+                transform.localScale = baseScale * cur;
+            }
+            Refresh();
+        }
         public void OnPointerExit(PointerEventData e)  { inside = false; Refresh(); }
-        public void OnSelect(BaseEventData e)          { selected = true; if (Active) Sfx.Hover(); Refresh(); }
+        public void OnSelect(BaseEventData e)
+        {
+            selected = true;
+            if (Active) Sfx.Hover();
+            if (Active && !selectionChangesScale && !inside && !suspended)
+            {
+                // Home buttons stay the same resting size. Selection still gets a quick one-shot
+                // bounce, then settles back to 1x while its outline/glow remains visibly focused.
+                cur = 1f;
+                vel = 5.5f;
+                transform.localScale = baseScale;
+            }
+            Refresh();
+        }
         public void OnDeselect(BaseEventData e)        { selected = false; Refresh(); }
 
         public void OnPointerDown(PointerEventData e)
@@ -66,6 +133,7 @@ namespace Parabox
 
         void Update()
         {
+            RefreshSelectionFromEventSystem();
             if (suspended) return;
             // Most menu/map nodes are idle most of the time. Once the spring has settled, avoid
             // running spring maths and writing the Transform every frame (notably 50 map nodes).

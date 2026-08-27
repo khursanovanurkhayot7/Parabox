@@ -18,6 +18,8 @@ namespace Parabox.EditorTools
         const string GamePath = "Assets/Parabox/Scenes/Game.unity";
         const string ReportName = "ParaboxPrebuiltUiValidation.txt";
         const string RequestName = "ParaboxGeneratePrebuiltUi.request";
+        const string MenuUiRequestName = "ParaboxBakeMenuUi.request";
+        const string GameUiRequestName = "ParaboxBakeGameUi.request";
         const string ValidationRequestName = "ParaboxValidatePrebuiltUi.request";
         const string ValidationResultName = "ParaboxValidatePrebuiltUi.result";
         static double nextRequestPoll;
@@ -41,6 +43,44 @@ namespace Parabox.EditorTools
                 || EditorApplication.isPlayingOrWillChangePlaymode) return;
 
             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string menuUiRequest = Path.Combine(projectRoot, "Library", MenuUiRequestName);
+            if (File.Exists(menuUiRequest))
+            {
+                File.Delete(menuUiRequest);
+                try
+                {
+                    LuxoddArcadeUiSceneBaker.BakeMenuOnlySilent();
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", "ParaboxMenuUiGeneration.result"),
+                        "success=1\nOriginal two-button main menu was serialized.\n");
+                }
+                catch (System.Exception exception)
+                {
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", "ParaboxMenuUiGeneration.result"),
+                        "success=0\n" + exception + "\n");
+                    Debug.LogException(exception);
+                }
+                return;
+            }
+
+            string gameUiRequest = Path.Combine(projectRoot, "Library", GameUiRequestName);
+            if (File.Exists(gameUiRequest))
+            {
+                File.Delete(gameUiRequest);
+                try
+                {
+                    LuxoddArcadeUiSceneBaker.BakeGameOnlySilent();
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", "ParaboxGameUiGeneration.result"),
+                        "success=1\nGameplay UI was serialized into Game.unity.\n");
+                }
+                catch (System.Exception exception)
+                {
+                    File.WriteAllText(Path.Combine(projectRoot, "Library", "ParaboxGameUiGeneration.result"),
+                        "success=0\n" + exception + "\n");
+                    Debug.LogException(exception);
+                }
+                return;
+            }
+
             string validationRequest = Path.Combine(projectRoot, "Library", ValidationRequestName);
             if (File.Exists(validationRequest))
             {
@@ -177,8 +217,29 @@ namespace Parabox.EditorTools
                     return;
                 }
 
-                if (game.scoreRoot == null || game.scoreLabel == null)
+                if (game.scoreRoot == null || game.scoreLabel == null
+                    || game.levelPointsLabel == null)
                     problems.Add("The score HUD is not serialized in Game.unity.");
+                if (game.winScoreValue == null)
+                    problems.Add("The win score's large points readout is not serialized in Game.unity.");
+                Transform winWindow = game.winPanel != null
+                    ? game.winPanel.transform.Find("Window") : null;
+                Transform premiumBackdrop = winWindow != null
+                    ? winWindow.Find("ResultBackdropPattern") : null;
+                if (premiumBackdrop == null
+                    || premiumBackdrop.GetComponent<PremiumResultBackdrop>() == null)
+                    problems.Add("The win/results board premium circuit background is not serialized.");
+                for (int i = 0; i < 3; i++)
+                {
+                    Transform badge = winWindow != null ? winWindow.Find("WinStar" + i) : null;
+                    if (badge == null || badge.Find("PlayerBody") == null
+                        || badge.Find("PlayerEyeL") == null || badge.Find("PlayerEyeR") == null)
+                    {
+                        problems.Add("Win reward " + (i + 1)
+                            + " is not prebuilt as the pink player badge.");
+                        break;
+                    }
+                }
                 if (game.finaleOverlay == null || !game.finaleOverlay.IsFullyPrebuilt)
                     problems.Add("The campaign finale overlay and its two buttons are not prebuilt.");
 
@@ -191,7 +252,7 @@ namespace Parabox.EditorTools
                     || tutorial.againButton == null || tutorial.tryButton == null
                     || tutorial.skipButton == null)
                     problems.Add("The mechanic demonstration, walkthrough card, caption, REPEAT, "
-                        + "TRY IT YOURSELF or Purple Skip is not prebuilt.");
+                        + "TRY IT YOURSELF or centred Skip is not prebuilt.");
                 if (tutorial != null && tutorial.mechanicDemo != null
                     && !tutorial.mechanicDemo.IsGameplayStylePrebuilt)
                     problems.Add("The tutorial still contains the old abstract mechanic diagram; "
@@ -205,7 +266,7 @@ namespace Parabox.EditorTools
                 if (tutorial != null && tutorial.skipButton != null)
                 {
                     Text label = tutorial.skipButton.GetComponentInChildren<Text>(true);
-                    if (label == null || label.text != "SKIP [PURPLE]")
+                    if (label == null || label.text != "SKIP TUTORIAL")
                         problems.Add("The prebuilt walkthrough Skip label is incorrect.");
                     if (tutorial.skipButton.gameObject.activeSelf)
                         problems.Add("Walkthrough Skip must start hidden on ordinary gameplay.");
@@ -224,6 +285,8 @@ namespace Parabox.EditorTools
                 ValidateHold(game.leftButton, "Left", problems);
                 ValidateHold(game.rightButton, "Right", problems);
 
+                ValidateBorderSoundButton(game, problems);
+
                 Transform bar = game.upButton != null ? game.upButton.transform.parent
                     : game.undoButton != null ? game.undoButton.transform.parent : null;
                 Transform joystick = bar != null ? bar.Find("ArcadeJoystickHud") : null;
@@ -234,6 +297,42 @@ namespace Parabox.EditorTools
                 ValidateNoMissingScripts(scene, "Game", problems);
                 ValidateSingleControllerPath(scene, "Game", problems);
             });
+        }
+
+        static void ValidateBorderSoundButton(GameManager game, List<string> problems)
+        {
+            if (game.muteButton == null || game.muteOnIcon == null || game.muteOffIcon == null)
+            {
+                problems.Add("The gameplay-border sound toggle or one of its state icons is missing.");
+                return;
+            }
+
+            RectTransform rect = game.muteButton.transform as RectTransform;
+            bool belowTimer = game.timerRoot == null || (rect != null
+                && rect.anchoredPosition.y < game.timerRoot.anchoredPosition.y
+                - game.timerRoot.rect.height * 0.5f);
+            if (!game.muteButton.gameObject.activeSelf || rect == null
+                || rect.anchorMin != Vector2.one || rect.anchorMax != Vector2.one || !belowTimer)
+                problems.Add("The sound toggle is not prebuilt directly below the gameplay timer.");
+
+            Transform soundOn = game.muteOnIcon.transform.Find("PremiumSoundState");
+            Transform soundOff = game.muteOffIcon.transform.Find("PremiumSoundState");
+            Text soundOnText = soundOn != null && soundOn.Find("StateLabel") != null
+                ? soundOn.Find("StateLabel").GetComponent<Text>() : null;
+            Text soundOffText = soundOff != null && soundOff.Find("StateLabel") != null
+                ? soundOff.Find("StateLabel").GetComponent<Text>() : null;
+            bool hasOnGlyph = soundOn != null && soundOn.Find("SoundGlyph") != null
+                && soundOn.Find("SoundGlyph").GetComponent<PremiumSoundIcon>() != null;
+            bool hasOffGlyph = soundOff != null && soundOff.Find("SoundGlyph") != null
+                && soundOff.Find("SoundGlyph").GetComponent<PremiumSoundIcon>() != null;
+            bool hasOnDial = soundOn != null && soundOn.Find("SoundDial") != null
+                && soundOn.Find("SoundDial").GetComponent<PremiumSoundDial>() != null;
+            bool hasOffDial = soundOff != null && soundOff.Find("SoundDial") != null
+                && soundOff.Find("SoundDial").GetComponent<PremiumSoundDial>() != null;
+            if (!hasOnGlyph || !hasOffGlyph || !hasOnDial || !hasOffDial
+                || soundOnText == null || soundOnText.text != "ON"
+                || soundOffText == null || soundOffText.text != "OFF")
+                problems.Add("The gameplay sound toggle does not have its premium SOUND ON/OFF states.");
         }
 
         static void ValidateSingleControllerPath(Scene scene, string label, List<string> problems)
@@ -324,11 +423,10 @@ namespace Parabox.EditorTools
                 {
                     MechanicCatalog.Id.Navigation,
                     MechanicCatalog.Id.Crate,
-                    MechanicCatalog.Id.OneWay,
                 },
                 System.Array.Empty<MechanicCatalog.Id>(),
                 System.Array.Empty<MechanicCatalog.Id>(),
-                System.Array.Empty<MechanicCatalog.Id>(),
+                new[] { MechanicCatalog.Id.OneWay },
                 System.Array.Empty<MechanicCatalog.Id>(),
                 System.Array.Empty<MechanicCatalog.Id>(),
                 new[] { MechanicCatalog.Id.ButtonGate },

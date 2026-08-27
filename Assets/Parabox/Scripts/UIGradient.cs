@@ -104,6 +104,7 @@ namespace Parabox
                 text.color = Label;
                 text.fontStyle = FontStyle.Bold;
                 text.alignment = TextAnchor.MiddleCenter;
+                text.supportRichText = true;
                 text.raycastTarget = false;
                 text.resizeTextForBestFit = true;
                 text.resizeTextMinSize = 14;
@@ -140,7 +141,7 @@ namespace Parabox
         {
             if (button == null) return;
 
-            Apply(button, "BACK", 32);
+            Apply(button, "BACK", 30);
 
             RectTransform root = button.transform as RectTransform;
             if (root != null)

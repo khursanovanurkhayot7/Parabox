@@ -8,8 +8,13 @@ namespace Parabox
     public static class LevelParser
     {
         public static LevelModel Parse(GameObject levelPrefab)
+            => Parse(levelPrefab, LevelIndex(levelPrefab != null ? levelPrefab.name : null));
+
+        // Editor preflight prefabs use temporary filenames, so their campaign index cannot be
+        // inferred from the asset name. Passing it explicitly exercises the exact runtime
+        // rebalancing without making tutorial assets such as Chapter_2 look like campaign levels.
+        public static LevelModel Parse(GameObject levelPrefab, int levelIndex)
         {
-            int levelIndex = LevelIndex(levelPrefab.name);
             var model = new LevelModel
             {
                 // Level 1 deliberately teaches that the recursive shell has a real doorway:
@@ -287,10 +292,15 @@ namespace Parabox
 
         static int LevelIndex(string prefabName)
         {
-            if (string.IsNullOrEmpty(prefabName)) return -1;
+            // Tutorial prefabs such as Chapter_2 also end in digits, but they are not campaign
+            // levels and must never receive Level 2's runtime rebalancing. Only the explicit
+            // Level_N asset contract is eligible for campaign-only layout initialization.
+            const string prefix = "Level_";
+            if (string.IsNullOrEmpty(prefabName)
+                || !prefabName.StartsWith(prefix, System.StringComparison.Ordinal)) return -1;
             int end = prefabName.Length - 1;
             while (end >= 0 && char.IsDigit(prefabName[end])) end--;
-            if (end == prefabName.Length - 1) return -1;
+            if (end < prefix.Length - 1 || end == prefabName.Length - 1) return -1;
             return int.TryParse(prefabName.Substring(end + 1), out int number) ? number - 1 : -1;
         }
 

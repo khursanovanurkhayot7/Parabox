@@ -30,6 +30,8 @@ namespace Parabox.EditorTools
         static readonly Color GreenBottom = Hex("168536");
         static readonly Color PurpleTop = Hex("B76CFF");
         static readonly Color PurpleBottom = Hex("5A2297");
+        static readonly Color BlueTop = Hex("46B8FF");
+        static readonly Color BlueBottom = Hex("1556A8");
         static readonly Color YellowTop = Hex("FFD83D");
         static readonly Color YellowBottom = Hex("E69B0B");
         static readonly Color WhiteTop = Hex("FFFFFF");
@@ -64,7 +66,7 @@ namespace Parabox.EditorTools
 
         // The editor is already open during collaborative iterations. Apply the approved menu once
         // after this script recompiles, without launching another Unity or Unity Hub process.
-        const string ApprovedMenuAutoBakeKey = "Parabox.ApprovedFiveChapterMap.20260802.v1";
+        const string ApprovedMenuAutoBakeKey = "Parabox.RestoreOriginalHomeScreen.20260826.EqualSize.EqualHoverMotion.v11";
 
         [InitializeOnLoadMethod]
         static void QueueApprovedMenuBake()
@@ -84,7 +86,7 @@ namespace Parabox.EditorTools
 
             try
             {
-                BakeMenuOnlySilent();
+                RestoreClassicMainScreenSilent();
                 EditorPrefs.SetBool(ApprovedMenuAutoBakeKey, true);
             }
             catch (System.Exception exception)
@@ -99,6 +101,70 @@ namespace Parabox.EditorTools
             BakeAll(true);
         }
 
+        [MenuItem("Tools/Parabox/Restore Old Main Screen")]
+        public static void RestoreOldMainScreen()
+        {
+            RestoreClassicMainScreenSilent();
+            EditorUtility.DisplayDialog("Parabox",
+                "The old main screen has been restored. Levels and gameplay were not changed.", "OK");
+        }
+
+        [MenuItem("Tools/Parabox/Remove Main Menu Sound Button")]
+        public static void RemoveMainMenuSoundButtonFromScene()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                EditorUtility.DisplayDialog("Parabox",
+                    "Stop Play Mode before removing the main-menu sound button.", "OK");
+                return;
+            }
+
+            Scene scene = SceneManager.GetSceneByPath(MenuPath);
+            bool wasLoaded = scene.IsValid() && scene.isLoaded;
+            if (!wasLoaded) scene = EditorSceneManager.OpenScene(MenuPath, OpenSceneMode.Additive);
+
+            MainMenuUI ui = FindComponent<MainMenuUI>(scene);
+            if (ui == null) throw new InvalidDataException("MainMenuUI is missing from MainMenu.unity.");
+            RemoveMainMenuSoundButton(ui);
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+
+            if (!wasLoaded) EditorSceneManager.CloseScene(scene, true);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            EditorUtility.DisplayDialog("Parabox",
+                "The sound button was removed from the main screen. The in-level control was kept.", "OK");
+        }
+
+        public static void RestoreClassicMainScreenSilent()
+        {
+            Scene scene = SceneManager.GetSceneByPath(MenuPath);
+            bool wasLoaded = scene.IsValid() && scene.isLoaded;
+            if (!wasLoaded) scene = EditorSceneManager.OpenScene(MenuPath, OpenSceneMode.Additive);
+
+            MainMenuUI ui = FindComponent<MainMenuUI>(scene);
+            if (ui == null) throw new InvalidDataException("MainMenuUI is missing from MainMenu.unity.");
+            InstallArcadeCoreBackground(ui);
+            LayoutHomeTitle(ui);
+            if (ui.homeGroup != null)
+            {
+                DestroyNamed(ui.homeGroup.transform, "MainMenuTutorialPanel");
+                DestroyNamed(ui.homeGroup.transform, "BtnSkins");
+                DestroyNamed(ui.homeGroup.transform, "BtnSettings");
+            }
+            LayoutButton(ui.playButton, new Vector2(-225f, -365f), new Vector2(370f, 112f));
+            LayoutButton(ui.levelsButton, new Vector2(225f, -365f), new Vector2(370f, 112f));
+            RemoveMainMenuSoundButton(ui);
+            ui.PrebuildStaticUi();
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+
+            if (!wasLoaded) EditorSceneManager.CloseScene(scene, true);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("Parabox: PLAY and LEVEL SELECT restored with PLAY focused by default.");
+        }
+
         // Command-line friendly entry point used to update only the menu scene without opening a
         // dialog or rewriting the gameplay scene.
         public static void BakeMenuOnlySilent()
@@ -106,7 +172,7 @@ namespace Parabox.EditorTools
             BakeAsset(MenuPath);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("Parabox: futuristic arcade-core main menu baked into MainMenu.unity.");
+            Debug.Log("Parabox: focused single-button main menu baked into MainMenu.unity.");
         }
 
         public static void BakeGameOnlySilent()
@@ -172,7 +238,7 @@ namespace Parabox.EditorTools
                         + " overlap or are too close (clearance " + clearance.ToString("0.0") + " px).");
             }
 
-            Debug.Log("Parabox approved-map audit passed: Play, Level Select, Back and all 50 " +
+            Debug.Log("Parabox approved-map audit passed: the home action, Back and all 50 " +
                 "level hit targets are raycastable; 50 unique nodes, " + ui.pathDots.Length
                 + " route dots, " + minimumClearance.ToString("0.0") + " px minimum clearance.");
         }
@@ -208,10 +274,10 @@ namespace Parabox.EditorTools
                 throw new InvalidDataException("The tutorial choice panel is not wired in Game.unity.");
 
             Button[] buttons = { tutorial.againButton, tutorial.tryButton, tutorial.skipButton };
-            string[] labels = { "REPEAT", "TRY IT YOURSELF", "SKIP [PURPLE]" };
+            string[] labels = { "REPEAT", "TRY IT YOURSELF", "SKIP TUTORIAL" };
             for (int i = 0; i < buttons.Length; i++)
             {
-                if (buttons[i] == null || !buttons[i].gameObject.activeSelf)
+                if (buttons[i] == null || (i < 2 && !buttons[i].gameObject.activeSelf))
                     throw new InvalidDataException("Tutorial choice " + labels[i] + " is missing or disabled.");
                 Text text = ButtonLabel(buttons[i]);
                 if (text == null || text.text != labels[i])
@@ -225,8 +291,11 @@ namespace Parabox.EditorTools
 
             RectTransform skipRect = tutorial.skipButton != null
                 ? tutorial.skipButton.transform as RectTransform : null;
-            if (skipRect == null || skipRect.anchorMin != Vector2.one || skipRect.anchorMax != Vector2.one)
-                throw new InvalidDataException("Tutorial Skip must be prebuilt at the top-right of the walkthrough.");
+            Vector2 centre = new Vector2(0.5f, 0.5f);
+            if (skipRect == null || skipRect.anchorMin != centre || skipRect.anchorMax != centre
+                || Mathf.Abs(skipRect.anchoredPosition.x) > 0.01f
+                || skipRect.anchoredPosition.y > -350f)
+                throw new InvalidDataException("Tutorial Skip must be centred below the walkthrough video.");
             if (tutorial.skipButton.gameObject.activeSelf)
                 throw new InvalidDataException("Tutorial Skip must start hidden outside a walkthrough.");
             if (tutorial.panelGroup == null || tutorial.panelRT == null
@@ -314,14 +383,17 @@ namespace Parabox.EditorTools
             ui.levelPrefabs = LoadCampaignLevelPrefabs();
             InstallArcadeCoreBackground(ui);
             LayoutHomeTitle(ui);
+            if (ui.homeGroup != null)
+            {
+                DestroyNamed(ui.homeGroup.transform, "MainMenuTutorialPanel");
+                DestroyNamed(ui.homeGroup.transform, "BtnSkins");
+                DestroyNamed(ui.homeGroup.transform, "BtnSettings");
+            }
             InstallFiveChapterBoardMap(ui);
 
-            // The approved background no longer contains painted button faces. Keep PLAY and
-            // LEVEL SELECT as visible serialized controls; PrebuildStaticUi below applies their
-            // rounded faces, colours and complete hit targets.
-            LayoutButton(ui.playButton, new Vector2(-225f, -335f), new Vector2(345f, 112f));
-
-            LayoutButton(ui.levelsButton, new Vector2(225f, -335f), new Vector2(370f, 112f));
+            LayoutButton(ui.playButton, new Vector2(-225f, -365f), new Vector2(370f, 112f));
+            LayoutButton(ui.levelsButton, new Vector2(225f, -365f), new Vector2(370f, 112f));
+            RemoveMainMenuSoundButton(ui);
 
             LayoutButton(ui.levelBoardBackButton, new Vector2(0f, -440f), new Vector2(520f, 122f));
             ArcadeActionButtonStyle.ApplyLevelMapBack(ui.levelBoardBackButton);
@@ -334,6 +406,15 @@ namespace Parabox.EditorTools
                 DestroyNamed(ui.levelBoardScreen.transform, "LuxoddMapControls");
 
             ui.PrebuildStaticUi();
+        }
+
+        // Sound remains available during gameplay, but the home screen intentionally keeps only
+        // its two primary actions. Remove the retired control from already-baked scenes as well as
+        // preventing future menu rebuilds from bringing it back.
+        static void RemoveMainMenuSoundButton(MainMenuUI ui)
+        {
+            if (ui == null || ui.homeGroup == null) return;
+            DestroyNamed(ui.homeGroup.transform, "MainMenuSoundButton");
         }
 
         // Matches the approved five-board mock-up exactly while retaining the existing serialized
@@ -983,7 +1064,6 @@ namespace Parabox.EditorTools
             HideButtonAndDecorations(bar, gm.downButton);
             HideButtonAndDecorations(bar, gm.leftButton);
             HideButtonAndDecorations(bar, gm.rightButton);
-            HideButtonAndDecorations(bar, gm.muteButton);
             HideButtonAndDecorations(bar, gm.hudMenuButton);
 
             SetChildActive(bar, "Key_MOVE", false);
@@ -997,7 +1077,8 @@ namespace Parabox.EditorTools
             LayoutButton(gm.undoButton, new Vector2(40f, 4f), new Vector2(170f, 60f));
             StyleButton(gm.undoButton, RedTop, RedBottom, LightLabel, "UNDO");
             LayoutButton(gm.restartButton, new Vector2(230f, 4f), new Vector2(170f, 60f));
-            StyleButton(gm.restartButton, GreenTop, GreenBottom, LightLabel, "RESTART");
+            StyleButton(gm.restartButton, YellowTop, YellowBottom, DarkLabel, "RESTART");
+            HideButtonAndDecorations(bar, gm.muteButton);
 
             StyleButton(gm.nextButton, BlackTop, BlackBottom, LightLabel, "NEXT LEVEL");
             StyleButton(gm.menuButton, YellowTop, YellowBottom, DarkLabel, "LEVEL SELECT");
@@ -1012,6 +1093,104 @@ namespace Parabox.EditorTools
                 DestroyNamed(gm.tutorialFx.choiceRT, "LuxoddTutorialControls");
 
             gm.PrebuildStaticUi();
+        }
+
+        // Sound is an always-visible screen setting, not one of the large cabinet action buttons.
+        // Reuse the existing serialized mute Button and its two state labels, but dock it to the
+        // top-right gameplay border as a compact icon. Purple therefore remains unambiguously Skip.
+        static void InstallBorderSoundButton(GameManager gm, Transform oldBar)
+        {
+            if (gm == null || gm.muteButton == null || gm.hudGroup == null) return;
+
+            SetChildActive(oldBar, gm.muteButton.name + "Shadow", false);
+            SetChildActive(oldBar, gm.muteButton.name + "HL", false);
+            SetChildActive(oldBar, "Key_M", false);
+            SetChildActive(oldBar, "KeyShadow_M", false);
+
+            RectTransform rect = gm.muteButton.transform as RectTransform;
+            if (rect == null) return;
+            rect.SetParent(gm.hudGroup.transform, false);
+            rect.anchorMin = rect.anchorMax = rect.pivot = Vector2.one;
+            rect.anchoredPosition = new Vector2(-54f, -54f);
+            rect.sizeDelta = new Vector2(68f, 68f);
+            rect.localScale = Vector3.one;
+            rect.SetAsLastSibling();
+
+            // The two state objects are switched by GameManager.UpdateMuteIcon().  Each state owns
+            // its complete badge, so the one visible control is blue while sound is on and red
+            // while muted.  The Button face itself stays transparent and adds no second icon.
+            StyleButton(gm.muteButton, BlueTop, BlueBottom, LightLabel, string.Empty);
+            gm.muteButton.gameObject.SetActive(true);
+
+            UIHoverScale hover = gm.muteButton.GetComponent<UIHoverScale>();
+            if (hover != null)
+            {
+                hover.highlight = null;
+                hover.hover = 1.07f;
+                hover.press = 0.94f;
+            }
+
+            Image face = gm.muteButton.targetGraphic as Image;
+            if (face != null)
+            {
+                face.color = Color.clear;
+                Outline outline = face.GetComponent<Outline>();
+                if (outline != null) Object.DestroyImmediate(outline);
+            }
+            gm.muteButton.transition = Selectable.Transition.None;
+
+            ConfigureSoundStateIcon(gm.muteOnIcon, false);
+            ConfigureSoundStateIcon(gm.muteOffIcon, true);
+        }
+
+        static void ConfigureSoundStateIcon(GameObject iconObject, bool muted)
+        {
+            if (iconObject == null) return;
+            Text text = iconObject.GetComponent<Text>();
+            if (text == null) return;
+
+            text.text = string.Empty;
+            text.fontSize = 1;
+            text.fontStyle = FontStyle.Bold;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.color = Color.clear;
+            text.raycastTarget = false;
+
+            RectTransform rect = text.rectTransform;
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+
+            DestroyNamed(rect, "SoundDisc");
+            DestroyNamed(rect, "SpeakerBody");
+            DestroyNamed(rect, "SpeakerCone");
+            DestroyNamed(rect, "StateMark");
+
+            Color discTop = muted ? Hex("FF3F45") : Hex("2797FF");
+            Image disc = CreateImage(rect, "SoundDisc", LoadSprite("Disc.png"), discTop,
+                Vector2.zero, new Vector2(64f, 64f));
+            disc.raycastTarget = false;
+            disc.rectTransform.SetAsFirstSibling();
+            var discOutline = disc.gameObject.AddComponent<Outline>();
+            discOutline.effectColor = muted ? Hex("8E111C") : Hex("0B4EAF");
+            discOutline.effectDistance = new Vector2(1.5f, -1.5f);
+
+            Image body = CreateImage(rect, "SpeakerBody", LoadSprite("Fill.png"), Color.white,
+                new Vector2(-13f, 0f), new Vector2(10f, 18f));
+            body.raycastTarget = false;
+
+            Image cone = CreateImage(rect, "SpeakerCone", LoadSprite("TriIcon.png"), Color.white,
+                new Vector2(-2f, 0f), new Vector2(25f, 25f));
+            cone.raycastTarget = false;
+            cone.rectTransform.localEulerAngles = new Vector3(0f, 0f, -90f);
+
+            Text mark = CreateText(rect, "StateMark", text.font,
+                muted ? "\u00D7" : ")))" , muted ? 29 : 18,
+                new Vector2(14f, 0f), new Vector2(29f, 34f));
+            mark.color = Color.white;
+            mark.fontStyle = FontStyle.Bold;
+            mark.raycastTarget = false;
         }
 
         static void HideLegacyLossAction(Button button)
@@ -1067,12 +1246,12 @@ namespace Parabox.EditorTools
                 if (skipRect != null)
                 {
                     skipRect.SetParent(tutorialRoot, false);
-                    skipRect.anchorMin = skipRect.anchorMax = Vector2.one;
-                    skipRect.pivot = Vector2.one;
-                    skipRect.anchoredPosition = new Vector2(-38f, -32f);
-                    skipRect.sizeDelta = new Vector2(250f, 64f);
+                    skipRect.anchorMin = skipRect.anchorMax = new Vector2(0.5f, 0.5f);
+                    skipRect.pivot = new Vector2(0.5f, 0.5f);
+                    skipRect.anchoredPosition = new Vector2(0f, -410f);
+                    skipRect.sizeDelta = new Vector2(310f, 72f);
                 }
-                StyleButton(skip, PurpleTop, PurpleBottom, LightLabel, "SKIP [PURPLE]");
+                StyleButton(skip, PurpleTop, PurpleBottom, LightLabel, "SKIP TUTORIAL");
                 Text skipLabel = ButtonLabel(skip);
                 if (skipLabel != null) skipLabel.fontSize = 20;
                 Navigation skipNav = skip.navigation;
@@ -1408,6 +1587,7 @@ namespace Parabox.EditorTools
             button.gameObject.SetActive(false);
             SetChildActive(parent, button.name + "Shadow", false);
             SetChildActive(parent, button.name + "HL", false);
+            SetChildActive(parent, button.name + "Glow", false);
         }
 
         static void SetChildActive(Transform parent, string name, bool active)

@@ -12,7 +12,8 @@ namespace Parabox
     // puzzle or its solver route. GameManager owns the timeline; this owns the
     // FRAME: the dim scrim, the elevated card
     // (soft shadow + polished frame + the video), one short line, the two-option panel, and a
-    // dedicated Skip action that remains available throughout every walkthrough. First-appearance
+    // dedicated Skip action centred below the video for the complete tutorial, including the
+    // final Repeat/Try choice and first-appearance mechanic lessons. First-appearance
     // mechanic lessons use this same video card; the older text briefing remains serialized only
     // for scene compatibility and is kept hidden.
     //
@@ -83,6 +84,7 @@ namespace Parabox
             HideMechanicBriefingImmediately();
             if (mechanicDemo != null) mechanicDemo.HideImmediate();
             HideChoice();
+            ConfigureSkipButton();
             HideSkip();
         }
 
@@ -101,8 +103,8 @@ namespace Parabox
 #endif
 
         // Repeat plus TRY IT YOURSELF remain the two end choices. TRY IT YOURSELF always enters
-        // the real campaign level behind the video. Skip is a separate always-available action,
-        // so controller users never have to navigate away from those final choices.
+        // the real campaign level behind the video. The separate purple Skip stays visible below
+        // them so every tutorial state has the same Luxodd escape action.
         void ConfigureTutorialChoices()
         {
             if (choiceRT != null) choiceRT.sizeDelta = new Vector2(760f, 120f);
@@ -133,9 +135,7 @@ namespace Parabox
             ArcadeActionButtonStyle.Apply(tryButton, "TRY IT YOURSELF", 20);
             if (skipButton != null)
             {
-                Navigation nav = skipButton.navigation;
-                nav.mode = Navigation.Mode.None;
-                skipButton.navigation = nav;
+                ConfigureSkipButton();
                 HideSkip();
             }
         }
@@ -410,6 +410,7 @@ namespace Parabox
 
         public IEnumerator ShowChoice()
         {
+            ShowSkip();
             if (choiceGroup == null) yield break;
             float dur = 0.5f, t = 0f;
             Vector2 home = choiceRT != null ? choiceRT.anchoredPosition : Vector2.zero;
@@ -437,11 +438,33 @@ namespace Parabox
             choiceGroup.blocksRaycasts = false;
         }
 
-        // Skip is prebuilt and serialized by the editor generator. Runtime only changes the
-        // visibility/interactability of that existing object; it never constructs walkthrough UI.
+        void ConfigureSkipButton()
+        {
+            if (skipButton == null) return;
+            RectTransform rect = skipButton.transform as RectTransform;
+            if (rect != null)
+            {
+                Transform tutorialRoot = choiceRT != null ? choiceRT.parent : rect.parent;
+                if (tutorialRoot != null && rect.parent != tutorialRoot)
+                    rect.SetParent(tutorialRoot, false);
+                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+                rect.pivot = new Vector2(0.5f, 0.5f);
+                rect.anchoredPosition = new Vector2(0f, -410f);
+                rect.sizeDelta = new Vector2(310f, 72f);
+            }
+            Text label = skipButton.GetComponentInChildren<Text>(true);
+            if (label != null) label.text = "SKIP TUTORIAL";
+            Navigation nav = skipButton.navigation;
+            nav.mode = Navigation.Mode.None;
+            skipButton.navigation = nav;
+        }
+
+        // Skip is prebuilt and serialized by the editor generator. Runtime only positions it
+        // below the video and changes visibility; it never constructs walkthrough UI.
         public void ShowSkip()
         {
             if (skipButton == null) return;
+            ConfigureSkipButton();
             skipButton.gameObject.SetActive(true);
             skipButton.interactable = true;
         }

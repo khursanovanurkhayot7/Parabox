@@ -75,17 +75,18 @@ namespace Parabox.EditorTools
         static Font s_font;     // optional drop-in font from Assets/Parabox/Fonts (else the default UI font)
         class Tiles { public GameObject floor, grid, border, wall, box, metaBox, player, boxGoal, playerGoal; }
 
-        // Failed Chapter V authoring attempts can leave raw Level_41 roots in MainMenu. They are
-        // temporary scene objects, not prefab instances. Remove only those leaked finale roots
-        // after scripts reload; campaign prefabs and Chapter V gameplay remain untouched.
+        // A failed level-authoring attempt can leave a raw Level_N root in MainMenu because the
+        // exception happens before SavePrefab destroys its temporary object. These are ordinary
+        // scene objects, never prefab instances. Remove only those leaked roots after scripts
+        // reload; campaign prefab assets and intentional UI preview children remain untouched.
         [InitializeOnLoadMethod]
-        static void QueueLeakedChapterFiveMainMenuCleanup()
+        static void QueueLeakedLevelMainMenuCleanup()
         {
-            EditorApplication.delayCall -= RemoveLeakedChapterFiveRootsFromMainMenu;
-            EditorApplication.delayCall += RemoveLeakedChapterFiveRootsFromMainMenu;
+            EditorApplication.delayCall -= RemoveLeakedLevelRootsFromMainMenu;
+            EditorApplication.delayCall += RemoveLeakedLevelRootsFromMainMenu;
         }
 
-        static void RemoveLeakedChapterFiveRootsFromMainMenu()
+        static void RemoveLeakedLevelRootsFromMainMenu()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode
                 || EditorApplication.isCompiling || EditorApplication.isUpdating) return;
@@ -104,7 +105,7 @@ namespace Parabox.EditorTools
 
                 if (!candidate.name.StartsWith("Level_", System.StringComparison.Ordinal)
                     || !int.TryParse(candidate.name.Substring(6), out int number)
-                    || number < 41 || number > 50)
+                    || number < 1 || number > 50)
                     continue;
 
                 EditorSceneManager.MarkSceneDirty(candidate.scene);
@@ -113,7 +114,7 @@ namespace Parabox.EditorTools
             }
 
             if (removed <= 0) return;
-            Debug.Log($"Parabox: removed {removed} leaked Chapter V authoring root(s) from MainMenu only.");
+            Debug.Log($"Parabox: removed {removed} leaked level-authoring root(s) from MainMenu only.");
         }
 
         [InitializeOnLoadMethod]
@@ -565,7 +566,7 @@ namespace Parabox.EditorTools
             for (int levelNumber = 41; levelNumber <= 50; levelNumber++)
                 RemoveLeakedLevelAuthoringRoots(levelNumber);
 
-            if (!EditorUtility.DisplayDialog(
+            if (!Application.isBatchMode && !EditorUtility.DisplayDialog(
                     "Rebuild Extreme Chapter 5?",
                     "This replaces only Level_41.prefab through Level_50.prefab and the Chapter 5 "
                     + "tutorial. Chapters 1-4 are not rebuilt. Every board uses four or five connected "
@@ -790,11 +791,12 @@ namespace Parabox.EditorTools
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog(
+            if (!Application.isBatchMode && !EditorUtility.DisplayDialog(
                     "Rebuild Chapter 3?",
                     "This replaces only Level_21.prefab through Level_30.prefab and the Chapter 3 "
-                    + "tutorial. Chapters 1 and 2 stay unchanged. Every Chapter 3 level has at "
-                    + "least three visible tasks and is checked as a strict difficulty step.",
+                    + "and pre-Level-25 portal tutorials. Chapters 1 and 2 stay unchanged. Every "
+                    + "Chapter 3 level has at least three visible tasks and is checked as a strict "
+                    + "difficulty step.",
                     "Rebuild Chapter 3",
                     "Cancel"))
             {
@@ -814,16 +816,17 @@ namespace Parabox.EditorTools
                         $"Chapter III Level {21 + chapterIndex} has no authored route; generation stopped.");
                 lastPrefab = BuildFocusedChapterThreeLevel(20 + chapterIndex, defs[chapterIndex], tiles);
             }
-            RegenerateTutorialMiniLevelAuthoringOnly(2, tiles);
+            RegeneratePremiumChapterThreeTutorialsAuthoringOnly(tiles);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Selection.activeObject = lastPrefab;
             EditorGUIUtility.PingObject(lastPrefab);
-            EditorUtility.DisplayDialog("Chapter 3 Ready",
-                "Levels 21-30 were rebuilt as ten different recursive-room puzzles. Levels 21-28 "
-                + "and 30 have three linked tasks; Level 29 has four. The authored difficulty "
-                + "evidence rises on every level. Open Level_21.prefab and check the chapter in game.",
-                "OK");
+            if (!Application.isBatchMode)
+                EditorUtility.DisplayDialog("Chapter 3 Ready",
+                    "Levels 21-30 were rebuilt as ten different recursive-room puzzles. Levels "
+                    + "25-30 require the premium cyan portal introduced before Level 25. The "
+                    + "authored difficulty evidence rises on every level.",
+                    "OK");
             Debug.Log("Parabox: rebuilt only progressive Chapter III Levels 21-30 and its tutorial "
                 + "without entering Play Mode. Chapters I-II were not touched.");
         }
@@ -848,7 +851,7 @@ namespace Parabox.EditorTools
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog(
+            if (!Application.isBatchMode && !EditorUtility.DisplayDialog(
                     "Rebuild Premium Chapter 4?",
                     "This replaces only Level_31.prefab through Level_40.prefab and the two "
                     + "Chapter 4 tutorial assets. Chapters 1-3 level prefabs and tutorials are not rebuilt. "
@@ -872,24 +875,84 @@ namespace Parabox.EditorTools
             ValidatePremiumChapterFourDefinitions(defs);
 
             GameObject lastPrefab = null;
+            int previousRouteEvidence = -1;
             for (int chapterIndex = 0; chapterIndex < defs.Length; chapterIndex++)
+            {
                 lastPrefab = BuildFocusedChapterFourLevel(30 + chapterIndex, defs[chapterIndex], tiles);
+                ChapterFourDifficultyEvidence.Result evidence =
+                    ChapterFourDifficultyEvidence.Evaluate(lastPrefab, defs[chapterIndex].solution);
+                if (evidence.score <= previousRouteEvidence)
+                    throw new System.InvalidOperationException(
+                        $"Level {31 + chapterIndex} route evidence {evidence.score} must exceed "
+                        + $"the previous Chapter IV level's {previousRouteEvidence}.");
+                previousRouteEvidence = evidence.score;
+                Debug.Log($"[Parabox] Chapter IV L{31 + chapterIndex}: route evidence "
+                    + $"{evidence.score}, rooms={evidence.roomCount}, "
+                    + $"room-moves={evidence.metaBoxMoves}, crossings={evidence.playerBoundaryCrossings}.");
+            }
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Selection.activeObject = lastPrefab;
             EditorGUIUtility.PingObject(lastPrefab);
-            EditorUtility.DisplayDialog("Premium Chapter 4 Ready",
-                "Levels 31-40 keep their original nested-room gameplay with more required decisions. Difficulty rises on "
-                + "every level, and Levels 35-40 keep the mandatory portal exit taught before Level 35. "
-                + "Open Level_31.prefab and check the chapter in game.",
-                "OK");
+            if (!Application.isBatchMode)
+                EditorUtility.DisplayDialog("Premium Chapter 4 Ready",
+                    "Levels 31-40 keep their original nested-room gameplay with more required decisions. Difficulty rises on "
+                    + "every level, and Levels 35-40 keep the mandatory portal exit taught before Level 35. "
+                    + "Open Level_31.prefab and check the chapter in game.",
+                    "OK");
             Debug.Log("Parabox: rebuilt only premium Chapter IV Levels 31-40 plus prebuilt tutorials, "
                 + "without entering Play Mode or rebuilding Chapters I-III.");
         }
 
-        // Focused Chapter I rebuild. It writes the ten foundation levels without entering Play
-        // Mode, then solver-proves the complete prebuilt tutorial set in Edit Mode.
+        // Difficulty-only Chapter I rebuild. It writes just the ten foundation level prefabs in
+        // Edit Mode and deliberately leaves tutorials, UI, clocks and every later chapter alone.
+        [MenuItem("Tools/Parabox/Rebuild Chapter 1 Difficulty Only", priority = 20)]
+        public static void RegenerateChapterOneDifficultyOnly()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                EditorUtility.DisplayDialog("Chapter 1 Difficulty",
+                    "Exit Play Mode first. This command only creates level prefabs in Edit Mode.", "OK");
+                return;
+            }
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            {
+                EditorUtility.DisplayDialog("Chapter 1 Difficulty",
+                    "Unity is still compiling or importing. Wait until it finishes, then run this command again.",
+                    "OK");
+                return;
+            }
+
+            Tiles tiles = LoadLevelTiles();
+            if (tiles == null)
+                throw new System.InvalidOperationException("Parabox level tiles are missing.");
+
+            LevelDef[] definitions = ChapterOneFoundations();
+            ValidateChapterOneRebuildDefinitions(definitions);
+            GameObject lastPrefab = null;
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                RemoveLeakedLevelAuthoringRoots(i + 1);
+                lastPrefab = BuildLevelPrefab(i, definitions[i], tiles);
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            if (lastPrefab != null)
+            {
+                Selection.activeObject = lastPrefab;
+                EditorGUIUtility.PingObject(lastPrefab);
+            }
+            EditorUtility.DisplayDialog("Chapter 1 Difficulty Ready",
+                "Levels 1-10 now form a beginner-friendly difficulty ladder. Only the Chapter 1 puzzle "
+                + "layouts and their authored routes were rebuilt; UI, timers, scoring, tutorials and "
+                + "Chapters 2-5 were not changed.", "OK");
+            Debug.Log("Parabox: rebuilt only the Chapter I difficulty curve (Levels 1-10) in Edit Mode.");
+        }
+
+        // Full Chapter I rebuild. It writes the ten foundation levels without entering Play
+        // Mode, then rebuilds the complete prebuilt tutorial set in Edit Mode.
         [MenuItem("Tools/Parabox/Regenerate Progressive Chapter 1 + Tutorials")]
         public static void RegenerateChapterOneSilent()
         {
@@ -917,12 +980,11 @@ namespace Parabox.EditorTools
             {
                 BuildLevelPrefab(i, defs[i], tiles);
             }
-            // Rebuild the same prebuilt tutorial set used by the chapter-openers. This remains an
-            // Edit Mode authoring operation; every short tutorial route is solver-proved before use.
-            RegenerateTutorialMiniLevelsAuthoringOnly();
+            // Mechanic_ButtonGate is already a prebuilt tutorial asset. MechanicCatalog schedules
+            // it before Level 5, so this focused command must not rewrite any chapter tutorial.
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("Parabox: regenerated progressive Chapter I Levels 1-10 and its tutorials without Play Mode.");
+            Debug.Log("Parabox: regenerated beginner Chapter I Levels 1-10 without touching other chapters or tutorials.");
         }
 
         static void ValidateChapterOneRebuildDefinitions(LevelDef[] defs)
@@ -978,16 +1040,16 @@ namespace Parabox.EditorTools
                 if (hasButton != hasGate)
                     throw new System.InvalidOperationException(
                         $"Chapter I Level {number} must include button and gate as one complete mechanic.");
-                if ((i < 6 && (hasButton || hasGate)) || (i == 6 && (!hasButton || !hasGate)))
+                if ((i < 4 && (hasButton || hasGate)) || (i >= 4 && (!hasButton || !hasGate)))
                     throw new System.InvalidOperationException(
-                        "Button and gate must first appear together on Chapter I Level 7.");
+                        "Button and gate must first appear together on Chapter I Level 5 and remain purposeful through Level 10.");
             }
         }
 
         // Focused one-click rebuild for the reviewed Level 5 replacement. It creates the complete
-        // prefab in Edit Mode and replays the stored 32-move proof before saving; it never enters
+        // prefab in Edit Mode and replays the stored authored route before saving; it never enters
         // Play Mode and does not touch the timer, another level, or any tutorial.
-        [MenuItem("Tools/Parabox/Rebuild Harder Level 5", priority = 22)]
+        [MenuItem("Tools/Parabox/Rebuild Easier Level 5 (First Gate)", priority = 22)]
         public static void RegenerateHarderLevelFive()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -1015,9 +1077,9 @@ namespace Parabox.EditorTools
             AssetDatabase.Refresh();
             Selection.activeObject = prefab;
             EditorGUIUtility.PingObject(prefab);
-            EditorUtility.DisplayDialog("Harder Level 5 Ready",
-                "Level 5 is now Crosslock: two cargo deliveries and a validated 32-move route. " +
-                "No mechanic tutorial or timer value was changed.", "OK");
+            EditorUtility.DisplayDialog("Beginner Level 5 Ready",
+                "Level 5 is now First Gate: a short button-and-gate practice board. " +
+                "The prebuilt tutorial is scheduled before it; timer values were not changed.", "OK");
         }
 
         // Focused authoring command for the Level 5/6 difficulty correction. This creates the
@@ -1067,9 +1129,8 @@ namespace Parabox.EditorTools
             Debug.Log("Parabox: regenerated Levels 6 and 9 with mandatory green button/gate tasks.");
         }
 
-        // Focused Chapter II rebuild. This installs the progressive room-inside-a-box curriculum
-        // without reserializing tutorials or the other 40 approved prefabs, and without entering
-        // Play Mode. The designer can run this once and then inspect Levels 11-20 manually.
+        // Restores the saved room-inside-a-box Chapter II without touching Chapter I, the UI or
+        // Chapters III-V. Every route is replayed in a disposable prefab before replacement.
         [MenuItem("Tools/Parabox/Regenerate Chapter 2 (Levels 11-20)")]
         public static void RegenerateChapterTwoSilent()
         {
@@ -1089,25 +1150,180 @@ namespace Parabox.EditorTools
 
             var tiles = LoadLevelTiles();
             if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
-            var defs = Levels();
-            for (int i = 10; i < Mathf.Min(20, defs.Length); i++)
+            LevelDef[] defs = RestoredChapterTwoLevels();
+            if (!TutorialPuzzleLibrary.Exists(10, MechanicCatalog.Id.NestedBoard))
+                throw new System.InvalidOperationException(
+                    "Chapter II needs its prebuilt room-inside-a-box tutorial prefab.");
+
+            string probePath = LevelDir + "/__ChapterTwoRestoreProbe.prefab";
+            AssetDatabase.DeleteAsset(probePath);
+            try
             {
-                if (string.IsNullOrEmpty(defs[i].solution))
-                    throw new System.InvalidOperationException(
-                        $"Chapter II Level {i + 1} has no authored route; generation stopped without running a solver.");
-                BuildLevelPrefab(i, defs[i], tiles);
+                for (int chapterIndex = 0; chapterIndex < defs.Length; chapterIndex++)
+                {
+                    int campaignIndex = 10 + chapterIndex;
+                    GameObject probe = BuildLevelPrefab(campaignIndex, defs[chapterIndex], tiles, probePath);
+                    ValidateCampaignMechanicTasks(probe, defs[chapterIndex], campaignIndex + 1);
+                    AssetDatabase.DeleteAsset(probePath);
+                }
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(probePath);
+            }
+
+            for (int chapterIndex = 0; chapterIndex < defs.Length; chapterIndex++)
+            {
+                int campaignIndex = 10 + chapterIndex;
+                BuildLevelPrefab(campaignIndex, defs[chapterIndex], tiles);
             }
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("Parabox: regenerated harder Inside the Box Levels 11-20 with progressive "
-                + "cargo, button/gate and one-way dependencies. No timer, tutorial or other chapter was changed.");
+            Debug.Log("Parabox: restored saved Inside the Box Levels 11-20. Every authored route "
+                + "won during preflight; runtime keeps route length + 3 moves. Chapter I, "
+                + "Chapters III-V, timers and UI were not changed.");
+        }
+
+        // Focused recovery for the high-priority fresh-launch crash. Only Level_11.prefab is
+        // replaced, after its room-inside-a-box definition and winning route pass the same
+        // preflight used by the complete Chapter II rebuild.
+        [MenuItem("Tools/Parabox/Levels/Rebuild Level 11 (Fresh-Launch Safe)", priority = 1311)]
+        public static void RegenerateLevelElevenSilent()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                throw new System.InvalidOperationException(
+                    "Exit Play Mode before rebuilding Level 11.");
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                throw new System.InvalidOperationException(
+                    "Unity is compiling or importing; rebuild Level 11 after it finishes.");
+
+            Tiles tiles = LoadLevelTiles();
+            if (tiles == null)
+                throw new System.InvalidOperationException("Parabox level tiles are missing.");
+
+            const int campaignIndex = 10;
+            LevelDef definition = RestoredChapterTwoLevels()[0];
+            string probePath = LevelDir + "/__LevelElevenRepairProbe.prefab";
+            AssetDatabase.DeleteAsset(probePath);
+            try
+            {
+                GameObject probe = BuildLevelPrefab(campaignIndex, definition, tiles, probePath);
+                ValidateCampaignMechanicTasks(probe, definition, campaignIndex + 1);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(probePath);
+            }
+
+            RemoveLeakedLevelAuthoringRoots(campaignIndex + 1);
+            GameObject prefab = BuildLevelPrefab(campaignIndex, definition, tiles);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Selection.activeObject = prefab;
+            EditorGUIUtility.PingObject(prefab);
+            Debug.Log("[Parabox] Level 11 rebuilt as the solver-validated two-room Doorway puzzle; "
+                + "no other campaign level was changed.");
+        }
+
+        // Ten distinct three-task recursive boards. Mirrored variants preserve their proven
+        // solutions while changing approach sides; later entries deepen from two coordinate
+        // spaces to three instead of inflating the beginner task count.
+        static LevelDef[] ReviewedChapterTwoLevels()
+        {
+            var source = new Dictionary<string, LevelDef>(System.StringComparer.Ordinal);
+            foreach (LevelDef level in ChapterTwoInsideTheBox()) source[level.name] = level;
+
+            LevelDef moving = source["Moving Delivery"];
+            LevelDef docked = source["Docked Passage"];
+            LevelDef extraction = source["Side Extraction"];
+            LevelDef turning = source["Turn It Inside"];
+            LevelDef twoRooms = source["Two Rooms Down"];
+            LevelDef relay = source["Three-Space Relay"];
+
+            return new[]
+            {
+                RenameChapterTwoLevel(CloneLevelDefinition(moving), "Inside Delivery"),
+                RenameChapterTwoLevel(CloneLevelDefinition(docked), "Docked Passage"),
+                RenameChapterTwoLevel(MirrorLevelHorizontally(docked), "Reverse Dock"),
+                RenameChapterTwoLevel(CloneLevelDefinition(extraction), "Side Extraction"),
+                RenameChapterTwoLevel(MirrorLevelHorizontally(extraction), "Reverse Extraction"),
+                RenameChapterTwoLevel(CloneLevelDefinition(turning), "Turn It Inside"),
+                RenameChapterTwoLevel(MirrorLevelVertically(turning), "Inverted Turn"),
+                RenameChapterTwoLevel(CloneLevelDefinition(twoRooms), "Two Rooms Down"),
+                RenameChapterTwoLevel(MirrorLevelHorizontally(twoRooms), "Reverse Two Rooms"),
+                RenameChapterTwoLevel(CloneLevelDefinition(relay), "Three-Space Relay"),
+            };
+        }
+
+        static LevelDef RenameChapterTwoLevel(LevelDef level, string name)
+        {
+            level.name = name;
+            return level;
+        }
+
+        static LevelDef[] RestoredChapterTwoLevels()
+        {
+            var candidates = new Dictionary<string, LevelDef>(System.StringComparer.Ordinal);
+            foreach (LevelDef level in LegacyAuthoredLevels()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterTwoInsideTheBox()) candidates[level.name] = level;
+            foreach (LevelDef level in ReviewedChapterTwoLevels()) candidates[level.name] = level;
+            // The saved Chapter II curve intentionally drew its later room puzzles from the
+            // shared recursive libraries. Mirror Levels() here so the targeted restore can find
+            // every saved entry without rebuilding or changing Chapters I, III, IV or V.
+            foreach (LevelDef level in ChapterThreeSynergy()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterFourRoomManeuvers()) candidates[level.name] = level;
+            foreach (LevelDef level in ChapterFiveRecursion()) candidates[level.name] = level;
+
+            var restored = new LevelDef[10];
+            var names = new HashSet<string>(System.StringComparer.Ordinal);
+            int previousPlanningDifficulty = -1;
+            for (int chapterIndex = 0; chapterIndex < restored.Length; chapterIndex++)
+            {
+                int campaignIndex = 10 + chapterIndex;
+                string name = FirstTwentyDifficultyOrder[campaignIndex];
+                if (!candidates.TryGetValue(name, out LevelDef level))
+                    throw new System.InvalidOperationException(
+                        $"Saved Chapter II level '{name}' is missing from the authored library.");
+                if (!names.Add(name) || level.rooms == null || level.rooms.Length < 2)
+                    throw new System.InvalidOperationException(
+                        $"Level {campaignIndex + 1} must be a unique room-inside-a-box puzzle.");
+                if (string.IsNullOrEmpty(level.solution) || level.solution.Length != level.par)
+                    throw new System.InvalidOperationException(
+                        $"Level {campaignIndex + 1} needs an authored winning route whose length equals par.");
+                if (level.par < MinimumAuthoredPars[campaignIndex])
+                    throw new System.InvalidOperationException(
+                        $"Level {campaignIndex + 1} route is below its saved authored limit.");
+                if (level.rooms.Length != MinimumRoomCounts[campaignIndex])
+                    throw new System.InvalidOperationException(
+                        $"Level {campaignIndex + 1} needs exactly "
+                        + $"{MinimumRoomCounts[campaignIndex]} connected room(s).");
+                int planningDifficulty = ChapterTwoPlanningDifficulty(level, campaignIndex);
+                if (planningDifficulty <= previousPlanningDifficulty)
+                    throw new System.InvalidOperationException(
+                        $"Level {campaignIndex + 1} planning difficulty {planningDifficulty} must "
+                        + $"exceed the previous Chapter II level's {previousPlanningDifficulty}.");
+                previousPlanningDifficulty = planningDifficulty;
+                level.designComplexity = ReviewedCampaignDifficulty(level, campaignIndex);
+                restored[chapterIndex] = level;
+            }
+            return restored;
+        }
+
+        static int ChapterTwoPlanningDifficulty(LevelDef level, int campaignIndex)
+        {
+            int authoredGoals = CountAuthoredCompletionGoals(level);
+            return level.par * 40
+                + DirectionChanges(level.solution) * 4
+                + level.rooms.Length * 180
+                + Mathf.Max(3, authoredGoals) * 70
+                + LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(campaignIndex) * 45
+                + LevelLayoutRebalancer.ChapterTwoGateReuseBudgetForLevel(campaignIndex) * 110;
         }
 
         // Targeted authoring command for the reviewed Level 12 correction. It deliberately avoids
         // Levels(), because the full campaign audit may contain unrelated work-in-progress levels.
         // The generated prefab keeps the authored recursive route but receives no automatic cargo,
         // switch/gate or arrow decoration; BoardRenderer supplies the clean doorway mask at runtime.
-        [MenuItem("Tools/Parabox/Levels/Rebuild Level 12 (Clean Route)", priority = 1312)]
         public static void RegenerateCleanLevelTwelveSilent()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -1149,7 +1365,6 @@ namespace Parabox.EditorTools
         // replaces the long, obvious straight delivery with three linked tasks: dock the movable
         // room, turn the cargo inside it and deliver it outside, then return to the player exit.
         // The command creates only Level_16.prefab and never enters Play Mode.
-        [MenuItem("Tools/Parabox/Levels/Rebuild Level 16 (Harder - 3 Tasks)", priority = 1316)]
         public static void RegenerateHarderLevelSixteenSilent()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -1199,7 +1414,6 @@ namespace Parabox.EditorTools
         // Focused Level 17 rebuild. Cargo first travels out through the movable room's future
         // socket; only after that shared cell is clear can the player circle around and dock the
         // room. The separate player exit closes the three-stage dependency chain.
-        [MenuItem("Tools/Parabox/Levels/Rebuild Level 17 (Harder - 3 Tasks)", priority = 1317)]
         public static void RegenerateHarderLevelSeventeenSilent()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -1249,7 +1463,6 @@ namespace Parabox.EditorTools
         // One focused command for the balanced Level 16-20 progression. Every definition contains
         // exactly three visible completion targets. The stored route is cleared only after
         // authoring so the runtime rebalancer cannot inject its old six/seven-task contract.
-        [MenuItem("Tools/Parabox/Levels/Rebuild Balanced Levels 16-20 (3 Tasks Each)", priority = 1318)]
         public static void RegenerateBalancedLevelsSixteenToTwentySilent()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -1425,10 +1638,9 @@ namespace Parabox.EditorTools
             }
         }
 
-        // Chapter III keeps its authored route only long enough for the Edit Mode model replay in
-        // BuildLevelPrefab. Once the prefab has passed that proof, the route is removed from the
-        // runtime asset so LevelLayoutRebalancer cannot cover the deliberately clean board with
-        // generated walls, hazards or arrows. The source route remains beside the ASCII layout.
+        // Chapter III keeps its authored route in the runtime prefab after the Edit Mode replay.
+        // This allows release validation to prove every shipped Level 21-30 board remains solvable;
+        // LevelLayoutRebalancer does not mutate Chapter III layouts.
         static GameObject BuildFocusedChapterThreeLevel(int levelIndex, LevelDef level, Tiles tiles)
         {
             int levelNumber = levelIndex + 1;
@@ -1444,7 +1656,10 @@ namespace Parabox.EditorTools
                 // gameplay and rejects blocked routes, unused rooms, decorative cargo or an
                 // unfinished target before the prefab is saved. This is Edit Mode authoring, not
                 // Play Mode or an automated play session.
-                BuildLevelPrefab(levelIndex, level, tiles);
+                // Save to the exact focused path first, then run the Chapter III contract below.
+                // Supplying the path avoids the generic builder throwing before the focused
+                // validator can report which visible task remains incomplete.
+                BuildLevelPrefab(levelIndex, level, tiles, path);
 
                 GameObject root = PrefabUtility.LoadPrefabContents(path);
                 if (root == null)
@@ -1455,10 +1670,12 @@ namespace Parabox.EditorTools
                     if (info == null)
                         throw new System.InvalidOperationException(path + " is missing ParaboxLevel metadata.");
 
+                    ValidatePremiumChapterThreeRuntimeContract(root, level, levelNumber);
+                    ValidateCampaignMechanicTasks(root, level, levelNumber);
+
                     info.designComplexity = Mathf.Max(
                         ReviewedCampaignDifficulty(level, levelIndex),
                         ChapterThreeDifficulty(level));
-                    info.solution = string.Empty;
                     EditorUtility.SetDirty(info);
                     if (PrefabUtility.SaveAsPrefabAsset(root, path) == null)
                         throw new System.InvalidOperationException("Unity could not save " + path + ".");
@@ -1474,6 +1691,79 @@ namespace Parabox.EditorTools
             }
 
             return AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        }
+
+        static void ValidatePremiumChapterThreeRuntimeContract(
+            GameObject root, LevelDef level, int levelNumber)
+        {
+            bool expectsPortal = levelNumber >= 25;
+            int portalCount = root.GetComponentsInChildren<PortalMarker>(true).Length;
+            if (portalCount != (expectsPortal ? 2 : 0))
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} has {portalCount} premium portal markers; expected "
+                    + (expectsPortal ? "one visible pair." : "none before Level 25."));
+
+            LevelModel model = LevelParser.Parse(root);
+            if (model == null || model.player == null)
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} could not build its Chapter III model.");
+            int visibleTasks = 0;
+            foreach (PRoom room in model.rooms.Values)
+                visibleTasks += room.boxGoals.Count + room.colourGoals.Count
+                                + room.playerGoals.Count;
+            if (visibleTasks < 3)
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} exposes only {visibleTasks} visible completion tasks.");
+
+            foreach (char command in level.solution)
+            {
+                if (!TryFoundationDirection(command, out Vector2Int direction))
+                    throw new System.InvalidOperationException(
+                        $"Level {levelNumber} route contains invalid command '{command}'.");
+                if (!model.TryMovePlayer(direction))
+                    throw new System.InvalidOperationException(
+                        $"Level {levelNumber} route blocks on '{command}'.");
+            }
+
+            if (!model.IsWon())
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} stored route does not solve every task: "
+                    + DescribeIncompleteTasks(model));
+            // Recursive room movement can resolve a portal transition without the portal being
+            // the first adjacent cell of a command. Prove that it is mandatory from the board
+            // topology instead: the paired exit exists, the finish pocket is sealed without it,
+            // and the complete authored route has already won above.
+            if (expectsPortal
+                && (model.portalPair.Count != 2 || !PlayerGoalRequiresPortal(level)))
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} portal is decorative; its winning route must use it.");
+        }
+
+        static string DescribeIncompleteTasks(LevelModel model)
+        {
+            var missing = new List<string>();
+            foreach (PRoom room in model.rooms.Values)
+            {
+                foreach (Vector2Int goal in room.boxGoals)
+                {
+                    PEntity entity = model.EntityAt(room.id, goal);
+                    if (entity == null || !entity.IsCrate)
+                        missing.Add($"Room {room.id} box goal {goal}");
+                }
+                foreach (Vector2Int goal in room.playerGoals)
+                {
+                    PEntity entity = model.EntityAt(room.id, goal);
+                    if (entity == null || !entity.isPlayer)
+                        missing.Add($"Room {room.id} player goal {goal}");
+                }
+                foreach (var goal in room.colourGoals)
+                {
+                    PEntity entity = model.EntityAt(room.id, goal.cell);
+                    if (entity == null || entity.colour != goal.colour)
+                        missing.Add($"Room {room.id} colour {goal.colour} goal {goal.cell}");
+                }
+            }
+            return missing.Count == 0 ? "unknown completion mismatch" : string.Join(", ", missing);
         }
 
         // Source-only release gate for the ten Chapter III definitions. It does not solve or play
@@ -1525,6 +1815,7 @@ namespace Parabox.EditorTools
                 int cargoGoals = 0;
                 int roomSockets = 0;
                 int movableRooms = 0;
+                int portals = 0;
                 int visibleTasks = 0;
                 int outerVisibleTasks = 0;
                 var referencedRooms = new HashSet<int>();
@@ -1538,10 +1829,12 @@ namespace Parabox.EditorTools
                         throw new System.InvalidOperationException(
                             $"Level {levelNumber}, Room {roomIndex} is outside the visible 3-14 row range.");
                     int width = room[0].Length;
-                    if (width < 3 || width > 17 || (roomIndex == 0 && width > 13))
+                    int outerWidthLimit = chapterIndex >= 4 ? 17 : 13;
+                    if (width < 3 || width > 17
+                        || (roomIndex == 0 && width > outerWidthLimit))
                         throw new System.InvalidOperationException(
                             $"Level {levelNumber}, Room {roomIndex} is {width} cells wide; "
-                            + "the Chapter III camera-safe limits are 13 outer / 17 inner.");
+                            + $"the Chapter III camera-safe limits are {outerWidthLimit} outer / 17 inner.");
 
                     fingerprint.Append('[').Append(width).Append('x').Append(room.Length).Append(':');
                     for (int rowIndex = 0; rowIndex < room.Length; rowIndex++)
@@ -1557,6 +1850,7 @@ namespace Parabox.EditorTools
                             bool allowed = cell == '#' || cell == '.'
                                 || cell == 'P' || cell == 'p'
                                 || cell == 'J' || cell == 'j' || cell == 'x'
+                                || (chapterIndex >= 4 && cell == 'o')
                                 || (cell >= '1' && cell <= '9')
                                 || AnchoredBoxes.ContainsKey(cell);
                             if (!allowed)
@@ -1584,6 +1878,7 @@ namespace Parabox.EditorTools
                                 visibleTasks++;
                                 if (roomIndex == 0) outerVisibleTasks++;
                             }
+                            else if (cell == 'o') portals++;
 
                             if (cell >= '1' && cell <= '9')
                             {
@@ -1608,6 +1903,13 @@ namespace Parabox.EditorTools
                 if (cargo != 1 || cargoGoals != 1)
                     throw new System.InvalidOperationException(
                         $"Level {levelNumber} needs one coral cargo object and its matching goal.");
+                if (chapterIndex < 4 && portals != 0)
+                    throw new System.InvalidOperationException(
+                        $"Level {levelNumber} introduces the premium portal before its Level 25 tutorial.");
+                if (chapterIndex >= 4
+                    && (portals != 2 || !PlayerGoalRequiresPortal(level)))
+                    throw new System.InvalidOperationException(
+                        $"Level {levelNumber} must use one visible portal pair to reach a sealed target.");
                 if (visibleTasks < 3 || visibleTasks > 4 || outerVisibleTasks != visibleTasks)
                     throw new System.InvalidOperationException(
                         $"Level {levelNumber} needs three or four clearly visible outer-board tasks; "
@@ -1663,9 +1965,10 @@ namespace Parabox.EditorTools
                     if (info == null)
                         throw new System.InvalidOperationException(path + " is missing ParaboxLevel metadata.");
 
-                    info.designComplexity = Mathf.Max(
-                        ReviewedCampaignDifficulty(level, levelIndex),
-                        ChapterFourPremiumDifficulty(level));
+                    // The definition validator and the route-evidence replay above prove the real
+                    // difficulty curve. Serialize it in the shared 100-point campaign band so the
+                    // Chapter III -> IV hand-off and every later level remain strictly ordered.
+                    info.designComplexity = ReviewedCampaignDifficulty(level, levelIndex);
                     // Keep the authored route in metadata: Chapter IV's runtime rebalancer uses
                     // it to install only dependencies that this exact solution still completes.
                     // The route is never exposed to the player or tutorial UI.
@@ -1710,9 +2013,19 @@ namespace Parabox.EditorTools
             if (activeTasks < 4)
                 throw new System.InvalidOperationException(
                     $"Level {levelNumber} has only {activeTasks} purposeful tasks; expected at least four.");
-            if (model.RebalanceElementCount < 1)
+            if (!expectsPortal && model.RebalanceElementCount < 1)
                 throw new System.InvalidOperationException(
                     $"Level {levelNumber} did not retain any route-proven difficulty dependency.");
+
+            int expectedOneWays = LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(levelNumber - 1);
+            bool expectsOneWays = !expectsPortal;
+            if (model.rebalanceOneWays != expectedOneWays
+                || expectsOneWays != model.curriculumReuses.Contains(MechanicCatalog.Id.OneWay)
+                || (expectsOneWays && expectedOneWays < 1))
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber} retained {model.rebalanceOneWays}/{expectedOneWays} "
+                    + "route-proven one-way commitments. Levels 31-34 combine room play with "
+                    + "arrows; Levels 35-40 combine room play with the mandatory portal.");
 
             bool usedPortal = false;
             var initialCargo = new List<PEntity>();
@@ -1726,8 +2039,10 @@ namespace Parabox.EditorTools
             var movedCargo = new HashSet<PEntity>();
             var movedRooms = new HashSet<PEntity>();
             var visitedRooms = new HashSet<int> { model.player.roomId };
-            foreach (char command in level.solution)
+            var crossedOneWays = new HashSet<(int room, Vector2Int cell)>();
+            for (int routeStep = 0; routeStep < level.solution.Length; routeStep++)
             {
+                char command = level.solution[routeStep];
                 if (!TryFoundationDirection(command, out Vector2Int direction))
                     throw new System.InvalidOperationException(
                         $"Level {levelNumber} route contains invalid command '{command}'.");
@@ -1743,12 +2058,18 @@ namespace Parabox.EditorTools
                     before[entity] = (entity.roomId, entity.pos);
                 if (!model.TryMovePlayer(direction))
                     throw new System.InvalidOperationException(
-                        $"Level {levelNumber} portal route blocks on '{command}'.");
+                        $"Level {levelNumber} portal route blocks at move {routeStep + 1}/"
+                        + $"{level.solution.Length} on '{command}'.");
                 visitedRooms.Add(model.player.roomId);
                 foreach (PEntity entity in model.entities)
                 {
                     var old = before[entity];
                     if (old.room == entity.roomId && old.cell == entity.pos) continue;
+                    PRoom destinationRoom = model.rooms[entity.roomId];
+                    if (destinationRoom.oneway != null
+                        && destinationRoom.InBounds(entity.pos)
+                        && destinationRoom.oneway[entity.pos.x, entity.pos.y] != Vector2Int.zero)
+                        crossedOneWays.Add((entity.roomId, entity.pos));
                     if (entity.interiorRoomId >= 0) movedRooms.Add(entity);
                     else if (entity.IsCrate) movedCargo.Add(entity);
                 }
@@ -1756,7 +2077,8 @@ namespace Parabox.EditorTools
 
             if (!model.IsWon())
                 throw new System.InvalidOperationException(
-                    $"Level {levelNumber} route does not finish all Chapter IV tasks.");
+                    $"Level {levelNumber} route does not finish all Chapter IV tasks: "
+                    + DescribeIncompleteTasks(model));
             if (expectsPortal && !usedPortal)
                 throw new System.InvalidOperationException(
                     $"Level {levelNumber} contains a decorative portal. Its winning route must use it.");
@@ -1767,6 +2089,10 @@ namespace Parabox.EditorTools
             if (visitedRooms.Count != model.rooms.Count)
                 throw new System.InvalidOperationException(
                     $"Level {levelNumber} visits {visitedRooms.Count}/{model.rooms.Count} rooms.");
+            if (crossedOneWays.Count != expectedOneWays)
+                throw new System.InvalidOperationException(
+                    $"Level {levelNumber}'s winning route uses {crossedOneWays.Count}/"
+                    + $"{expectedOneWays} one-way commitments; none may be decorative.");
             foreach (PEntity roomBox in roomBoxes)
                 if (!movedRooms.Contains(roomBox) && !visitedRooms.Contains(roomBox.interiorRoomId))
                     throw new System.InvalidOperationException(
@@ -1991,6 +2317,60 @@ namespace Parabox.EditorTools
             if (tutorialIndex < 0 || tutorialIndex >= tutorials.Length)
                 throw new System.ArgumentOutOfRangeException(nameof(tutorialIndex));
             RegenerateTutorialMiniLevelsCore();
+        }
+
+        // Chapter-III-only tutorial pass. The chapter opener teaches recursive cargo before
+        // Level 21; the independent portal mini-puzzle then introduces the premium rule before
+        // Level 25. No other tutorial or campaign prefab is rebuilt here.
+        static void RegeneratePremiumChapterThreeTutorialsAuthoringOnly(Tiles tiles)
+        {
+            EnsureFolder(TutorialDir);
+            var wanted = new HashSet<string>(System.StringComparer.Ordinal)
+                { "Chapter_3", "Mechanic_Portal" };
+            int generated = 0;
+            foreach (TutorialDef tutorial in CampaignTutorialMiniPuzzles())
+            {
+                if (!wanted.Contains(tutorial.assetName)) continue;
+                string path = TutorialDir + "/" + tutorial.assetName + ".prefab";
+                tutorial.level.solution = string.Empty;
+                tutorial.level.par = 0;
+                BuildLevelPrefab(0, tutorial.level, tiles, path);
+
+                GameObject contents = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    contents.name = "Tutorial_" + tutorial.assetName;
+                    ParaboxLevel info = contents.GetComponent<ParaboxLevel>();
+                    if (info == null)
+                        throw new System.InvalidOperationException(
+                            path + " is missing tutorial metadata.");
+                    info.levelName = TutorialDisplayName(tutorial);
+                    info.solution = string.Empty;
+                    info.par = 0;
+                    PrefabUtility.SaveAsPrefabAsset(contents, path);
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(contents);
+                }
+
+                string proof = ParaboxCampaignSolver.SolveAndStore(path, 1, tutorial.maxDepth);
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (!MechanicCatalog.MechanicsIn(prefab, -1).Contains(tutorial.mechanic))
+                    throw new System.InvalidOperationException(
+                        $"{tutorial.assetName} does not contain {tutorial.mechanic}.");
+                if (tutorial.mechanic == MechanicCatalog.Id.Portal
+                    && !TutorialProofUsesPortal(prefab, proof))
+                    throw new System.InvalidOperationException(
+                        "Mechanic_Portal wins without entering its cyan portal pair.");
+                generated++;
+            }
+
+            if (generated != wanted.Count)
+                throw new System.InvalidOperationException(
+                    $"Generated {generated}/{wanted.Count} premium Chapter III tutorials.");
+            AssetDatabase.SaveAssets();
+            Debug.Log("Parabox: generated only Chapter_3 and its pre-Level-25 premium portal tutorial.");
         }
 
         // Narrow Chapter IV tutorial pass. It writes only the Chapter_4 room-docking
@@ -3219,11 +3599,11 @@ namespace Parabox.EditorTools
         // an easier lesson at Level 31 or 41.
         static readonly string[] FirstTwentyDifficultyOrder =
         {
-            "The First Commitment", "Corner Delivery", "Twin Reversal", "No Return", "Crosslock",
-            "Mixed Cargo", "Hold the Door", "Three Jobs, One Gate", "Gate Relay", "Foundation Circuit",
+            "The First Commitment", "Corner Delivery", "Two Deliveries", "Committed Pair", "First Gate",
+            "Gate Delivery", "Turn Beyond", "Double Passage", "Gate Relay", "Foundation Circuit",
 
-            "Doorway", "Pin to Enter", "Pinned Passage", "Return Path", "Bring It Outside",
-            "Opposite Exit", "Turn the Room", "Docked Passage", "Across the Inside", "Dock and Re-enter",
+            "Inside Delivery", "Docked Passage", "Reverse Dock", "Side Extraction", "Reverse Extraction",
+            "Turn It Inside", "Inverted Turn", "Two Rooms Down", "Reverse Two Rooms", "Three-Space Relay",
         };
 
         // A single reviewed sequence for Levels 21-50.  Early entries teach pin/enter/dock with
@@ -3248,9 +3628,13 @@ namespace Parabox.EditorTools
         // familiar route look harder than learning to move and enter a room-box.
         static readonly int[] MinimumAuthoredPars =
         {
-            10, 12, 18, 21, 32, 21, 18, 20, 30, 39,
+            // Chapter I is the onboarding chapter.  Its source floors protect the short, reviewed
+            // teaching routes rather than forcing end-game-sized paths into the first ten boards.
+            // Level 2 intentionally keeps the cabinet-reviewed 16-move solve; its route is long
+            // but completely linear and therefore easier to understand than a short dependency.
+            4, 16, 7, 6, 6, 7, 8, 12, 19, 19,
             15, 16, 18, 19, 19, 19, 20, 21, 21, 22,
-            23, 24, 24, 25, 26, 27, 27, 28, 29, 31,
+            23, 27, 29, 32, 35, 42, 45, 46, 54, 65,
             32, 32, 33, 34, 34, 35, 36, 38, 39, 40,
             // Chapter V deliberately has no rising move quota. Its progression is protected by
             // nested depth, five real jobs, the gate/portal chain and a 3..12 decision ladder.
@@ -3260,8 +3644,8 @@ namespace Parabox.EditorTools
         static readonly int[] MinimumRoomCounts =
         {
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-            2, 2, 3, 2, 2, 2, 3, 3, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 3, 3, 3,
+            2, 2, 2, 2, 2, 3, 3, 3, 3, 4,
             2, 3, 4, 2, 3, 3, 3, 4, 4, 3,
             4, 4, 4, 4, 4, 5, 5, 5, 5, 5,
         };
@@ -3300,6 +3684,7 @@ namespace Parabox.EditorTools
             var candidates = new Dictionary<string, LevelDef>(byName, System.StringComparer.Ordinal);
             foreach (LevelDef level in ChapterOneFoundations()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterTwoInsideTheBox()) candidates[level.name] = level;
+            foreach (LevelDef level in ReviewedChapterTwoLevels()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterThreeSynergy()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterFourRoomManeuvers()) candidates[level.name] = level;
             foreach (LevelDef level in ChapterFiveRecursion()) candidates[level.name] = level;
@@ -3321,6 +3706,17 @@ namespace Parabox.EditorTools
                 int campaignIndex = 20 + step;
                 level.designComplexity = ReviewedCampaignDifficulty(level, campaignIndex);
                 ordered[campaignIndex] = level;
+            }
+
+            // Chapter III is an explicit progressive sequence. Keep the same definitions used by
+            // its focused generator so a later whole-project rebuild cannot restore the older
+            // mixed chapter order or remove the Level 25-30 portal contract.
+            LevelDef[] chapterThree = ChapterThreeSynergy();
+            for (int i = 0; i < chapterThree.Length; i++)
+            {
+                chapterThree[i].designComplexity = ReviewedCampaignDifficulty(
+                    chapterThree[i], 20 + i);
+                ordered[20 + i] = chapterThree[i];
             }
 
             // Chapter V is an explicit finale rather than the tail of the mixed room curriculum.
@@ -3414,7 +3810,7 @@ namespace Parabox.EditorTools
                                 bool allowedFoundationCell = ch == '#' || ch == '.'
                                     || ch == 'P' || ch == 'p'
                                     || ch == 'b' || ch == 'x'
-                                    || ch == 'B' || ch == 'G'
+                                    || ch == 'B' || ch == 'G' || ch == '&'
                                     || OneWayDirs.ContainsKey(ch);
                                 if (!allowedFoundationCell)
                                     throw new System.InvalidOperationException(
@@ -3422,27 +3818,23 @@ namespace Parabox.EditorTools
                                         + "foundation vocabulary.");
                             }
 
-                            // Chapter II source layouts keep one coherent room-box identity: enter
-                            // a fixed room-door, dock a movable room, and transfer cargo across a
-                            // boundary. Chapter I one-way and button/gate dependencies are added
-                            // later by LevelLayoutRebalancer only when the exact route still wins;
-                            // reject unrelated source symbols before any prefab is generated.
+                            // Chapter II uses the saved recursive room-box vocabulary.
                             if (i >= 10 && i < 20)
                             {
-                                bool allowedInsideTheBoxCell = ch == '#' || ch == '.'
+                                bool allowedChapterTwoCell = ch == '#' || ch == '.'
                                     || ch == 'P' || ch == 'p'
                                     || ch == 'b' || ch == 'x'
                                     || ch == 'J' || ch == 'j'
                                     || ch == 'N' || ch == 'n'
                                     || ch == 'Z' || ch == 'z'
-                                    || ch == 'B' || ch == 'G' || ch == '&'
+                                    || ch == 'B' || ch == 'G'
                                     || OneWayDirs.ContainsKey(ch)
                                     || (ch >= '1' && ch <= '9')
                                     || AnchoredBoxes.ContainsKey(ch);
-                                if (!allowedInsideTheBoxCell)
+                                if (!allowedChapterTwoCell)
                                     throw new System.InvalidOperationException(
                                         $"Level {number} uses '{ch}', which is outside Chapter II's "
-                                        + "three-mechanic room-box vocabulary.");
+                                        + "room-box vocabulary.");
                             }
 
                             // Chapters III-V share a readable room curriculum. Chapter V may also
@@ -3459,7 +3851,7 @@ namespace Parabox.EditorTools
                                     || ch == 'A' || ch == 'C'
                                     || (ch >= '1' && ch <= '9')
                                     || AnchoredBoxes.ContainsKey(ch)
-                                    || (i >= 40 && ch == 'o');
+                                    || ((i >= 24 && i < 30) || i >= 40) && ch == 'o';
                                 if (!allowedRoomCurriculumCell)
                                     throw new System.InvalidOperationException(
                                         $"Level {number} uses unrelated mechanic '{ch}'. Chapters III-V "
@@ -3499,35 +3891,11 @@ namespace Parabox.EditorTools
                 // On the sealed-exit gate boards, treat every gate as closed and prove that no
                 // player goal is reachable. Level 9 instead proves its relay dependency by replay:
                 // the second cargo crosses the opened gate before the holding crate is recovered.
-                if ((number == 7 || number == 8)
+                if (((number >= 5 && number <= 8) || number == 10)
                     && !PlayerGoalRequiresGreenGate(level))
                     throw new System.InvalidOperationException(
                         $"Level {number} must seal every player goal behind a green gate. "
                         + "Redesign the board so it cannot finish without holding the green button.");
-
-                // Level 18 must be a planning step above Level 17, not another long corridor.
-                // Protect the reviewed route texture as well as its aggregate evidence score.
-                if (number == 18)
-                {
-                    int directionChanges = DirectionChanges(level.solution);
-                    int longestRun = LongestDirectionRun(level.solution);
-                    if (directionChanges < 12 || longestRun > 9)
-                        throw new System.InvalidOperationException(
-                            $"Level 18 needs at least 12 direction decisions and no run above 9 moves; "
-                            + $"found {directionChanges} decisions and a {longestRun}-move run.");
-                }
-
-                // Level 19 adds a third coordinate space. Its route must therefore contain a
-                // denser handoff than Level 18, rather than earning difficulty from room count.
-                if (number == 19)
-                {
-                    int directionChanges = DirectionChanges(level.solution);
-                    int longestRun = LongestDirectionRun(level.solution);
-                    if (directionChanges < 13 || longestRun > 6)
-                        throw new System.InvalidOperationException(
-                            $"Level 19 needs at least 13 direction decisions and no run above 6 moves; "
-                            + $"found {directionChanges} decisions and a {longestRun}-move run.");
-                }
 
                 if (i >= 20)
                 {
@@ -3621,209 +3989,193 @@ namespace Parabox.EditorTools
         {
             return new[]
             {
-                // L01 — the first arrow is a real commitment, not decoration. Push the crate
-                // across the upper lane, drop it onto its goal, then unwind to the player exit.
+                // L01 — one obvious push, then walk to the bright exit. No arrow, trap or gate:
+                // the opening board teaches the two basic goal shapes and nothing else.
                 new LevelDef
                 {
                     name = "The First Commitment",
                     rooms = new[] { new[]
                     {
                         "#######",
-                        "###p..#",
-                        "#..b..#",
-                        "#.<P#x#",
+                        "#...p.#",
+                        "#Pbx..#",
                         "#.....#",
                         "#######"
                     } },
-                    par = 10,
-                    solution = "LURRURDULL"
+                    par = 4,
+                    solution = "RURR"
                 },
 
-                // L02 — the crate must turn a corner before the player can take a different route
-                // to the exit. It removes the straight-line solution used by the old board.
+                // L02 — the reviewed 16-move board is deliberately a wide, visible lane. The
+                // player pushes in one direction, then follows the open lower lane to the exit.
                 new LevelDef
                 {
                     name = "Corner Delivery",
                     rooms = new[] { new[]
                     {
+                        "############",
+                        "#P.b.....x.#",
+                        "#..........#",
+                        "#..........#",
+                        "#.p........#",
+                        "############"
+                    } },
+                    par = 16,
+                    solution = "RRRRRRRDDDLLLLLL"
+                },
+
+                // L03 — first positioning lesson: walk behind one crate, push it once, then use
+                // the completely open right lane to reach the player goal.
+                new LevelDef
+                {
+                    name = "Two Deliveries",
+                    rooms = new[] { new[]
+                    {
                         "########",
-                        "#.p.#..#",
-                        "#.....x#",
-                        "#..bP..#",
-                        "#.#...##",
-                        "#.#..###",
+                        "#....p.#",
+                        "#..x...#",
+                        "#..b...#",
+                        "#P.....#",
                         "########"
+                    } },
+                    par = 7,
+                    solution = "RRURRUU"
+                },
+
+                // L04 — the first corner push. A broad loop shows exactly how to reach the useful
+                // side of the crate; there is still only one delivery and no irreversible tile.
+                new LevelDef
+                {
+                    name = "Committed Pair",
+                    rooms = new[] { new[]
+                    {
+                        "########",
+                        "#...p..#",
+                        "#..b...#",
+                        "#..xP..#",
+                        "#......#",
+                        "########"
+                    } },
+                    par = 6,
+                    solution = "UULDRU"
+                },
+
+                // L05 — NEW MECHANIC: button and gate. The tutorial plays immediately before this
+                // board; one straight push opens the divider and leaves a short route to the exit.
+                new LevelDef
+                {
+                    name = "First Gate",
+                    rooms = new[] { new[]
+                    {
+                        "#########",
+                        "#.B.#.p##",
+                        "#.b.G..##",
+                        "#.P.#..##",
+                        "#...#..##",
+                        "#########"
+                    } },
+                    par = 6,
+                    solution = "URRRUR"
+                },
+
+                // L06 — repeat the same hold-and-cross action with a slightly longer, still open
+                // route. Repetition comes before adding another cargo objective.
+                new LevelDef
+                {
+                    name = "Gate Delivery",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#.B.#..p.#",
+                        "#.b.G....#",
+                        "#.P.#....#",
+                        "#...#....#",
+                        "##########"
+                    } },
+                    par = 7,
+                    solution = "URRRRRU"
+                },
+
+                // L07 — rotate the whole relationship: a horizontal divider separates the board.
+                // One crate holds the upper button while a second crosses a clear lower side lane.
+                new LevelDef
+                {
+                    name = "Turn Beyond",
+                    rooms = new[] { new[]
+                    {
+                        "#########",
+                        "#P..bB..#",
+                        "###G#####",
+                        "#...bx..#",
+                        "#...p...#",
+                        "#########"
+                    } },
+                    par = 8,
+                    solution = "RRRLDDRD"
+                },
+
+                // L08 — a different action language: push the holder DOWN, cross from left to
+                // right, then push the delivery DOWN onto its visible target before climbing out.
+                new LevelDef
+                {
+                    name = "Double Passage",
+                    rooms = new[] { new[]
+                    {
+                        "###########",
+                        "#P..#....p#",
+                        "#b..G.....#",
+                        "#B..#..b..#",
+                        "#...#..x..#",
+                        "###########"
                     } },
                     par = 12,
-                    solution = "DLULURRRLLUL"
+                    solution = "DRRRRRRDRRUU"
                 },
 
-                // L03 — two ordinary crates face opposite jobs in a compact chamber. Solving either
-                // from the wrong side blocks the approach needed for the other.
-                new LevelDef
-                {
-                    name = "Twin Reversal",
-                    rooms = new[] { new[]
-                    {
-                        "########",
-                        "##.x.#.#",
-                        "#.Px...#",
-                        "#.b..b.#",
-                        "#...p..#",
-                        "#.##..##",
-                        "########"
-                    } },
-                    par = 18,
-                    solution = "LDRDRUURRRDLLDLURD"
-                },
-
-                // L04 — finish the left delivery before crossing the one-way bridge. Once the
-                // player crosses, returning is impossible, so the order must be planned first.
-                new LevelDef
-                {
-                    name = "No Return",
-                    rooms = new[] { new[]
-                    {
-                        "############",
-                        "#x..#.....p#",
-                        "#...#..#...#",
-                        "#b..#....x.#",
-                        "#.P.#..b#..#",
-                        "#...>......#",
-                        "############"
-                    } },
-                    par = 21,
-                    solution = "LUURRDDDRRRRULURRUURR"
-                },
-
-                // L05 — two ordinary cargo pieces share a cross-shaped workspace. Sending either
-                // piece into the wrong approach lane blocks the other, so both delivery order and
-                // the player's return route must be planned. Its shortest authored route is 32
-                // moves versus Level 4's 21, without introducing another mechanic or tutorial.
-                new LevelDef
-                {
-                    name = "Crosslock",
-                    rooms = new[] { new[]
-                    {
-                        "#########",
-                        "#..x...p#",
-                        "#..#.#..#",
-                        "#..b.b..#",
-                        "#.#...#.#",
-                        "#P..x...#",
-                        "#########"
-                    } },
-                    par = 32,
-                    solution = "UURRDRUUDDDRRRUULLRUULLDDDUUURRR"
-                },
-
-                // L06 — two ordinary cargo deliveries share one tight workspace. Their approach
-                // lanes compete, so the player must plan which delivery moves first.
-                new LevelDef
-                {
-                    name = "Mixed Cargo",
-                    rooms = new[] { new[]
-                    {
-                        "#########",
-                        "#....x#.#",
-                        "#.#...###",
-                        "#.......#",
-                        "#.pxbb#.#",
-                        "#.##P...#",
-                        "#########"
-                    } },
-                    par = 21,
-                    solution = "UDRUDRRUULLLULURDLDLD"
-                },
-
-                // L07 — NEW MECHANIC: button and gate. One crate must become a doorstop while the
-                // other delivery and the player pass through the opened route.
-                new LevelDef
-                {
-                    name = "Hold the Door",
-                    rooms = new[] { new[]
-                    {
-                        "#########",
-                        "#.bB#####",
-                        "#.....###",
-                        "#.P.#####",
-                        "##.G....#",
-                        "######b.#",
-                        "#####.x.#",
-                        "####p...#",
-                        "#########"
-                    } },
-                    par = 18,
-                    solution = "ULURDRDDRRRDRDDLLL"
-                },
-
-                // L08 — three crates have three different jobs: two deliveries and one permanent
-                // gate hold. The goal corridor remains sealed until that dependency is complete.
-                new LevelDef
-                {
-                    name = "Three Jobs, One Gate",
-                    rooms = new[] { new[]
-                    {
-                        "############",
-                        "#x..x##.p###",
-                        "#....##.####",
-                        "#b##b##G####",
-                        "#P.........#",
-                        "#......bB..#",
-                        "#..........#",
-                        "############"
-                    } },
-                    par = 20,
-                    solution = "UUDDRRRUUDDRRDRUUUUR"
-                },
-
-                // L09 — the holding crate must first open the divider for the second delivery,
-                // then be recovered and delivered itself. This is a true two-stage gate relay.
+                // L09 — the gate moves to the TOP of a tall centre divider. Beyond it, two boxes
+                // rise into two matching targets in parallel columns: same rule, new spatial plan.
                 new LevelDef
                 {
                     name = "Gate Relay",
                     rooms = new[] { new[]
                     {
-                        "##############",
-                        "#.....#......#",
-                        "#.B...#......#",
-                        "#.b.b.G......#",
-                        "#.xP..#......#",
-                        "#...p.#...x..#",
-                        "##############"
+                        "#############",
+                        "#....G.....p#",
+                        "#....#.x.x..#",
+                        "#P.bB#.b.b..#",
+                        "#....#......#",
+                        "#....#......#",
+                        "#############"
                     } },
-                    par = 30,
-                    solution = "LURRRRRRRURDDULLLLLUULLLDDRRDD"
+                    par = 20,
+                    solution = "RRUURRRDDDRUDRRURRUU"
                 },
 
-                // L10 — chapter mastery. Ordinary cargo holds the first gate while two cargo
-                // pieces cross the divider; the second gate seals the final player exit.
+                // L10 — a true chapter review with a new silhouette: complete one LEFT-side job,
+                // cross the CENTRE gate, then complete one RIGHT-side vertical job. The two tasks
+                // live on opposite sides instead of repeating Level 9's parallel arrangement.
+                // The earlier cabinet rule still grants 44 moves, well above this compact proof.
                 new LevelDef
                 {
                     name = "Foundation Circuit",
                     rooms = new[] { new[]
                     {
-                        "##############",
-                        "#.....#...Gp.#",
-                        "#.B...#......#",
-                        "#.b...#..b...#",
-                        "#x.P..G..b...#",
-                        "#.....#......#",
-                        "#..x..#......#",
-                        "#.....#......#",
-                        "##############"
+                        "#############",
+                        "#P.bB#......#",
+                        "#....#..x...#",
+                        "#....G..b...#",
+                        "#xb..#......#",
+                        "#....#....p.#",
+                        "#############"
                     } },
-                    par = 39,
-                    solution = "LURRRDRRURRURDRDLLLLLLLULDDURRRRUUURRRR"
+                    par = 19,
+                    solution = "RRDDDLURRRRDRRURRDD"
                 },
             };
         }
 
         // Chapter II starts above Chapter I's final evidence and introduces recursion in readable
-        // steps. Every puzzle has a unique compact silhouette and one dominant room decision:
-        // cross a fixed room, pin or dock a movable room, transfer cargo across a boundary, then
-        // combine those ideas across more coordinate spaces. The parser layers the proven Chapter
-        // I foundation dependencies onto these clean source layouts.
+        // steps. Every puzzle has a compact silhouette and one dominant room decision.
         static LevelDef[] ChapterTwoInsideTheBox()
         {
             return new[]
@@ -3833,23 +4185,8 @@ namespace Parabox.EditorTools
                     name = "Doorway",
                     rooms = new[]
                     {
-                        new[]
-                        {
-                            "########",
-                            "########",
-                            "#...####",
-                            "#.#..Q##",
-                            "#P###.p#",
-                            "########",
-                        },
-                        new[]
-                        {
-                            "#####",
-                            "...##",
-                            ".#.##",
-                            "##.##",
-                            "##.##",
-                        },
+                        new[] { "########", "########", "#...####", "#.#..Q##", "#P###.p#", "########" },
+                        new[] { "#####", "...##", ".#.##", "##.##", "##.##" },
                     },
                     par = 15,
                     solution = "UURRDRRURRDDDDR"
@@ -3859,24 +4196,8 @@ namespace Parabox.EditorTools
                     name = "Return Path",
                     rooms = new[]
                     {
-                        new[]
-                        {
-                            "#######",
-                            "#######",
-                            "####..#",
-                            "#P..Q.#",
-                            "####.##",
-                            "##p..##",
-                            "#######",
-                        },
-                        new[]
-                        {
-                            "##.##",
-                            "...##",
-                            ".###.",
-                            "##...",
-                            "##.##",
-                        },
+                        new[] { "#######", "#######", "####..#", "#P..Q.#", "####.##", "##p..##", "#######" },
+                        new[] { "##.##", "...##", ".###.", "##...", "##.##" },
                     },
                     par = 19,
                     solution = "RRRURRUURDLDLLDDDLL"
@@ -3886,24 +4207,8 @@ namespace Parabox.EditorTools
                     name = "Pin to Enter",
                     rooms = new[]
                     {
-                        new[]
-                        {
-                            "#######",
-                            "#p.P.##",
-                            "###1.##",
-                            "##..###",
-                            "##..###",
-                            "#######",
-                            "#######",
-                        },
-                        new[]
-                        {
-                            "##.##",
-                            "...##",
-                            ".####",
-                            "#####",
-                            "#####",
-                        },
+                        new[] { "#######", "#p.P.##", "###1.##", "##..###", "##..###", "#######", "#######" },
+                        new[] { "##.##", "...##", ".####", "#####", "#####" },
                     },
                     par = 16,
                     solution = "DDLDRURRUUURULLL"
@@ -3913,25 +4218,8 @@ namespace Parabox.EditorTools
                     name = "Docked Passage",
                     rooms = new[]
                     {
-                        new[]
-                        {
-                            "########",
-                            "####..##",
-                            "#P.1..##",
-                            "##.#.x##",
-                            "#p.#####",
-                            "########",
-                            "########",
-                        },
-                        new[]
-                        {
-                            "###.###",
-                            "....###",
-                            ".######",
-                            "#######",
-                            "#######",
-                            "#######",
-                        },
+                        new[] { "########", "####..##", "#P.1..##", "##.#.x##", "#p.#####", "########", "########" },
+                        new[] { "###.###", "....###", ".######", "#######", "#######", "#######" },
                     },
                     par = 21,
                     solution = "RRRURDLDRURRRUULLLDDL"
@@ -3949,39 +4237,17 @@ namespace Parabox.EditorTools
                 },
                 new LevelDef
                 {
-                    // PRACTICE: one compact dock, one straight cargo transfer and one short return.
-                    // The single right-facing arrow rehearses Chapter 1 without adding another
-                    // branch, making this a gentler step immediately after Level 15.
                     name = "Moving Delivery",
                     rooms = new[]
                     {
-                        new[]
-                        {
-                            "#########",
-                            "#.p.....#",
-                            "#P.1....#",
-                            "#....x.j#",
-                            "#....#..#",
-                            "#########",
-                        },
-                        new[]
-                        {
-                            "##.##",
-                            "#...#",
-                            "#.J>.",
-                            "#...#",
-                            "##.##",
-                        },
+                        new[] { "#########", "#.p.....#", "#P.1....#", "#....x.j#", "#....#..#", "#########" },
+                        new[] { "##.##", "#...#", "#.J>.", "#...#", "##.##" },
                     },
                     par = 20,
                     solution = "RRRURD" + "DDLDRRRR" + "UULLLL"
                 },
                 new LevelDef
                 {
-                    // COMBINE: the cargo target is deliberately one full cell inside the board, so
-                    // the outer frame is never crossed. Inside the room, a lower brace forces a
-                    // direction change before extraction. The player must then take the upper
-                    // detour around a new wall, dock the room from the opposite side and exit.
                     name = "Side Extraction",
                     rooms = new[]
                     {
@@ -3993,118 +4259,47 @@ namespace Parabox.EditorTools
                 },
                 new LevelDef
                 {
-                    // COMBINE: first dock the movable room at the lower socket. Entering from above
-                    // puts the player behind a cargo piece that must turn at the inner brace before
-                    // crossing the room boundary. Its final coral target is also a Chapter 1 button,
-                    // so the distant exit stays sealed until the delivery is complete.
                     name = "Turn It Inside",
                     rooms = new[]
                     {
                         new[]
                         {
-                            "###############",
-                            "#p.#..........#",
-                            "#..G..........#",
-                            "#..#.P.1......#",
-                            "#..#.......x.&#",
-                            "#..#.......#..#",
-                            "###############",
+                            "###############", "#p.#..........#", "#..G..........#",
+                            "#..#.P.1......#", "#..#.......x.&#", "#..#.......#..#", "###############",
                         },
-                        new[]
-                        {
-                            "###.###",
-                            "#.....#",
-                            "#..J..#",
-                            ".......",
-                            "#.###.#",
-                            "#.....#",
-                            "###.###",
-                        },
+                        new[] { "###.###", "#.....#", "#..J..#", ".......", "#.###.#", "#.....#", "###.###" },
                     },
                     par = 32,
                     solution = "RRRRRURDD" + "DDLDRRRRR" + "UU" + "LLLLLLLLLL" + "UL"
                 },
                 new LevelDef
                 {
-                    // COMBINE: a mirrored silhouette breaks the repeated left-to-right rhythm.
-                    // The outer room docks leftward, the cargo turns left through two recursive
-                    // boundaries, and the return crosses two right-facing Chapter 1 commitments.
                     name = "Two Rooms Down",
                     rooms = new[]
                     {
                         new[]
                         {
-                            "#############",
-                            "#.....#....p#",
-                            "#.....>..>..#",
-                            "#........1.P#",
-                            "#j.x........#",
-                            "#..#.....#..#",
-                            "#############",
+                            "#############", "#.....#....p#", "#.....>..>..#", "#........1.P#",
+                            "#j.x........#", "#..#.....#..#", "#############",
                         },
-                        new[]
-                        {
-                            "###.###",
-                            "#.....#",
-                            "#.....#",
-                            "...U...",
-                            "#.###.#",
-                            "#.....#",
-                            "###.###",
-                        },
-                        new[]
-                        {
-                            "###.###",
-                            "#.....#",
-                            "#..J..#",
-                            ".......",
-                            "#.###.#",
-                            "#.....#",
-                            "###.###",
-                        },
+                        new[] { "###.###", "#.....#", "#.....#", "...U...", "#.###.#", "#.....#", "###.###" },
+                        new[] { "###.###", "#.....#", "#..J..#", ".......", "#.###.#", "#.....#", "###.###" },
                     },
                     par = 38,
                     solution = "LLLLLLLULD" + "DDDD" + "DDRDLLLLLLLL" + "UURRRRRRRRRU"
                 },
                 new LevelDef
                 {
-                    // SYNTHESIS: the deepest cargo travels left through both inner rooms and across
-                    // the future outer room socket. Its button-target opens the distant gate; only
-                    // then can the player circle, dock Room 1, cross a right-facing commitment and
-                    // reach the final player exit.
                     name = "Three-Space Relay",
                     rooms = new[]
                     {
                         new[]
                         {
-                            "###################",
-                            "#............#...p#",
-                            "#............G.>..#",
-                            "#..........P.#....#",
-                            "#&..x1.......#....#",
-                            "#....#.......#....#",
-                            "###################",
+                            "###################", "#............#...p#", "#............G.>..#",
+                            "#..........P.#....#", "#&..x1.......#....#", "#....#.......#....#", "###################",
                         },
-                        new[]
-                        {
-                            "###.###",
-                            "#.....#",
-                            "#.....#",
-                            "...U...",
-                            "#.###.#",
-                            "#.....#",
-                            "###.###",
-                        },
-                        new[]
-                        {
-                            "###.###",
-                            "#.....#",
-                            "#..J..#",
-                            ".......",
-                            "#.###.#",
-                            "#.....#",
-                            "###.###",
-                        },
+                        new[] { "###.###", "#.....#", "#.....#", "...U...", "#.###.#", "#.....#", "###.###" },
+                        new[] { "###.###", "#.....#", "#..J..#", ".......", "#.###.#", "#.....#", "###.###" },
                     },
                     par = 46,
                     solution = "LLLLLL" + "DDDD" + "DDRD" + "LLLLLLLLLL"
@@ -4113,7 +4308,217 @@ namespace Parabox.EditorTools
             };
         }
 
-        // Kept as an unused source reference for designers comparing the old chapter order.
+        // Unused experimental flat-board replacement retained as a source reference only.
+        // Chapter II is a flat-board puzzle chapter, not another recursion chapter. The first four
+        // boards reuse Chapter I's orange cargo/button and green gate. Level 15 then introduces
+        // coloured cargo: every crate belongs only on the target with the same colour and embossed
+        // mark. The final six boards are intentionally different silhouettes and axis patterns.
+        static LevelDef[] ChapterTwoFlatExperiment_Unused()
+        {
+            var levels = new List<LevelDef>
+            {
+                new LevelDef
+                {
+                    // Three compact jobs sit behind one held gate. The centre post forces the
+                    // first real delivery order without adding an empty walking corridor.
+                    name = "Three-Crate Turn",
+                    rooms = new[] { new[]
+                    {
+                        "#########",
+                        "#P.bB...#",
+                        "##G######",
+                        "#.x.x...#",
+                        "#.bb....#",
+                        "#..#....#",
+                        "#.xb..p.#",
+                        "#.......#",
+                        "#########",
+                    } },
+                    par = 26,
+                    solution = "RRLDDLDDRURURRDDDLLRUURRDD"
+                },
+                new LevelDef
+                {
+                    // Three adjacent crates share three offset targets around one central post.
+                    // The open lower loop preserves visibility while making push order matter.
+                    name = "Central Post",
+                    rooms = new[] { new[]
+                    {
+                        "#########",
+                        "#P.bB...#",
+                        "##G######",
+                        "#.x.x.x.#",
+                        "#.bbb...#",
+                        "#...#...#",
+                        "#.....p.#",
+                        "#.......#",
+                        "#########",
+                    } },
+                    par = 30,
+                    solution = "RRLDDLDDRRUDLLUURRDDLURRRDRUDD"
+                },
+                new LevelDef
+                {
+                    // A fourth job lives in its own visible side bay. The player must finish the
+                    // central three-crate sequence and still preserve the approach to that bay.
+                    name = "Side Bay",
+                    rooms = new[] { new[]
+                    {
+                        "##########",
+                        "#P.bB....#",
+                        "##G#######",
+                        "#.x.x.x#x#",
+                        "#.bbb..#b#",
+                        "#...#..#.#",
+                        "#.......p#",
+                        "#........#",
+                        "##########",
+                    } },
+                    par = 36,
+                    solution = "RRLDDLDDRRUDLLUURRDDLURRRDRUDDRRUUDD"
+                },
+                new LevelDef
+                {
+                    // Two isolated side bays extend the central three-crate dependency. All five
+                    // jobs are compact and visible; difficulty comes from preserving access.
+                    name = "Twin Bays",
+                    rooms = new[] { new[]
+                    {
+                        "############",
+                        "#P.bB......#",
+                        "##G#########",
+                        "#.x.x.x#x#x#",
+                        "#.bbb..#b#b#",
+                        "#...#..#.#.#",
+                        "#.........p#",
+                        "#..........#",
+                        "############",
+                    } },
+                    par = 42,
+                    solution = "RRLDDLDDRRUDLLUURRDDLURRRDRUDDRRUUDDRRUUDD"
+                },
+            };
+
+            // The last six reviewed colour-factory boards already have explicit authored routes.
+            // Reusing those source definitions keeps the new mechanic consistent with its premium
+            // colour + embossed-mark rendering while preserving six genuinely different puzzles.
+            LevelDef[] colourFactory = ChapterTwoColourFactory();
+            for (int i = 4; i < colourFactory.Length; i++)
+                levels.Add(colourFactory[i]);
+            return levels.ToArray();
+        }
+
+        // Source-only Chapter II contract. It checks presentation, mechanic progression and the
+        // authored difficulty ladder without opening or playing the game. BuildLevelPrefab later
+        // replays each route through the runtime model when the designer runs the menu command.
+        static void ValidateFlatChapterTwoDefinitions(LevelDef[] levels)
+        {
+            if (levels == null || levels.Length != 10)
+                throw new System.InvalidOperationException(
+                    $"Chapter II must contain exactly ten flat levels; found {levels?.Length ?? 0}.");
+
+            var names = new HashSet<string>(System.StringComparer.Ordinal);
+            var layouts = new HashSet<string>(System.StringComparer.Ordinal);
+            int previousDifficulty = -1;
+            for (int i = 0; i < levels.Length; i++)
+            {
+                LevelDef level = levels[i];
+                int number = 11 + i;
+                if (level == null || string.IsNullOrWhiteSpace(level.name) || !names.Add(level.name))
+                    throw new System.InvalidOperationException(
+                        $"Level {number} needs a unique Chapter II name.");
+                if (level.rooms == null || level.rooms.Length != 1)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} must be one visible board; box-inside-box rooms are forbidden.");
+                if (string.IsNullOrEmpty(level.solution) || level.solution.Length != level.par)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} needs an explicit authored route whose length equals par.");
+
+                string[] room = level.rooms[0];
+                if (room == null || room.Length < 6 || room.Length > 14
+                    || string.IsNullOrEmpty(room[0]) || room[0].Length < 7 || room[0].Length > 17)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} is outside Chapter II's readable camera-safe board size.");
+
+                int width = room[0].Length;
+                int players = 0, playerGoals = 0, ordinaryCargo = 0, ordinaryGoals = 0;
+                int colouredCargo = 0, colouredGoals = 0, buttons = 0, gates = 0;
+                var fingerprint = new System.Text.StringBuilder();
+                for (int y = 0; y < room.Length; y++)
+                {
+                    string row = room[y];
+                    if (row == null || row.Length != width)
+                        throw new System.InvalidOperationException(
+                            $"Level {number}, row {y} is not rectangular.");
+                    fingerprint.Append(row).Append('/');
+                    foreach (char cell in row)
+                    {
+                        bool allowed = cell == '#' || cell == '.' || cell == 'P' || cell == 'p'
+                            || cell == 'b' || cell == 'x' || cell == 'B' || cell == 'G'
+                            || cell == 'J' || cell == 'j' || cell == 'N' || cell == 'n'
+                            || cell == 'Z' || cell == 'z';
+                        if (!allowed)
+                            throw new System.InvalidOperationException(
+                                $"Level {number} uses unrelated mechanic '{cell}'.");
+                        if (cell == 'P') players++;
+                        else if (cell == 'p') playerGoals++;
+                        else if (cell == 'b') ordinaryCargo++;
+                        else if (cell == 'x') ordinaryGoals++;
+                        else if (cell == 'J' || cell == 'N' || cell == 'Z') colouredCargo++;
+                        else if (cell == 'j' || cell == 'n' || cell == 'z') colouredGoals++;
+                        else if (cell == 'B') buttons++;
+                        else if (cell == 'G') gates++;
+                    }
+                }
+
+                if (!layouts.Add(fingerprint.ToString()))
+                    throw new System.InvalidOperationException(
+                        $"Level {number} repeats another Chapter II layout.");
+                if (players != 1 || playerGoals != 1)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} needs exactly one player and one player target.");
+
+                if (i < 4)
+                {
+                    if (buttons != 1 || gates < 1 || ordinaryCargo != ordinaryGoals + 1
+                        || ordinaryGoals < 2 || colouredCargo != 0 || colouredGoals != 0)
+                        throw new System.InvalidOperationException(
+                            $"Level {number} must reuse one Chapter I button/gate hold plus every visible cargo job.");
+                }
+                else if (buttons != 0 || gates != 0 || ordinaryCargo != 0 || ordinaryGoals != 0
+                         || colouredCargo < 4 || colouredCargo != colouredGoals)
+                {
+                    throw new System.InvalidOperationException(
+                        $"Level {number} must use four or more complete colour-and-mark cargo matches.");
+                }
+
+                int difficulty = EasyInsideTheBoxDifficulty(level);
+                if (i == 0 && level.par <= ChapterOneFoundations()[9].par)
+                    throw new System.InvalidOperationException(
+                        "Level 11 must start above Chapter I's reviewed finale route and task load.");
+                if (difficulty <= previousDifficulty)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} planning evidence {difficulty} must exceed the previous "
+                        + $"Chapter II level's {previousDifficulty} without padding movement.");
+                previousDifficulty = difficulty;
+            }
+        }
+
+        static int DistinctChapterTwoColours(string[] room)
+        {
+            bool coral = false, sky = false, green = false;
+            foreach (string row in room)
+                foreach (char cell in row)
+                {
+                    coral |= cell == 'J' || cell == 'j';
+                    sky |= cell == 'N' || cell == 'n';
+                    green |= cell == 'Z' || cell == 'z';
+                }
+            return (coral ? 1 : 0) + (sky ? 1 : 0) + (green ? 1 : 0);
+        }
+
+        // Complete colour-matching source set. Chapter II uses the six reviewed mastery boards
+        // from index four onward after its dedicated Level 15 tutorial.
         static LevelDef[] ChapterTwoColourFactory()
         {
             return new[]
@@ -4345,7 +4750,7 @@ namespace Parabox.EditorTools
 
         static LevelDef[] ChapterThreeSynergy()
         {
-            return new[]
+            var levels = new[]
             {
                 // TEACH: a compact horizontal relay. Cargo crosses the room, the room is lowered
                 // onto its socket, and the player uses the solved room to reach a separate exit.
@@ -4496,6 +4901,20 @@ namespace Parabox.EditorTools
                     solution = "RRRRRRRRURDDLDRURDDDDDRDLLLLULDDDDDDDRDLULDDDLDRURDDDDDUURURRRDR"
                 },
             };
+
+            // The premium cyan portal is introduced immediately before Level 25, then remains a
+            // required part of every Chapter III solve through Level 30. Replacing the original
+            // player goal with a sealed paired exit preserves each reviewed route and adds one
+            // final portal step without changing the room/cargo work that makes the levels unique.
+            for (int chapterIndex = 4; chapterIndex < levels.Length; chapterIndex++)
+                AddMandatoryPortalExit(levels[chapterIndex], 1);
+            // Level 29 finishes by emerging from a recursive room directly onto the former goal
+            // cell. That transition intentionally bypasses ordinary floor effects, so step right,
+            // re-enter the cyan portal from the board, then step onto the sealed target.
+            levels[8].solution = levels[8].solution.Substring(0, levels[8].solution.Length - 1)
+                + "RLR";
+            levels[8].par += 2;
+            return levels;
         }
 
         // Premium Chapter IV keeps the original deep-room interactions and authored routes. The
@@ -4518,12 +4937,20 @@ namespace Parabox.EditorTools
                 "Abyss Return",
                 "Event Horizon Relay",
             };
-            int[] exitDistances = { 0, 0, 0, 0, 1, 1, 2, 2, 1, 1 };
+            int[] sourceIndices = { 0, 1, 2, 3, 4, 5, 7, 8, 9 };
+            int[] exitDistances = { 0, 0, 0, 0, 1, 1, 2, 2, 1, 3 };
 
             var result = new LevelDef[10];
             for (int i = 0; i < result.Length; i++)
             {
-                result[i] = CloneLevelDefinition(source[i]);
+                // The retired source[6] proof blocks under the current recursive transfer rules
+                // and leaves its colour manifest unfinished. Do not ship or cosmetically patch a
+                // broken puzzle. Levels 37-39 advance to the next three solver-proven maneuvers;
+                // Level 40 rotates the deepest branching board into a new approach-side finale.
+                LevelDef sourceLevel = i < sourceIndices.Length
+                    ? source[sourceIndices[i]]
+                    : RotateLevelClockwise(source[9]);
+                result[i] = CloneLevelDefinition(sourceLevel);
                 result[i].name = names[i];
                 if (exitDistances[i] > 0)
                     AddMandatoryPortalExit(result[i], exitDistances[i]);
@@ -5096,13 +5523,34 @@ namespace Parabox.EditorTools
                 {
                     if (string.IsNullOrEmpty(row)) continue;
                     foreach (char cell in row)
-                        if (cell == 'p' || cell == 'x'
+                        if (cell == 'p' || cell == 'x' || cell == '&'
                             || ColourGoals.ContainsKey(cell)
                             || ColourCargoOnGoals.ContainsKey(cell))
                             count++;
                 }
             }
             return count;
+        }
+
+        static bool ChapterTwoSourceHasButtonGate(LevelDef level)
+        {
+            bool button = false;
+            bool gate = false;
+            if (level?.rooms == null) return false;
+            foreach (string[] room in level.rooms)
+            {
+                if (room == null) continue;
+                foreach (string row in room)
+                {
+                    if (string.IsNullOrEmpty(row)) continue;
+                    foreach (char cell in row)
+                    {
+                        button |= cell == 'B' || cell == '&';
+                        gate |= cell == 'G';
+                    }
+                }
+            }
+            return button && gate;
         }
 
         // Focused source gate for the final chapter. The global campaign check already proves
@@ -5130,10 +5578,10 @@ namespace Parabox.EditorTools
                 if (string.IsNullOrWhiteSpace(level.solution) || level.solution.Length != level.par)
                     throw new System.InvalidOperationException(
                         $"Level {number} needs one explicit authored winning route whose length equals par.");
-                if (level.par > 64)
+                if (level.par > 70)
                     throw new System.InvalidOperationException(
                         $"Level {number} uses {level.par} moves. Chapter V difficulty must come from "
-                        + "puzzle dependencies, not a long walking route (maximum 64).");
+                        + "puzzle dependencies, not a long walking route (maximum 70 for the finale).");
 
                 int roomReferences = 0;
                 int movableRooms = 0;
@@ -5960,7 +6408,7 @@ namespace Parabox.EditorTools
         // colour delivery. Generation stops before saving a bad prefab.
         static void ValidateCampaignMechanicTasks(GameObject prefab, LevelDef level, int number)
         {
-            LevelModel model = LevelParser.Parse(prefab);
+            LevelModel model = LevelParser.Parse(prefab, number - 1);
             if (model == null || model.player == null)
                 throw new System.InvalidOperationException($"Level {number} could not build its gameplay model.");
 
@@ -6092,26 +6540,65 @@ namespace Parabox.EditorTools
 
             if (chapter == 1)
             {
-                int expectedDependencies = LevelLayoutRebalancer.DependencyBudgetForLevel(number - 1);
+                int taskTarget = LevelLayoutRebalancer.ChapterTwoTaskTargetForLevel(number - 1);
+                int gateReuseBudget = LevelLayoutRebalancer.ChapterTwoGateReuseBudgetForLevel(number - 1);
                 int expectedOneWays = LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(number - 1);
-                if (model.rebalanceObjectives != expectedDependencies)
+                int sourceGoals = CountAuthoredCompletionGoals(level);
+                int generatedGoals = Mathf.Max(0, taskTarget - sourceGoals);
+                int generatedGate = gateReuseBudget > 0 && !ChapterTwoSourceHasButtonGate(level)
+                    ? 1 : 0;
+                int expectedObjectives = generatedGoals + generatedGate;
+                if (authoredGoals != taskTarget)
                     throw new System.InvalidOperationException(
-                        $"Level {number} retained {model.rebalanceObjectives}/{expectedDependencies} "
-                        + "progressive cargo/gate dependencies. Redesign the route before generation.");
+                        $"Level {number} exposes {authoredGoals}/{taskTarget} completion tasks.");
+                if (model.rebalanceObjectives != expectedObjectives)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} retained {model.rebalanceObjectives}/{expectedObjectives} "
+                        + "route-proven cargo/gate objectives. Redesign the route before generation.");
                 if (expectedOneWays > 0
                     && (!hasOneWay || !usedOneWay || model.rebalanceOneWays != expectedOneWays))
                     throw new System.InvalidOperationException(
                         $"Level {number} must actively use all {expectedOneWays} Chapter I one-way commitments.");
-                if (expectedDependencies > 0
+                if (gateReuseBudget > 0
                     && (!hasButton || !hasGate || !activatedButton || !crossedOpenGate))
                     throw new System.InvalidOperationException(
                         $"Level {number} must park cargo on the Chapter I button and cross its opened gate.");
                 if ((expectedOneWays > 0
                         && !model.curriculumReuses.Contains(MechanicCatalog.Id.OneWay))
-                    || (expectedDependencies > 0
+                    || (gateReuseBudget > 0
                         && !model.curriculumReuses.Contains(MechanicCatalog.Id.ButtonGate)))
                     throw new System.InvalidOperationException(
                         $"Level {number} did not retain the complete Chapter I mechanic reuse contract.");
+                int purposefulTasks = authoredGoals + Mathf.Max(0, model.rooms.Count - 1)
+                    + gateReuseBudget + (expectedOneWays > 0 ? 1 : 0);
+                if (purposefulTasks < 3)
+                    throw new System.InvalidOperationException(
+                        $"Level {number} exposes only {purposefulTasks} purposeful tasks.");
+            }
+
+            if (chapter == 2)
+            {
+                int expectedOneWays =
+                    LevelLayoutRebalancer.LearnedOneWayBudgetForLevel(number - 1);
+                int expectedGateHolds =
+                    LevelLayoutRebalancer.ChapterThreeGateReuseBudgetForLevel(number - 1);
+                if (model.rebalanceOneWays != expectedOneWays
+                    || (expectedOneWays > 0 && (!hasOneWay || !usedOneWay)))
+                    throw new System.InvalidOperationException(
+                        $"Level {number} retained {model.rebalanceOneWays}/{expectedOneWays} "
+                        + "purposeful Chapter I one-way commitments.");
+                if (expectedGateHolds > 0
+                    && (model.rebalanceObjectives < expectedGateHolds
+                        || !hasButton || !hasGate || !activatedButton || !crossedOpenGate))
+                    throw new System.InvalidOperationException(
+                        $"Level {number} must complete cargo on a Chapter I button, then cross "
+                        + "its opened gate on the winning route.");
+                if ((expectedOneWays > 0
+                        && !model.curriculumReuses.Contains(MechanicCatalog.Id.OneWay))
+                    || (expectedGateHolds > 0
+                        && !model.curriculumReuses.Contains(MechanicCatalog.Id.ButtonGate)))
+                    throw new System.InvalidOperationException(
+                        $"Level {number} did not retain its planned Chapter I mechanic reuse.");
             }
 
             if (chapter == 4)
@@ -6169,7 +6656,7 @@ namespace Parabox.EditorTools
                 if (visitedRooms.Count != model.rooms.Count)
                     throw new System.InvalidOperationException(
                         $"Level {number} route visits {visitedRooms.Count}/{model.rooms.Count} rooms; every authored room must be used.");
-                if (playerRoomTransitions == 0)
+                if (model.rooms.Count > 1 && playerRoomTransitions == 0)
                     throw new System.InvalidOperationException(
                         $"Level {number} contains a room-box but the player never enters or exits it.");
                 if (movedMetaRooms.Count != initialMovableRooms.Count)
@@ -6260,20 +6747,16 @@ namespace Parabox.EditorTools
             }
         }
 
-        // Chapter II difficulty is evidence-based. The shared calibration removes the generic
-        // cost of merely drawing another room; the bonuses below count decisions the route really
-        // asks the player to understand: moving a room, docking it on a socket, transferring cargo
-        // across a boundary, and tracking another coordinate space. No level-number bonus is used.
+        // Chapter II difficulty counts room movement, docking and boundary cargo transfer.
         static int EasyInsideTheBoxDifficulty(LevelDef level)
         {
             bool movableRoom = false;
             bool roomSocket = false;
             bool boundaryCargo = false;
             bool ordinaryCargo = false;
-
             if (level?.rooms != null)
-                for (int roomIndex = 0; roomIndex < level.rooms.Length; roomIndex++)
-                    foreach (string row in level.rooms[roomIndex])
+                foreach (string[] room in level.rooms)
+                    foreach (string row in room)
                         foreach (char ch in row)
                         {
                             movableRoom |= ch >= '1' && ch <= '9';
@@ -6283,16 +6766,11 @@ namespace Parabox.EditorTools
                         }
 
             int extraCoordinateSpaces = Mathf.Max(0, (level?.rooms?.Length ?? 1) - 2);
-            // Calibrate the recursive chapter above Foundation Circuit. The old -431 baseline
-            // made Level 11 easier on paper than Level 10 and stopped every focused generator.
             return AuthoredDifficulty(level) - 351
                 + (movableRoom ? 40 : 0)
                 + (movableRoom && roomSocket ? 20 : 0)
                 + (boundaryCargo ? 70 : 0)
                 + (ordinaryCargo ? 30 : 0)
-                // Tracking a third coordinate space must remain a clear step above the two-room
-                // cargo-turn lesson immediately before it. This applies to structure, never to a
-                // level number, so any future three-room replacement earns the same evidence.
                 + extraCoordinateSpaces * 80;
         }
 
@@ -6307,6 +6785,7 @@ namespace Parabox.EditorTools
             int cargo = 0;
             int roomBoxes = 0;
             int targets = 0;
+            int portals = 0;
             if (level?.rooms != null)
                 foreach (string[] room in level.rooms)
                     foreach (string row in room)
@@ -6316,6 +6795,7 @@ namespace Parabox.EditorTools
                             if ((ch >= '1' && ch <= '9') || AnchoredBoxes.ContainsKey(ch))
                                 roomBoxes++;
                             if (ch == 'j' || ch == 'x' || ch == 'p') targets++;
+                            if (ch == 'o') portals++;
                         }
 
             int turns = 0;
@@ -6332,7 +6812,8 @@ namespace Parabox.EditorTools
                    + extraRooms * 20
                    + objects * 10
                    + targets * 5
-                   + dependencies * 15;
+                   + dependencies * 15
+                   + (portals == 2 ? 120 : 0);
         }
 
         // One shared campaign score prevents chapter-boundary resets. The 100-point reviewed
@@ -6851,7 +7332,19 @@ namespace Parabox.EditorTools
             }
 
             if (outputPath == null)
-                ValidateCampaignMechanicTasks(root, def, index + 1);
+            {
+                try
+                {
+                    ValidateCampaignMechanicTasks(root, def, index + 1);
+                }
+                catch
+                {
+                    // Never leave a failed authoring object inside MainMenu. Besides hiding the
+                    // menu, that leaked board could be saved into the scene by accident.
+                    if (root != null) UnityEngine.Object.DestroyImmediate(root);
+                    throw;
+                }
+            }
 
             levelInfo.designComplexity = ReviewedCampaignDifficulty(def, index);
 
@@ -7227,8 +7720,8 @@ namespace Parabox.EditorTools
                 Hex("B76CFF"), new Vector2(390, -63), new Vector2(190, 24), FontStyle.Bold);
             briefHint.alignment = TextAnchor.MiddleRight;
 
-            // Repeat/Try live below the card. Skip is a separate top-right action so it remains
-            // available throughout the entire demonstration and not only when the choices appear.
+            // Repeat/Try live below the card after the video. Skip occupies that same centred area
+            // while the video is running, then disappears before the two final actions appear.
             var choiceRT = MakeRect(cine, "CineChoice", new Vector2(0, -410), new Vector2(900, 120),
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
             var choiceGroup = choiceRT.gameObject.AddComponent<CanvasGroup>();
@@ -7236,12 +7729,12 @@ namespace Parabox.EditorTools
             var againBtn = MakeButton(choiceRT, "TutAgain", "Watch Again", new Vector2(-290, 0), new Vector2(232, 64), 21, Hex("2A5570"));
             MenuButtonGlow(choiceRT, new Vector2(0, 0), new Vector2(272, 80), Hex("46D8C0"), spr);
             var tryBtn = MakeButton(choiceRT, "TutTry", "Try It Yourself", new Vector2(0, 0), new Vector2(272, 80), 25, Hex("4CE2C8"), Hex("2AA890"));
-            var skipBtn = MakeButton(cine, "TutorialSkip", "SKIP [PURPLE]", Vector2.zero,
-                new Vector2(250, 64), 20, Hex("B76CFF"), Hex("5A2297"));
+            var skipBtn = MakeButton(cine, "TutorialSkip", "SKIP TUTORIAL", new Vector2(0, -410),
+                new Vector2(310, 72), 20, Hex("B76CFF"), Hex("5A2297"));
             var skipRT = (RectTransform)skipBtn.transform;
-            skipRT.anchorMin = skipRT.anchorMax = Vector2.one;
-            skipRT.pivot = Vector2.one;
-            skipRT.anchoredPosition = new Vector2(-38f, -32f);
+            skipRT.anchorMin = skipRT.anchorMax = new Vector2(0.5f, 0.5f);
+            skipRT.pivot = new Vector2(0.5f, 0.5f);
+            skipRT.anchoredPosition = new Vector2(0f, -410f);
             skipBtn.navigation = new Navigation { mode = Navigation.Mode.None };
             skipBtn.gameObject.SetActive(false);
 
@@ -8805,7 +9298,10 @@ namespace Parabox.EditorTools
             var scaler = go.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
-            scaler.matchWidthOrHeight = 0.5f;
+            // Keep every generated 1920x1080 layout fully inside the viewport.  Expand adds safe
+            // space on non-16:9 displays instead of cropping fixed-edge HUD and level-map content.
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
+            scaler.matchWidthOrHeight = 0f;
             go.AddComponent<GraphicRaycaster>();
             return go.transform;
         }

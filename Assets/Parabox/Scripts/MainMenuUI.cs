@@ -119,6 +119,7 @@ namespace Parabox
             PlayerPrefs.DeleteKey("Parabox.FinalRun");
             PlayerPrefs.DeleteKey("Parabox.OutLevel");
             PlayerPrefs.DeleteKey("Parabox.FinalMoves");
+            PlayerPrefs.DeleteKey(GameManager.TutorialKey);
             PlayerPrefs.Save();
         }
 
@@ -172,8 +173,27 @@ namespace Parabox
             // but every UI hit target collapses to zero pixels and the map appears impossible
             // to open. Keep the authored Canvas at a valid scale in both old and new scenes.
             Canvas canvas = GetComponentInParent<Canvas>();
-            if (canvas != null && canvas.transform.localScale == Vector3.zero)
-                canvas.transform.localScale = Vector3.one;
+            if (canvas != null)
+            {
+                if (canvas.transform.localScale == Vector3.zero)
+                    canvas.transform.localScale = Vector3.one;
+
+                // The approved home and five-chapter map are authored at 1920x1080.  A 0.5
+                // width/height match makes that fixed-width artwork wider than the virtual canvas
+                // in 16:10 (and other non-16:9) Game views, clipping Chapter I/V off-screen.
+                // Expand preserves the full reference frame and places any surplus space outside
+                // it, so the complete map remains visible on every aspect ratio.
+                ConfigureResponsiveCanvas(canvas.GetComponent<CanvasScaler>());
+            }
+        }
+
+        static void ConfigureResponsiveCanvas(CanvasScaler scaler)
+        {
+            if (scaler == null) return;
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
+            scaler.matchWidthOrHeight = 0f;
         }
 
         void OnEnable()
@@ -243,10 +263,8 @@ namespace Parabox
             Sfx.Init();
             HideMusicCredit();
 
-            // PLAY and LEVEL SELECT used to be pictures painted into the menu background with
-            // nearly invisible Button components laid over them. Keep their approved layout, but
-            // render the supplied button artwork from the real Button hierarchy so hover, press,
-            // controller focus and the complete rectangular hit area all belong to one object.
+            // Restore both original home actions. PLAY is still selected first, while each real
+            // Button owns its hover, press, controller focus and complete hit area.
             EnsureHomeActionButton(playButton, "PLAY", true);
             EnsureHomeActionButton(levelsButton, "LEVEL SELECT", false);
             EnsureArtworkHitTarget(levelBoardBackButton);
@@ -255,6 +273,7 @@ namespace Parabox
             // by a later rebake or progress effect.
             if (levelBoardBackButton != null)
             {
+                ArcadeActionButtonStyle.ApplyLevelMapBack(levelBoardBackButton);
                 levelBoardBackButton.transform.SetAsLastSibling();
                 levelBoardBackButton.gameObject.SetActive(true);
             }
@@ -264,7 +283,7 @@ namespace Parabox
 
             playButton.onClick.AddListener(BeginStart);
             if (quitButton != null) quitButton.onClick.AddListener(Quit);
-            if (levelsButton != null) levelsButton.onClick.AddListener(OpenLevelBoard);
+            if (levelsButton != null) levelsButton.onClick.AddListener(BeginOpenLevelBoard);
             if (levelBoardBackButton != null) levelBoardBackButton.onClick.AddListener(CloseLevelBoard);
 
             for (int i = 0; i < levelButtons.Length; i++)
@@ -293,6 +312,7 @@ namespace Parabox
             // loading time is included in Unity's first delta and can consume most of the 30s.
             _menuTimeoutReady = true;
             BeginMenuTimeoutSession();
+            SelectHome();
 
             // arriving out of the finale: catch the board mid-move and carry it out to the logo
             if (!useStaticHomeArtwork && PlayerPrefs.GetInt("Parabox.SeamlessOut", 0) == 1)
@@ -383,17 +403,25 @@ namespace Parabox
         static void EnsureHomeActionButton(Button button, string label, bool isPlay)
         {
             if (button == null) return;
+
             button.gameObject.SetActive(true);
             button.interactable = true;
             button.transition = Selectable.Transition.ColorTint;
 
-            // Keep both home actions low on the cabinet floor, with a small safe-area margin.
-            // Enforcing this here also covers fast Enter Play Mode without a scene reload.
+            Color idleAccent = isPlay
+                ? new Color(0.08f, 0.80f, 1f, 0.82f)
+                : new Color(0.53f, 0.39f, 1f, 0.82f);
+            Color focusAccent = isPlay
+                ? new Color(0.2f, 0.95f, 1f, 1f)
+                : new Color(0.70f, 0.54f, 1f, 1f);
+
+            // Keep both home actions together in the lower third, clear of the logo and puzzle
+            // artwork. PLAY remains the first/default selection on the left.
             RectTransform buttonRect = button.transform as RectTransform;
             if (buttonRect != null)
             {
-                buttonRect.anchoredPosition = new Vector2(isPlay ? -225f : 225f, -335f);
-                buttonRect.sizeDelta = new Vector2(isPlay ? 345f : 370f, 112f);
+                buttonRect.anchoredPosition = new Vector2(isPlay ? -225f : 225f, -365f);
+                buttonRect.sizeDelta = new Vector2(370f, 112f);
             }
 
             CanvasGroup group = button.GetComponent<CanvasGroup>();
@@ -422,22 +450,66 @@ namespace Parabox
             UIGradient gradient = face.GetComponent<UIGradient>();
             if (gradient == null) gradient = face.gameObject.AddComponent<UIGradient>();
             gradient.top = isPlay
-                ? new Color(0.33333334f, 0.8627451f, 0.29803923f, 1f)
-                : new Color(1f, 0.84705883f, 0.23921569f, 1f);
+                ? new Color(0.30f, 0.88f, 0.28f, 1f)
+                : new Color(1f, 0.85f, 0.24f, 1f);
             gradient.bottom = isPlay
-                ? new Color(0.08627451f, 0.52156866f, 0.21176471f, 1f)
-                : new Color(0.9019608f, 0.60784316f, 0.04313726f, 1f);
+                ? new Color(0.06f, 0.58f, 0.18f, 1f)
+                : new Color(0.90f, 0.61f, 0.045f, 1f);
             face.SetVerticesDirty();
+
+            // Layered highlights, a crisp frame and real depth make the only action feel like a
+            // premium cabinet control rather than a flat rectangle.
+            if (gloss != null)
+            {
+                gloss.color = new Color(1f, 1f, 1f, 0.12f);
+                gloss.raycastTarget = false;
+                RectTransform glossRect = gloss.rectTransform;
+                glossRect.anchoredPosition = new Vector2(0f, 2f);
+                glossRect.sizeDelta = new Vector2(360f, 102f);
+                UIGradient glossGradient = gloss.GetComponent<UIGradient>();
+                if (glossGradient == null) glossGradient = gloss.gameObject.AddComponent<UIGradient>();
+                glossGradient.top = new Color(1f, 1f, 1f, 0.22f);
+                glossGradient.bottom = new Color(focusAccent.r, focusAccent.g, focusAccent.b, 0.01f);
+                gloss.SetVerticesDirty();
+            }
+
+            Image frame = FindHomeButtonImage(button.transform, "Outline");
+            if (frame != null)
+            {
+                frame.color = new Color(focusAccent.r, focusAccent.g, focusAccent.b, 0.98f);
+                frame.raycastTarget = false;
+                frame.rectTransform.anchoredPosition = Vector2.zero;
+                frame.rectTransform.sizeDelta = new Vector2(370f, 112f);
+            }
+
+            Shadow depthShadow = null;
+            Shadow[] shadows = button.GetComponents<Shadow>();
+            for (int i = 0; i < shadows.Length; i++)
+                if (shadows[i] != null && shadows[i].GetType() == typeof(Shadow))
+                    depthShadow = shadows[i];
+            if (depthShadow == null) depthShadow = button.gameObject.AddComponent<Shadow>();
+            depthShadow.effectColor = new Color(0f, 0.02f, 0.055f, 0.82f);
+            depthShadow.effectDistance = new Vector2(0f, -8f);
+            depthShadow.useGraphicAlpha = true;
 
             Text text = FindHomeButtonLabel(button);
             if (text != null)
             {
                 text.text = label;
+                text.fontSize = isPlay ? 38 : 32;
+                text.fontStyle = FontStyle.Bold;
+                text.color = new Color(0.95f, 0.995f, 1f, 1f);
                 text.raycastTarget = false;
                 text.gameObject.SetActive(true);
+
+                Shadow textShadow = text.GetComponent<Shadow>();
+                if (textShadow == null) textShadow = text.gameObject.AddComponent<Shadow>();
+                textShadow.effectColor = new Color(0f, 0.2f, 0.3f, 0.9f);
+                textShadow.effectDistance = new Vector2(0f, -2f);
+                textShadow.useGraphicAlpha = true;
             }
 
-            EnsureHomeButtonIcon(button, text, isPlay);
+            HideHomeButtonIcons(button);
 
             Graphic[] graphics = button.GetComponentsInChildren<Graphic>(true);
             for (int i = 0; i < graphics.Length; i++)
@@ -445,9 +517,9 @@ namespace Parabox
 
             ColorBlock colors = button.colors;
             colors.normalColor = Color.white;
-            colors.highlightedColor = new Color(1.12f, 1.12f, 1.12f, 1f);
+            colors.highlightedColor = new Color(1.10f, 1.10f, 1.10f, 1f);
             colors.selectedColor = colors.highlightedColor;
-            colors.pressedColor = new Color(0.72f, 0.78f, 0.82f, 1f);
+            colors.pressedColor = new Color(0.76f, 0.80f, 0.82f, 1f);
             colors.disabledColor = new Color(0.42f, 0.46f, 0.50f, 0.70f);
             colors.colorMultiplier = 1f;
             colors.fadeDuration = 0.08f;
@@ -455,8 +527,48 @@ namespace Parabox
 
             UIHoverScale hover = button.GetComponent<UIHoverScale>();
             if (hover == null) hover = button.gameObject.AddComponent<UIHoverScale>();
-            hover.hover = 1.05f;
-            hover.press = 0.965f;
+            hover.hover = 1.12f;
+            hover.press = 0.86f;
+            // Default focus is communicated by the glow/outline, not by permanently making PLAY
+            // larger. Both home actions therefore rest at the exact same authored size and share
+            // the same scale animation only while hovered or pressed.
+            hover.selectionChangesScale = false;
+
+            Outline outline = button.GetComponent<Outline>();
+            if (outline == null) outline = button.gameObject.AddComponent<Outline>();
+            outline.effectDistance = new Vector2(2.4f, -2.4f);
+            outline.useGraphicAlpha = true;
+            hover.ConfigureFocusOutline(outline, idleAccent, focusAccent);
+
+            if (hover.highlight != null)
+            {
+                Image glow = hover.highlight.GetComponent<Image>();
+                if (glow != null)
+                    glow.color = new Color(focusAccent.r, focusAccent.g, focusAccent.b, 0.96f);
+                RectTransform glowRect = hover.highlight.transform as RectTransform;
+                if (glowRect != null && buttonRect != null)
+                {
+                    glowRect.anchoredPosition = buttonRect.anchoredPosition;
+                    glowRect.sizeDelta = buttonRect.sizeDelta + new Vector2(90f, 90f);
+                }
+            }
+        }
+
+        static void HideHomeButtonIcons(Button button)
+        {
+            if (button == null) return;
+            Transform plate = button.transform.Find("PremiumIconPlate");
+            if (plate != null) plate.gameObject.SetActive(false);
+            Transform icon = button.transform.Find("ButtonIcon");
+            if (icon != null) icon.gameObject.SetActive(false);
+        }
+
+        static void HideHomeActionButton(Button button)
+        {
+            if (button == null) return;
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (hover != null && hover.highlight != null) hover.highlight.SetActive(false);
+            button.gameObject.SetActive(false);
         }
 
         static Image FindHomeButtonImage(Transform parent, string objectName)
@@ -480,41 +592,6 @@ namespace Parabox
                     return labels[i];
             }
             return fallback;
-        }
-
-        static void EnsureHomeButtonIcon(Button button, Text label, bool isPlay)
-        {
-            Transform existing = button.transform.Find("ButtonIcon");
-            Text icon;
-            if (existing != null)
-            {
-                icon = existing.GetComponent<Text>();
-                if (icon == null) icon = existing.gameObject.AddComponent<Text>();
-            }
-            else
-            {
-                GameObject iconObject = new GameObject("ButtonIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                iconObject.layer = button.gameObject.layer;
-                iconObject.transform.SetParent(button.transform, false);
-                icon = iconObject.GetComponent<Text>();
-            }
-
-            RectTransform rect = icon.rectTransform;
-            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(isPlay ? -112f : -132f, 0f);
-            rect.sizeDelta = new Vector2(54f, 62f);
-
-            icon.text = isPlay ? "\u25B6" : "\u25A6";
-            icon.font = label != null && label.font != null
-                ? label.font
-                : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            icon.fontSize = isPlay ? 35 : 34;
-            icon.fontStyle = FontStyle.Bold;
-            icon.alignment = TextAnchor.MiddleCenter;
-            icon.color = label != null ? label.color : Color.white;
-            icon.raycastTarget = false;
-            icon.gameObject.SetActive(true);
-            icon.transform.SetAsLastSibling();
         }
 
         // Hide the old track credit even when Unity has retained an older in-memory copy of
@@ -651,36 +728,21 @@ namespace Parabox
         }
 
         // Luxodd does not inject cabinet controls into Unity's EventSystem, so menu navigation is
-        // explicit: stick/D-pad changes focus, Black activates it, Yellow opens the map and
-        // White goes back. On a standard gamepad Luxodd maps Black=A and Red=B, so B is also a
-        // contextual Back button outside gameplay. This keeps both primary gamepad buttons useful.
+        // explicit: stick/D-pad changes focus and Black activates it. All other cabinet buttons
+        // remain inert on the menu because they have no authored action on this screen.
         bool HandleArcadeMenuInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
             if (arcade == null || transitioning) return false;
 
-            if (arcade.MuteDown)
+            // Red is the global arcade Back action. It works immediately from anywhere on the
+            // level map; focus does not have to travel through the spiral to find the BACK button.
+            if (arcade.BackDown)
             {
-                // Luxodd buttons bypass Unity's EventSystem, so play the same prebuilt press used
-                // by pointer/keyboard UI before muting the audio source.
-                Sfx.Click();
-                Sfx.ToggleMute();
-                return true;
-            }
-            if (arcade.BackDown || arcade.UndoDown)
-            {
-                Sfx.Click();
                 if (screen == 1) CloseLevelBoard();
-                else Quit();
                 return true;
             }
-            if (arcade.LevelsDown)
-            {
-                Sfx.Click();
-                if (screen == 0) OpenLevelBoard();
-                else CloseLevelBoard();
-                return true;
-            }
+
             if (arcade.NavigationPulse && arcade.Direction != Vector2Int.zero)
             {
                 MoveSelection(arcade.Direction);
@@ -939,7 +1001,10 @@ namespace Parabox
 
             if (levelButtons != null)
                 for (int i = 0; i < Mathf.Min(CampaignLevelCount, levelButtons.Length); i++)
+                {
                     EnsureApprovedCompletedBadge(i, levelButtons[i], ApprovedChapterAccent(i));
+                    RemoveRetiredApprovedScoreLabel(levelButtons[i]);
+                }
 
             foreach (Button button in GetComponentsInChildren<Button>(true))
                 Sfx.AttachButton(button);
@@ -975,7 +1040,8 @@ namespace Parabox
                     || _approvedCompletedBadges.Length != CampaignLevelCount)
                     return false;
                 for (int i = 0; i < CampaignLevelCount; i++)
-                    if (_approvedCompletedBadges[i] == null) return false;
+                    if (_approvedCompletedBadges[i] == null)
+                        return false;
                 return true;
             }
         }
@@ -987,7 +1053,7 @@ namespace Parabox
 
             // Occupy the original timer's cleared space at the very top-right. Keeping the same
             // position on Home and Level Select prevents the timer from jumping during navigation.
-            _autoStartBasePosition = new Vector2(-38f, -8f);
+            _autoStartBasePosition = new Vector2(-48f, -24f);
             _autoStartRoot.anchoredPosition = _autoStartBasePosition;
             // Keep the timer compact.  The old cyan progress strip extended below this panel and
             // visually sat behind nearby menu/level buttons, so the timer is now text-only.
@@ -1167,6 +1233,7 @@ namespace Parabox
 
         void CloseLevelBoard()
         {
+            Sfx.Ding();
             screen = 0;
             // NOT StopAllCoroutines() here: that would also kill DiveIntoBoard and RiseOutOfBoard,
             // which load scenes. A ceremony left running is harmless — it ends on MoveCam(..., 1f)
@@ -1442,7 +1509,11 @@ namespace Parabox
         void Select(Selectable s)
         {
             if (s != null && s.gameObject.activeInHierarchy && EventSystem.current != null)
+            {
                 EventSystem.current.SetSelectedGameObject(s.gameObject);
+                UIHoverScale hover = s.GetComponent<UIHoverScale>();
+                if (hover != null) hover.RefreshSelectionFromEventSystem();
+            }
         }
 
         void SelectHome() => Select(playButton);
@@ -1451,8 +1522,10 @@ namespace Parabox
         {
             if (selected == null) return false;
             if (screen == 1) return IsLevelBoardSelection(selected);
-            return (playButton != null && selected == playButton.gameObject)
-                   || (levelsButton != null && selected == levelsButton.gameObject);
+            return (playButton != null && playButton.gameObject.activeInHierarchy
+                    && selected == playButton.gameObject)
+                   || (levelsButton != null && levelsButton.gameObject.activeInHierarchy
+                       && selected == levelsButton.gameObject);
         }
 
         bool IsLevelBoardSelection(GameObject selected)
@@ -1524,6 +1597,7 @@ namespace Parabox
         void RefreshStates()
         {
             int total = levelButtons.Length;
+            ScoreSystem.EnsureCurrentVersion(total);
             int current = CurrentLevel();
             bool haveThemes = boardThemes != null && boardThemes.Length > 0;
             bool approvedMap = mapCam != null && mapCam.Find("ApprovedFiveChapterMap") != null;
@@ -1617,6 +1691,7 @@ namespace Parabox
                 if (approvedMap && i < _approvedCompletedBadges.Length
                     && _approvedCompletedBadges[i] != null)
                     _approvedCompletedBadges[i].SetActive(beaten);
+                if (approvedMap) RemoveRetiredApprovedScoreLabel(levelButtons[i]);
 
                 if (approvedMap && levelHighlights != null && i < levelHighlights.Length
                     && levelHighlights[i] != null && isCurrent)
@@ -1704,6 +1779,18 @@ namespace Parabox
 
             badge.SetActive(false);
             _approvedCompletedBadges[index] = badge;
+        }
+
+        static void RemoveRetiredApprovedScoreLabel(Button button)
+        {
+            if (button == null) return;
+            Transform existing = button.transform.Find("ScoreProgress");
+            if (existing == null) return;
+            existing.gameObject.SetActive(false);
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                Object.DestroyImmediate(existing.gameObject);
+#endif
         }
 
         static void CreateCheckStroke(Transform parent, string name, Vector2 position,
@@ -1844,6 +1931,7 @@ namespace Parabox
                 if (levelLocks != null && i < levelLocks.Length && levelLocks[i] != null)
                     levelLocks[i].SetActive(false);
                 EnsureApprovedCompletedBadge(i, button, ApprovedChapterAccent(i));
+                RemoveRetiredApprovedScoreLabel(button);
 
                 var hover = button.GetComponent<UIHoverScale>();
                 if (hover != null && hover.highlight != null)
@@ -2398,7 +2486,137 @@ namespace Parabox
             if (transitioning) return;
             // PLAY always begins the campaign at Level 1.
             transitioning = true;
+            StartCoroutine(PressPlayThenStart());
+        }
+
+        System.Collections.IEnumerator PressPlayThenStart()
+        {
+            // PLAY deliberately uses the exact same shared press animation as LEVEL SELECT.
+            yield return AnimateHomeButtonPress(playButton);
+            // Let the completed bounce render before the synchronous gameplay scene hand-off.
+            // LEVEL SELECT stays in this scene, but PLAY would otherwise replace its final frames.
+            yield return new WaitForSecondsRealtime(0.12f);
             StartCoroutine(DiveIntoBoard(NewGameLevel));
+        }
+
+        void BeginOpenLevelBoard()
+        {
+            if (transitioning) return;
+            transitioning = true;
+            StartCoroutine(PressLevelSelectThenOpen());
+        }
+
+        System.Collections.IEnumerator PressLevelSelectThenOpen()
+        {
+            // Both home actions use this same animation path and timing.
+            yield return AnimateHomeButtonPress(levelsButton);
+            transitioning = false;
+            OpenLevelBoard();
+        }
+
+        System.Collections.IEnumerator AnimateHomeButtonPress(Button button)
+        {
+            if (button == null) yield break;
+
+            RectTransform rect = button.transform as RectTransform;
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (hover != null) hover.suspended = true;
+
+            Vector3 restScale = button.transform.localScale;
+            Vector2 restPosition = rect != null ? rect.anchoredPosition : Vector2.zero;
+            Image face = button.targetGraphic as Image;
+            if (face == null) face = button.GetComponent<Image>();
+            Color restFaceColor = face != null ? face.color : Color.white;
+            Outline outline = hover != null ? hover.focusOutline : button.GetComponent<Outline>();
+            Color restOutlineColor = outline != null ? outline.effectColor : Color.white;
+            Image glow = hover != null && hover.highlight != null
+                ? hover.highlight.GetComponent<Image>() : null;
+            Vector3 glowScale = glow != null ? glow.transform.localScale : Vector3.one;
+            Color restGlowColor = glow != null ? glow.color : Color.white;
+            bool glowWasActive = glow != null && glow.gameObject.activeSelf;
+            if (glow != null) glow.gameObject.SetActive(true);
+
+            // A clear cabinet-button push, bright flash and spring-back. The action starts only
+            // after this completes, so mouse, Enter and arcade-confirm all show identical feedback.
+            const float pushDuration = 0.12f;
+            const float releaseDuration = 0.20f;
+            float elapsed = 0f;
+            while (elapsed < pushDuration)
+            {
+                // Cap the visual step so an Editor/game hitch cannot consume the whole press in
+                // one invisible frame. The animation always receives several rendered frames.
+                elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 60f);
+                float k = Mathf.Clamp01(elapsed / pushDuration);
+                float eased = k * k * (3f - 2f * k);
+                button.transform.localScale = Vector3.LerpUnclamped(restScale, restScale * 0.82f, eased);
+                if (rect != null) rect.anchoredPosition = Vector2.LerpUnclamped(restPosition, restPosition + Vector2.down * 14f, eased);
+                if (face != null) face.color = Color.LerpUnclamped(restFaceColor, Color.white * 1.28f, eased);
+                if (outline != null) outline.effectColor = Color.LerpUnclamped(restOutlineColor, Color.white, eased);
+                if (glow != null)
+                {
+                    glow.transform.localScale = Vector3.LerpUnclamped(glowScale, glowScale * 1.35f, eased);
+                    glow.color = Color.LerpUnclamped(restGlowColor, Color.white, eased);
+                }
+                yield return null;
+            }
+
+            // Hold the fully depressed cabinet-button pose briefly. Without this readable beat,
+            // a fast scene hand-off can make even a large scale punch look like no animation.
+            const float pressedHoldDuration = 0.09f;
+            elapsed = 0f;
+            while (elapsed < pressedHoldDuration)
+            {
+                elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 60f);
+                yield return null;
+            }
+
+            elapsed = 0f;
+            while (elapsed < releaseDuration)
+            {
+                elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 60f);
+                float k = Mathf.Clamp01(elapsed / releaseDuration);
+                float eased = 1f - Mathf.Pow(1f - k, 3f);
+                float scaleMultiplier;
+                if (k < 0.62f)
+                {
+                    float rise = Mathf.Clamp01(k / 0.62f);
+                    rise = 1f - Mathf.Pow(1f - rise, 3f);
+                    scaleMultiplier = Mathf.LerpUnclamped(0.82f, 1.09f, rise);
+                }
+                else
+                {
+                    float settle = Mathf.Clamp01((k - 0.62f) / 0.38f);
+                    settle = settle * settle * (3f - 2f * settle);
+                    scaleMultiplier = Mathf.LerpUnclamped(1.09f, 1f, settle);
+                }
+                button.transform.localScale = restScale * scaleMultiplier;
+                if (rect != null) rect.anchoredPosition = Vector2.LerpUnclamped(restPosition + Vector2.down * 14f, restPosition, eased);
+                if (face != null) face.color = Color.LerpUnclamped(Color.white * 1.28f, restFaceColor, eased);
+                if (outline != null) outline.effectColor = Color.LerpUnclamped(Color.white, restOutlineColor, eased);
+                if (glow != null)
+                {
+                    glow.transform.localScale = Vector3.LerpUnclamped(glowScale * 1.35f, glowScale, eased);
+                    glow.color = Color.LerpUnclamped(Color.white, restGlowColor, eased);
+                }
+                yield return null;
+            }
+
+            button.transform.localScale = restScale;
+            if (rect != null) rect.anchoredPosition = restPosition;
+            if (face != null) face.color = restFaceColor;
+            if (outline != null) outline.effectColor = restOutlineColor;
+            if (glow != null)
+            {
+                glow.transform.localScale = glowScale;
+                glow.color = restGlowColor;
+                if (!glowWasActive) glow.gameObject.SetActive(false);
+            }
+            if (hover != null)
+            {
+                hover.suspended = false;
+                hover.RefreshSelectionFromEventSystem();
+            }
+
         }
 
         // Physically fly the menu camera INTO the world board — from the O framing to the EXACT gameplay

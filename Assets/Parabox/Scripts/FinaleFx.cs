@@ -69,7 +69,8 @@ namespace Parabox
             && _againButton != null && _levelsButton != null
             && _bubbles != null && _bubbles.Count == BubbleCount;
 
-        public void Play(System.Action onAgain, System.Action onLevels, int levels, int totalMoves)
+        public void Play(System.Action onAgain, System.Action onLevels, int levels, int totalMoves,
+            int totalPoints, int maximumPoints)
         {
             if (!IsFullyPrebuilt)
             {
@@ -79,7 +80,9 @@ namespace Parabox
 
             _onAgain = onAgain;
             _onLevels = onLevels;
-            _tallyText.text = $"all {levels} levels solved\n{totalMoves:n0} moves in total";
+            _tallyText.text = $"all {levels} levels solved\n"
+                + $"{totalPoints:n0} / {maximumPoints:n0} total points\n"
+                + $"{totalMoves:n0} moves in total";
             _againButton.onClick.AddListener(ChooseAgain);
             _levelsButton.onClick.AddListener(ChooseLevels);
             _controlsReady = false;
@@ -144,7 +147,7 @@ namespace Parabox
             rule.anchoredPosition = new Vector2(0f, 122f);
 
             // what you actually did
-            RectTransform tally = Label("Tally", "all 50 levels solved\n0 moves in total",
+            RectTransform tally = Label("Tally", "all 50 levels solved\n0 / 29,500 total points\n0 moves in total",
                 font, 30, FontStyle.Normal, new Color(1f, 1f, 1f, 0.82f),
                 new Vector2(0f, 56f), 900f);
             _tallyText = tally.GetComponent<Text>();
@@ -193,8 +196,8 @@ namespace Parabox
         public bool HandleArcadeInput(LuxoddArcadeAdapter arcade)
         {
             if (arcade == null) return false;
-            return HandleChoiceInput(arcade.Direction, arcade.NavigationPulse, arcade.ConfirmDown,
-                arcade.LevelsDown || arcade.BackDown || arcade.UndoDown);
+            return HandleChoiceInput(arcade.Direction, arcade.NavigationPulse,
+                arcade.ConfirmDown, false);
         }
 
         public bool HandleKeyboardInput(Keyboard keyboard)

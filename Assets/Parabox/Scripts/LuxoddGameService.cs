@@ -434,7 +434,7 @@ namespace Parabox
                     string scoreKey = ScoreSystem.ScoreKey(i);
                     int localScore = PlayerPrefs.GetInt(scoreKey, 0);
                     int cloudScore = ScoreSystem.ConvertToCurrentVersion(
-                        state.bestScores[i], state.scoreVersion);
+                        state.bestScores[i], state.scoreVersion, i);
                     if (cloudScore > localScore)
                         PlayerPrefs.SetInt(scoreKey, cloudScore);
                 }
@@ -514,9 +514,8 @@ namespace Parabox
             RefreshRegisteredLeaderboards();
         }
 
-        // White/Back on the title screen returns ownership to the Luxodd shell. The WebGL bridge
-        // performs the real host transition; editor and standalone fallbacks remain convenient for
-        // local testing without changing arcade behavior.
+        // The explicit title-screen exit flow returns ownership to the Luxodd shell. No cabinet
+        // colour is bound to this implicitly; the visible UI/host owns the transition.
         public static void ReturnToSystem()
         {
             // The cabinet may keep the WebGL instance alive after returning to its shell. Clear

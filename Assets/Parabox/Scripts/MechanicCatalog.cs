@@ -48,6 +48,7 @@ namespace Parabox
             MultiStageRecursion,
             ChamberChain,
             PlayerBodies,
+            FoundationMechanics,
         }
 
         public static List<Id> MechanicsIn(GameObject prefab, int levelIndex)
@@ -153,10 +154,31 @@ namespace Parabox
         // before retaining them.
         public static Id[] RehearsalsAt(int levelIndex)
         {
-            // Chapter II carries the learned one-way rule into recursive-room puzzles.
-            // LevelLayoutRebalancer retains it only after the exact stored route wins with it
-            // active, so it is a real route commitment and does not trigger another tutorial.
-            if (levelIndex >= 10 && levelIndex <= 19)
+            // Level 11 teaches only the room-inside-a-box relationship. The next two boards bring
+            // back one-way commitments; from Level 14 onward a solved cargo job also holds a gate.
+            // Both reuses survive only when the exact authored route still wins.
+            if (levelIndex >= 13 && levelIndex <= 19)
+                return new[] { Id.OneWay, Id.ButtonGate };
+            if (levelIndex >= 11 && levelIndex <= 12)
+                return new[] { Id.OneWay };
+
+            // Chapter III recalls Chapter I without interrupting the player with another tutorial.
+            // The selected boards use these as winning-route dependencies alongside recursive
+            // rooms; Level 30 combines both rules with the premium portal in its synthesis.
+            switch (levelIndex)
+            {
+                case 22: case 26: case 27:
+                    return new[] { Id.OneWay };
+                case 23:
+                    return new[] { Id.ButtonGate };
+                case 29:
+                    return new[] { Id.OneWay, Id.ButtonGate };
+            }
+
+            // The opening Chapter IV set combines recursive room docking with Chapter I's
+            // one-way commitment. Levels 35-40 then pair recursive rooms with a structurally
+            // mandatory portal exit instead, avoiding decorative arrows on two-way routes.
+            if (levelIndex >= 30 && levelIndex <= 33)
                 return new[] { Id.OneWay };
 
             // The last six boards are separate mastery exams, not rotations of one finale. Each
@@ -189,14 +211,11 @@ namespace Parabox
             return introduced;
         }
 
-        // A chapter normally shows one focused NEW MECHANIC example, followed by its chapter
-        // tutorial when the first eligible rule is introduced at the opener. Chapter I stages
-        // button/gate later as one focused lesson.
+        // A chapter normally shows one focused NEW MECHANIC example. Chapter I stages
+        // button/gate before Level 5; Chapter II stages colour matching before Level 15.
         // Only concrete player-facing rules qualify.
         // MultiStageRecursion and ChamberChain are difficulty labels for deeper uses of the same
         // room-box rule, not new controls, so they must not create extra tutorial interruptions.
-        // Colour matching is taught by the chapter board itself and likewise is not a separate
-        // control tutorial. This keeps Chapter II at its one chapter video.
         // Reverse order lets the most specific qualifying rule represent a chapter's mechanic
         // lesson when one board adds several. Outside Chapter I, later rules in the same chapter
         // do not add more tutorial interruptions.
@@ -207,12 +226,12 @@ namespace Parabox
             if (prefabs == null || levelIndex < 0 || levelIndex >= prefabs.Length)
                 return false;
 
-            // Chapter I is deliberately staged instead of front-loading every rule. The chapter
-            // opener teaches movement/pushing and Level 7 introduces the button/gate dependency.
+            // Chapter I stays gentle: navigation is taught at the opener, then button/gate is the
+            // one new mechanic lesson immediately before Level 5. Levels 5-10 practise that same
+            // rule without another tutorial interruption.
             if (levelIndex < 10)
             {
-                List<Id> chapterOneIntroductions = IntroductionsAt(prefabs, levelIndex);
-                if (levelIndex == 6 && chapterOneIntroductions.Contains(Id.ButtonGate))
+                if (levelIndex == 4)
                 {
                     tutorial = Id.ButtonGate;
                     return true;
@@ -270,6 +289,7 @@ namespace Parabox
                 case Id.HeavyPlateGate:
                 case Id.NestedBoard:
                 case Id.Portal:
+                case Id.FoundationMechanics:
                     return true;
                 default:
                     return false;
@@ -279,11 +299,16 @@ namespace Parabox
         public static List<Id> TutorialsAt(GameObject[] prefabs, int levelIndex)
         {
             var lessons = new List<Id>();
-            if (TryGetNewMechanicTutorial(prefabs, levelIndex, out Id newMechanic))
-                lessons.Add(newMechanic);
+
+            // One-way arrows remain part of the campaign and later curriculum rehearsals, but do
+            // not interrupt play with a separate full-screen tutorial card. Chapter I's main
+            // Navigation mini-puzzle already demonstrates the arrow visually.
+            if (TryGetNewMechanicTutorial(prefabs, levelIndex, out Id newMechanic)
+                && newMechanic != Id.OneWay)
+                Add(lessons, newMechanic);
             if (TryGetChapterTutorial(levelIndex, out Id chapterTutorial)
                 && !lessons.Contains(chapterTutorial))
-                lessons.Add(chapterTutorial);
+                Add(lessons, chapterTutorial);
             return lessons;
         }
 
@@ -316,7 +341,11 @@ namespace Parabox
             if (levelIndex == 0 && tutorial == Id.Navigation) return "CHAPTER 1 TUTORIAL";
             if (levelIndex == 10 && tutorial == Id.NestedBoard) return "CHAPTER 2 TUTORIAL";
             if (levelIndex == 20 && tutorial == Id.NestedBoard) return "CHAPTER 3  •  CARGO RELAY";
+            if (levelIndex == 24 && tutorial == Id.Portal)
+                return "PREMIUM MECHANIC  •  PORTAL";
             if (levelIndex == 30 && tutorial == Id.NestedBoard) return "CHAPTER 4  •  ROOM DOCKING";
+            if (levelIndex == 4 && tutorial == Id.FoundationMechanics)
+                return "NEW MECHANICS  •  FOUNDATION ROUTE";
             if (levelIndex == 40 && tutorial == Id.ColourCargo)
                 return "CHAPTER 5 TUTORIAL";
             return "NEW MECHANIC  •  " + DisplayName(tutorial);
@@ -332,8 +361,12 @@ namespace Parabox
                     return "ROOM INSIDE A BOX  •  ENTER + EXIT  •  CARGO RELAY";
                 case 20 when tutorial == Id.NestedBoard:
                     return "CARGO RELAY  •  MOVE + PIN ROOM  •  DEEP TRANSFER";
+                case 24 when tutorial == Id.Portal:
+                    return "CYAN PORTAL PAIR  •  ENTER + EXIT";
                 case 30 when tutorial == Id.NestedBoard:
                     return "ROOM MODULE  •  DOCK SOCKET  •  SIDE EXIT";
+                case 4 when tutorial == Id.FoundationMechanics:
+                    return "ORANGE CRATE → ORANGE SWITCH  •  GREEN GATE";
                 case 40 when tutorial == Id.ColourCargo:
                     return "ROOMS INSIDE ROOMS  •  CARGO BUTTON  •  ONE-WAY GATE";
                 default: return DisplayName(tutorial);
@@ -353,8 +386,12 @@ namespace Parabox
                     return "Enter the smaller rooms, then carry their cargo back across both room boundaries.";
                 case 20 when tutorial == Id.NestedBoard:
                     return "Pin the smaller room, enter it, then carry its coral cargo back across both room boundaries.";
+                case 24 when tutorial == Id.Portal:
+                    return "Enter one cyan portal and continue from its paired exit to reach the sealed target.";
                 case 30 when tutorial == Id.NestedBoard:
                     return "Push the room onto its glowing dock. When pinned, enter it and leave through the useful side.";
+                case 4 when tutorial == Id.FoundationMechanics:
+                    return "Push the orange crate onto the orange-marked switch. Its green outer ring matches the green gate it opens.";
                 case 40 when tutorial == Id.ColourCargo:
                     return "Enter both nested rooms, extract the coral cargo across both boundaries, leave it on the button, then follow the arrow through the opened gate.";
                 default: return Lesson(tutorial);
@@ -399,6 +436,7 @@ namespace Parabox
                 case Id.MultiStageRecursion:
                 case Id.ChamberChain: return new[] { "Frame", "Backing" };
                 case Id.PlayerBodies: return new[] { "Player", "PlayerGoal" };
+                case Id.FoundationMechanics: return new[] { "OneWay", "Button", "Gate", "Box" };
                 case Id.Ice: return new[] { "Ice", "IceSheen" };
                 case Id.ToggleLatch: return new[] { "Toggle", "Latch" };
                 case Id.Pulse: return new[] { "Pulse" };
@@ -438,6 +476,7 @@ namespace Parabox
                 case Id.MultiStageRecursion: return "MULTI-STAGE RECURSION";
                 case Id.ChamberChain: return "CHAMBER CHAIN";
                 case Id.PlayerBodies: return "PLAYER BODIES";
+                case Id.FoundationMechanics: return "FOUNDATION ROUTE";
                 default: return id.ToString().ToUpperInvariant();
             }
         }
@@ -454,7 +493,7 @@ namespace Parabox
                 case Id.Trench: return "TRENCHES need cargo to become a safe bridge";
                 case Id.NarrowGap: return "NARROW GAPS accept cargo, but not the diver";
                 case Id.BreakableRock: return "BREAK ROCK by pushing cargo into it";
-                case Id.ButtonGate: return "BUTTONS hold their matching gates open";
+                case Id.ButtonGate: return "PARK the orange crate on the orange-marked switch; its green ring shows the green gate it opens";
                 case Id.HeavyPlateGate: return "HEAVY PLATES open only while cargo holds them";
                 case Id.NestedBoard: return "ENTER the smaller board; actions inside affect the outer puzzle";
                 case Id.Ice: return "ICE keeps movement sliding until a solid cell stops it";
@@ -481,6 +520,7 @@ namespace Parabox
                 case Id.MultiStageRecursion: return "RECURSION asks you to plan the inner result before returning outside";
                 case Id.ChamberChain: return "CHAMBER CHAINS require an inner solve before the outer route can finish";
                 case Id.PlayerBodies: return "PLAYER BODIES can be pushed; place every pink body on a bright player target";
+                case Id.FoundationMechanics: return "MATCH the orange crate to the orange-marked switch, then cross its green gate";
                 default: return string.Empty;
             }
         }

@@ -38,8 +38,8 @@ namespace Parabox.EditorTools
 
         static readonly string[] Labels =
         {
-            "Confirm", "Undo", "Restart", "Level Select", "Mute", "Skip",
-            "Luxodd Help", "Back"
+            "Confirm", "Undo", "", "Restart", "", "Skip Tutorial",
+            "Luxodd Help", ""
         };
 
         [MenuItem("Tools/Parabox/Validate Luxodd Controls")]
@@ -56,7 +56,7 @@ namespace Parabox.EditorTools
             ValidateBindingAsset(problems);
             ValidateCabinetContract(problems);
             ValidateStandardGamepadContract(problems);
-            ValidateOneGestureOneMove(problems);
+            ValidateJoystickGestures(problems);
             ValidateSceneControllerOwnership(MenuPath, problems);
             ValidateSceneControllerOwnership(GamePath, problems);
 
@@ -142,47 +142,89 @@ namespace Parabox.EditorTools
             }
         }
 
-        static void ValidateOneGestureOneMove(List<string> problems)
+        static void ValidateJoystickGestures(List<string> problems)
         {
+            MethodInfo quantize = typeof(LuxoddArcadeAdapter).GetMethod("QuantizeStable",
+                BindingFlags.NonPublic | BindingFlags.Static);
             MethodInfo consume = typeof(LuxoddArcadeAdapter).GetMethod("ConsumeMoveGesture",
                 BindingFlags.NonPublic | BindingFlags.Static);
-            if (consume == null)
+            if (quantize == null || consume == null)
             {
-                problems.Add("Luxodd one-gesture/one-move latch is missing.");
+                problems.Add("Luxodd stable joystick quantizer or movement latch is missing.");
                 return;
             }
 
             bool latched = false;
-            bool Pulse(Vector2Int direction, Vector2 rawStick)
+            Vector2Int stableDirection = Vector2Int.zero;
+            Vector2Int lastMoveDirection = Vector2Int.zero;
+            bool Pulse(Vector2 rawStick)
             {
-                object[] values = { direction, rawStick, latched };
+                stableDirection = (Vector2Int)quantize.Invoke(null,
+                    new object[] { rawStick, stableDirection });
+                object[] values = { stableDirection, rawStick, latched, lastMoveDirection };
                 bool fired = (bool)consume.Invoke(null, values);
                 latched = (bool)values[2];
+                lastMoveDirection = (Vector2Int)values[3];
                 return fired;
             }
 
-            if (!Pulse(Vector2Int.down, Vector2.down))
+            if (Pulse(new Vector2(0.18f, -0.18f)))
+                problems.Add("Joystick movement fires inside the dead zone.");
+            if (!Pulse(Vector2.down))
                 problems.Add("The first joystick tilt must emit one puzzle move.");
             for (int frame = 0; frame < 120; frame++)
-                if (Pulse(Vector2Int.down, Vector2.down))
+                if (Pulse(Vector2.down))
                 {
                     problems.Add("Holding the joystick emits extra puzzle moves.");
                     break;
                 }
-            if (Pulse(Vector2Int.right, Vector2.right))
-                problems.Add("Rotating a held joystick emits an extra puzzle move before neutral.");
+
+            // Near-diagonal axis noise must retain the direction that already owns the gesture.
+            if (Pulse(new Vector2(0.78f, -0.80f))
+                || Pulse(new Vector2(0.80f, -0.78f))
+                || stableDirection != Vector2Int.down)
+                problems.Add("Diagonal joystick noise changes direction or emits a move.");
+
+            // A decisive turn is a new grid gesture even when the player moves quickly around
+            // the gate without pausing at neutral.
+            if (!Pulse(Vector2.right) || stableDirection != Vector2Int.right)
+                problems.Add("A rapid cardinal direction change must emit immediately.");
+            if (Pulse(Vector2.right))
+                problems.Add("Holding the changed direction emits an extra puzzle move.");
+            if (!Pulse(Vector2.up) || stableDirection != Vector2Int.up)
+                problems.Add("A second rapid cardinal direction change must remain responsive.");
 
             // Cabinet axes can briefly dip below the engage threshold without the player actually
             // releasing the stick. That noise must not re-arm movement.
-            if (Pulse(Vector2Int.zero, new Vector2(0f, -0.45f)))
+            if (Pulse(new Vector2(0f, 0.45f)))
                 problems.Add("Joystick threshold noise emits an extra puzzle move.");
-            if (Pulse(Vector2Int.down, Vector2.down))
+            if (Pulse(Vector2.up))
                 problems.Add("Joystick threshold noise re-arms movement before true neutral.");
 
-            if (Pulse(Vector2Int.zero, Vector2.zero))
+            if (Pulse(Vector2.zero))
                 problems.Add("Returning the joystick to neutral must not emit a move.");
-            if (!Pulse(Vector2Int.down, Vector2.down))
+            if (!Pulse(Vector2.left))
                 problems.Add("A new tilt after neutral must emit the next puzzle move.");
+
+            MethodInfo pointerQuantize = typeof(ArcadeJoystickControl).GetMethod(
+                "StableDirectionFromDelta", BindingFlags.Public | BindingFlags.Static);
+            if (pointerQuantize == null)
+            {
+                problems.Add("The on-screen joystick stable quantizer is missing.");
+                return;
+            }
+            Vector2Int pointerDirection = (Vector2Int)pointerQuantize.Invoke(null,
+                new object[] { new Vector2(40f, 39f), Vector2Int.zero, 16f, 8f });
+            if (pointerDirection != Vector2Int.right)
+                problems.Add("The on-screen joystick does not resolve its first diagonal predictably.");
+            pointerDirection = (Vector2Int)pointerQuantize.Invoke(null,
+                new object[] { new Vector2(39f, 40f), pointerDirection, 16f, 8f });
+            if (pointerDirection != Vector2Int.right)
+                problems.Add("The on-screen joystick jitters when a drag crosses the diagonal.");
+            pointerDirection = (Vector2Int)pointerQuantize.Invoke(null,
+                new object[] { new Vector2(10f, 50f), pointerDirection, 16f, 8f });
+            if (pointerDirection != Vector2Int.up)
+                problems.Add("The on-screen joystick ignores a decisive rapid direction change.");
         }
 
         static void ValidateSceneControllerOwnership(string path, List<string> problems)

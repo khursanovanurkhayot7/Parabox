@@ -16,6 +16,21 @@ namespace Parabox
         // they read as deliberate premium objectives rather than the rejected grey filler.
         public static int DependencyBudgetForLevel(int levelIndex) => 0;
 
+        // Chapter II always exposes three readable completion jobs. The opener teaches recursion
+        // alone; from Level 14 onward one completed delivery also holds a Chapter I-style button
+        // so the later gate crossing is a real dependency instead of decoration.
+        public static int ChapterTwoTaskTargetForLevel(int levelIndex)
+            => levelIndex >= 10 && levelIndex <= 19 ? 3 : 0;
+
+        public static int ChapterTwoGateReuseBudgetForLevel(int levelIndex)
+            => levelIndex >= 13 && levelIndex <= 19 ? 1 : 0;
+
+        // Chapter III revisits Chapter I's button/gate dependency on three spaced checkpoints.
+        // The gate is retained only when an authored cargo delivery holds its button and the
+        // stored winning route subsequently crosses the opened gate.
+        public static int ChapterThreeGateReuseBudgetForLevel(int levelIndex)
+            => levelIndex == 23 || levelIndex == 29 ? 1 : 0;
+
         // Five visible completion jobs are the Chapter V floor. The final six then climb from five
         // to eight simultaneous jobs, so their difficulty comes from planning several deliveries
         // rather than merely extending a corridor. Missing jobs are added only when the authored
@@ -48,35 +63,32 @@ namespace Parabox
         {
             switch (Mathf.Clamp(levelIndex, 0, 49))
             {
-                // Chapter II opens with three irreversible direction decisions so Level 11 has
-                // more active rule pressure than the Chapter I finale. The unique recursive room
-                // structures provide the progression inside each band; the final board adds a
-                // sixth commitment for its synthesis step.
-                case 10: case 12:
-                    return 3;
-                case 11:
-                    return 0;
-                case 13: case 14: case 15:
-                    return 4;
-                case 16: case 17: case 18:
-                    return 5;
-                case 19:
-                    return 6;
+                // Level 11 teaches recursion by itself. Chapter I's one-way rule then returns in
+                // a measured ladder; difficulty grows through placement decisions, not a screen
+                // full of arrows at the start of the chapter.
+                case 10: return 0;
+                case 11: return 1;
+                case 12: case 13: return 2;
+                case 14: case 15: return 3;
+                case 16: case 17: return 4;
+                case 18: case 19: return 5;
 
-                case 24: case 26: case 27:
+                // Chapter III first recalls a single arrow before the portal lesson, then combines
+                // it with deeper room transfers. Level 30 uses three commitments in the synthesis.
+                case 22: case 26:
                     return 1;
+                case 27:
+                    return 2;
                 case 29:
                     return 3;
-                // These are commitments on the existing room route, not extra walking. Each arrow
-                // is retained only when every authored arrival already uses its shown direction.
+                // Chapter IV has two clean combination phases. Levels 31-34 combine recursive
+                // room docking with route-proven one-way commitments. Levels 35-40 replace the
+                // arrow layer with a structurally mandatory portal exit, keeping two purposeful
+                // systems without forcing arrows onto routes that honestly travel both ways.
                 case 30: case 31:
                     return 1;
-                case 32: case 33: case 34:
+                case 32: case 33:
                     return 2;
-                case 35: case 36: case 37:
-                    return 3;
-                case 38: case 39:
-                    return 4;
                 // Chapter V is the end-game synthesis. These are planning commitments placed on
                 // the existing solution, not extra walking. A measured 3..12 ladder keeps the
                 // chambers readable while making every finale board stricter than the previous.
@@ -178,35 +190,48 @@ namespace Parabox
             model.rebalanceObjectives = 0;
             model.curriculumReuses.Clear();
 
-            // Chapters II, IV and V combine room-inside-a-box play with learned directional
-            // commitments. Chapter V requires at least five visible completion tasks
+            // Chapters II-V combine room-inside-a-box play with learned directional commitments.
+            // Chapter III deliberately recalls Chapter I's arrows and button/gate dependency on
+            // selected boards; Chapter V requires at least five visible tasks
             // (room sockets, player exits and deliveries), then turns one completed delivery into a Chapter I button/gate
             // dependency. Generic grey filler is never created.
             bool chapterTwo = levelIndex >= 10 && levelIndex <= 19;
+            bool chapterThree = levelIndex >= 20 && levelIndex <= 29;
             bool chapterFour = levelIndex >= 30 && levelIndex <= 39;
             bool chapterFive = levelIndex >= 40 && levelIndex <= 49;
-            if (!chapterTwo && !chapterFour && !chapterFive) return;
+            if (!chapterTwo && !chapterThree && !chapterFour && !chapterFive) return;
 
             int oneWayBudget = LearnedOneWayBudgetForLevel(levelIndex);
-            int gateReuseBudget = AuthoredGateReuseBudgetForLevel(levelIndex);
-            int premiumTaskTarget = PremiumTaskTargetForLevel(levelIndex);
-            if (oneWayBudget <= 0 && gateReuseBudget <= 0 && premiumTaskTarget <= 0) return;
+            int gateReuseBudget = Mathf.Max(
+                Mathf.Max(AuthoredGateReuseBudgetForLevel(levelIndex),
+                    ChapterTwoGateReuseBudgetForLevel(levelIndex)),
+                ChapterThreeGateReuseBudgetForLevel(levelIndex));
+            int completionTaskTarget = Mathf.Max(
+                PremiumTaskTargetForLevel(levelIndex),
+                ChapterTwoTaskTargetForLevel(levelIndex));
+            if (oneWayBudget <= 0 && gateReuseBudget <= 0 && completionTaskTarget <= 0) return;
 
-            if (premiumTaskTarget > 0)
+            if (completionTaskTarget > 0)
             {
                 int currentTasks = CompletionGoalCount(model);
-                int missingTasks = Mathf.Max(0, premiumTaskTarget - currentTasks);
+                int missingTasks = Mathf.Max(0, completionTaskTarget - currentTasks);
                 if (missingTasks > 0)
                     AddMandatoryRouteObjectives(model, levelIndex, solution, trace, missingTasks);
                 trace = TraceSolution(model, solution);
                 if (!trace.valid) return;
             }
 
-            if (gateReuseBudget > 0
-                && TryAddMandatoryButtonGate(model, solution, trace, levelIndex))
+            if (gateReuseBudget > 0)
             {
-                model.rebalanceObjectives++;
-                model.curriculumReuses.Add(MechanicCatalog.Id.ButtonGate);
+                if (HasAuthoredButtonGate(model))
+                {
+                    model.curriculumReuses.Add(MechanicCatalog.Id.ButtonGate);
+                }
+                else if (TryAddMandatoryButtonGate(model, solution, trace, levelIndex))
+                {
+                    model.rebalanceObjectives++;
+                    model.curriculumReuses.Add(MechanicCatalog.Id.ButtonGate);
+                }
             }
 
             Trace enrichedTrace = TraceSolution(model, solution);
@@ -1249,6 +1274,18 @@ namespace Parabox
                         if (room.oneway[x, y] != Vector2Int.zero) return true;
             }
             return false;
+        }
+
+        static bool HasAuthoredButtonGate(LevelModel model)
+        {
+            bool button = false;
+            bool gate = false;
+            foreach (PRoom room in model.rooms.Values)
+            {
+                button |= HasAny(room.button);
+                gate |= HasAny(room.gate);
+            }
+            return button && gate;
         }
 
         static bool TryFocusedHazard(LevelModel model, out HazardKind kind)

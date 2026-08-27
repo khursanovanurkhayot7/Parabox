@@ -177,6 +177,17 @@ namespace Parabox
             }
         }
 
+        // The player's own run is always visible even when their rank is outside the remote Top 10.
+        public void SetPlayerScoreSummary(int levelScore, int totalScore)
+        {
+            if (titleLabel == null) return;
+            titleLabel.resizeTextForBestFit = true;
+            titleLabel.resizeTextMinSize = 20;
+            titleLabel.resizeTextMaxSize = 36;
+            titleLabel.text = $"LEVEL SCORE  {Mathf.Max(0, levelScore):n0}"
+                + $"   •   TOTAL  {Mathf.Max(0, totalScore):n0}";
+        }
+
         // Null or a short list deliberately leaves the remaining slots as PLAYER / 0 placeholders.
         public void SetEntries(IReadOnlyList<LeaderboardEntry> entries)
         {

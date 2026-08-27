@@ -66,6 +66,7 @@ namespace Parabox
         public GameObject winPanel;
         public Text winTitle;
         public Text winStats;
+        public Text winScoreValue;
         public Button nextButton;
         public Button menuButton;
 
@@ -73,7 +74,16 @@ namespace Parabox
         [Tooltip("Generated into Game.unity by Tools/Parabox/Generate Prebuilt UI (Run This).")]
         public RectTransform scoreRoot;
         public Text scoreLabel;
+        public Text levelPointsLabel;
         int lastScoreGain;
+        int endOfRunTotalScore = -1;
+        int undoCount;
+        bool winControlsReady;
+        ScoreSystem.Breakdown lastScoreBreakdown;
+        ScoreSystem.Award lastScoreAward;
+        int lastWinMoves;
+        int lastWinMoveBest;
+        bool lastWinWasMoveBest;
 
         [Header("Timer")]
         public RectTransform timerRoot;
@@ -143,6 +153,20 @@ namespace Parabox
         bool won;
         float timeLeft;
         float timeLimit;
+        // Restart reloads this scene, so instance fields cannot carry the clock across it. Keep a
+        // one-shot transfer in process memory: it survives a scene reload, but a genuinely new
+        // Unity/Luxodd session still starts with the authored full allowance.
+        static bool restartTimerPending;
+        static int restartTimerLevel = -1;
+        static float restartTimerRemaining;
+        static float restartTimerCapturedAt;
+        static bool restartTimerWasArmed;
+        // Restarting a chapter opener must return straight to its puzzle instead of replaying the
+        // tutorial the player has just watched. This is deliberately a one-reload suppression:
+        // entering the level normally later still presents its tutorial.
+        static bool restartTutorialSuppressionPending;
+        static int restartTutorialSuppressionLevel = -1;
+        bool suppressTutorialForThisLoad;
         // A level's allowance begins with the player's first successful move, not while the board
         // is arriving or the player is reading it. This is especially important at world changes,
         // where the presentation beat used to spend several seconds of World 2's clock.
@@ -165,7 +189,6 @@ namespace Parabox
         Canvas tutorialTimerCanvas;
         Vector2 gameplayTimerAnchoredPosition;
         bool gameplayTimerPositionCaptured;
-        const float TutorialTimerDrop = 140f;
 
         // Terminal means this attempt is over. Ended also includes the tutorial because player
         // input must stay locked while the demonstration is driving the screen; the countdown is
@@ -181,16 +204,22 @@ namespace Parabox
         bool Lost => timedUp || outOfMoves;
         int MovesLeft => Mathf.Max(0, moveLimit - model.MoveCount);
 
-        // Every level uses the same transparent allowance: authored par plus three moves. Undo
-        // still refunds the move, so difficulty comes from understanding the puzzle rather than
-        // from inconsistent chapter-specific penalties.
-        static int MoveSlack(int levelIdx)
-            => CampaignProgression.ForLevel(levelIdx).moveSlack;
+        // Every puzzle receives three recovery moves beyond its reviewed solution target. Level 2
+        // is reviewed as a 16-move solve (19 visible); Level 10 is reviewed from the cabinet pass
+        // as a 41-move solve, so its visible allowance is exactly 44.
+        public static int MoveParForLevel(int levelIdx, int levelPar)
+        {
+            if (levelIdx == 1) return Mathf.Max(16, levelPar);
+            if (levelIdx == 9) return Mathf.Max(41, levelPar);
+            return levelPar;
+        }
 
-        // Shared with the campaign validator so gameplay and automated QA can never drift onto
-        // different timer or move-limit formulas.
+        // Keep this shared method as the single source of truth for gameplay and campaign QA.
         public static int MoveLimitForLevel(int levelIdx, int levelPar)
-            => levelPar > 0 ? levelPar + MoveSlack(levelIdx) : 999;
+        {
+            int reviewedPar = MoveParForLevel(levelIdx, levelPar);
+            return reviewedPar > 0 ? reviewedPar + 3 : 999;
+        }
 
         public static float TimeLimitForLevel(int levelIdx, int levelPar)
             => CampaignProgression.TimeLimit(levelIdx, levelPar);
@@ -210,6 +239,19 @@ namespace Parabox
         float cellLift = 0.10f;
         Sprite floorTex;
         Color floorTexTint = Color.clear;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetRestartTimerTransfer()
+        {
+            restartTimerPending = false;
+            restartTimerLevel = -1;
+            restartTimerRemaining = 0f;
+            restartTimerCapturedAt = 0f;
+            restartTimerWasArmed = false;
+            restartTutorialSuppressionPending = false;
+            restartTutorialSuppressionLevel = -1;
+            TutorialsSeenThisPlaySession.Clear();
+        }
 
         void Start()
         {
@@ -232,6 +274,11 @@ namespace Parabox
             levelIndex = Mathf.Clamp(editorPreviewLevel >= 0
                 ? editorPreviewLevel
                 : PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
+            suppressTutorialForThisLoad = restartTutorialSuppressionPending
+                && restartTutorialSuppressionLevel == levelIndex;
+            // Consume the one-shot request immediately so it cannot suppress a later normal entry.
+            restartTutorialSuppressionPending = false;
+            restartTutorialSuppressionLevel = -1;
             ApplyLevelTheme(levelIndex / 10);   // Beginner / Intermediate / Advanced skin
             ConfigureChapterPresentation(levelIndex / 10);
             if (loseFx != null) loseFx.SetLeaderboardTheme(frameColor, gutterColor);
@@ -276,6 +323,7 @@ namespace Parabox
             timeLimit = TimeLimitForLevel(levelIndex, par);
             timeLeft = timeLimit;
             countdownArmed = false;
+            RestoreTimerAfterRestart();
             // par == 0 means the prefab predates par data (wizard not re-run). Fall back to an
             // unrestrictive limit rather than handing the player an unwinnable level.
             moveLimit = MoveLimitForLevel(levelIndex, par);
@@ -289,6 +337,13 @@ namespace Parabox
                 (timerAccents != null && timerAccents.Length > 0) ? timerAccents.Length - 1 : 0);
             timerAccentCur = (timerAccents != null && timerAccents.Length > 0)
                 ? timerAccents[tier] : new Color(1f, 0.62f, 0.37f, 1f);
+            Transform scoreParent = timerRoot != null ? timerRoot.parent
+                : movesLabel != null ? movesLabel.transform.parent : transform;
+            BuildLevelPointsHud(scoreParent);
+            BuildWinScoreReadout();
+            BuildWinPlayerBadges();
+            ConfigureScoreHudPresentation();
+            ConfigureWinScorePresentation();
             if (scoreRoot == null || scoreLabel == null)
                 Debug.LogError("[Parabox] Score HUD is not prebuilt. Run Tools/Parabox/Generate Prebuilt UI (Run This) before Play or Build.");
             UpdateHud();
@@ -302,6 +357,7 @@ namespace Parabox
                 timerRoot.gameObject.SetActive(GameplayCountdownEnabled && !editorPreviewMode);
             if (GameplayCountdownEnabled && !editorPreviewMode) AnimateTimer();
             MaybeTutorial();
+            if (!Tutoring) ArmGameplayCountdown();
             LuxoddGameService.ReportLevelBegin(levelIndex);
         }
 
@@ -315,7 +371,12 @@ namespace Parabox
 
             if (tutorialFx != null) tutorialFx.PrebuildStaticUi();
             if (loseFx != null) loseFx.PrebuildStaticUi();
+            HideGameplaySoundButton();
             BuildScoreHud();
+            BuildWinScoreReadout();
+            BuildWinPlayerBadges();
+            ConfigureScoreHudPresentation();
+            ConfigureWinScorePresentation();
 
             Canvas finaleCanvas = winPanel != null ? winPanel.GetComponentInParent<Canvas>() : null;
             if (finaleOverlay == null && finaleCanvas != null)
@@ -399,6 +460,22 @@ namespace Parabox
         // any tutorial, fade, timer, or HUD setup runs.
         void RepairGameplayCanvasScales()
         {
+            // Gameplay uses more than one root Canvas (HUD, tutorial and terminal overlays).
+            // Keep every Canvas in this scene on the same aspect-safe rule.  Match=0.5 can make
+            // the 1920x1080 reference frame narrower than its authored content on a 16:10 screen,
+            // which is why the top-right timer could be cut off even with a valid anchor.
+            CanvasScaler[] scalers = UnityEngine.Object.FindObjectsByType<CanvasScaler>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < scalers.Length; i++)
+            {
+                CanvasScaler scaler = scalers[i];
+                if (scaler == null || scaler.gameObject.scene != gameObject.scene) continue;
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                scaler.referenceResolution = new Vector2(1920f, 1080f);
+                scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
+                scaler.matchWidthOrHeight = 0f;
+            }
+
             EnsureUsableCanvasScale(hudGroup != null ? hudGroup.transform : null);
 
             if (tutorialFx != null)
@@ -427,6 +504,7 @@ namespace Parabox
         // On-screen buttons drive the exact same logic as the keyboard (touch / click support).
         void WireOnScreenControls()
         {
+            HideGameplaySoundButton();
             // d-pad: one press/contact emits exactly one grid-cell move.
             WireHold(upButton,    Vector2Int.up);
             WireHold(downButton,  Vector2Int.down);
@@ -434,10 +512,14 @@ namespace Parabox
             WireHold(rightButton, Vector2Int.right);
             WireClick(undoButton, UiUndo);
             WireClick(restartButton, Restart);
-            WireClick(muteButton, UiMute);
             WireClick(hudMenuButton, GoToMenu);
             WireArcadeJoystick();
-            UpdateMuteIcon();
+        }
+
+        void HideGameplaySoundButton()
+        {
+            if (muteButton != null)
+                muteButton.gameObject.SetActive(false);
         }
 
         static void WireClick(Button button, UnityEngine.Events.UnityAction action)
@@ -507,6 +589,7 @@ namespace Parabox
             if (Ended) return;
             if (model.Undo())
             {
+                undoCount++;
                 Sfx.Undo();
                 SyncViews(false);
                 if (!Ended) UpdateHud();
@@ -523,12 +606,274 @@ namespace Parabox
         {
             if (muteOnIcon != null) muteOnIcon.SetActive(!Sfx.Muted);
             if (muteOffIcon != null) muteOffIcon.SetActive(Sfx.Muted);
+
+            Graphic face = muteButton != null ? muteButton.targetGraphic : null;
+            if (face != null)
+            {
+                // The panel itself stays in the same dark glass family as the game background.
+                // State is communicated by the icon, status word and a restrained edge tint.
+                Color stateAccent = Sfx.Muted
+                    ? new Color(1f, 0.40f, 0.49f, 1f)
+                    : Color.Lerp(frameColor, Color.white, 0.14f);
+                UIGradient gradient = face.GetComponent<UIGradient>();
+                if (gradient != null)
+                {
+                    Color glassTop = Color.Lerp(new Color(0.035f, 0.075f, 0.16f, 1f),
+                        frameColor, 0.16f);
+                    Color glassBottom = Color.Lerp(Color.black, gutterColor, 0.46f);
+                    glassBottom.a = 0.98f;
+                    gradient.top = glassTop;
+                    gradient.bottom = glassBottom;
+                }
+                face.color = Color.white;
+                face.SetVerticesDirty();
+
+                Outline outline = face.GetComponent<Outline>();
+                if (outline != null)
+                {
+                    Color edge = Color.Lerp(frameColor, stateAccent, Sfx.Muted ? 0.36f : 0.72f);
+                    edge.a = 0.92f;
+                    outline.effectColor = edge;
+                }
+            }
         }
 
-        // Cabinet mapping: stick=move, Black=confirm/retry, Red=undo, Green=restart,
-        // Yellow/White=level select/back, Blue=mute, Purple=skip walkthrough. On a standard
-        // gamepad Luxodd maps Black=A and Red=B, so B becomes contextual Back/Cancel on non-puzzle
-        // screens while remaining Undo during active gameplay. Orange remains Luxodd's.
+        // The old sound badge used sprite/text layers such as ")))" and "x". At gameplay scale
+        // those layers could overlap the timer and read as a red Play button. Keep the replacement
+        // code-native: dark background-matched glass, a real speaker glyph, and a clear ON/OFF
+        // status centred directly below the timer.
+        void ConfigurePremiumSoundControl()
+        {
+            if (muteButton == null || muteOnIcon == null || muteOffIcon == null) return;
+
+            RectTransform muteRect = muteButton.transform as RectTransform;
+            if (muteRect == null) return;
+
+            if (timerRoot != null && timerRoot.parent != null && muteRect.parent != timerRoot.parent)
+                muteRect.SetParent(timerRoot.parent, false);
+
+            muteRect.anchorMin = muteRect.anchorMax = Vector2.one;
+            muteRect.pivot = new Vector2(0.5f, 0.5f);
+            muteRect.sizeDelta = new Vector2(88f, 88f);
+            if (timerRoot != null)
+            {
+                float timerHeight = Mathf.Max(1f, timerRoot.rect.height);
+                float controlHeight = muteRect.sizeDelta.y;
+                muteRect.anchoredPosition = timerRoot.anchoredPosition
+                    + Vector2.down * (timerHeight * 0.5f + 14f + controlHeight * 0.5f);
+            }
+            else
+            {
+                muteRect.anchoredPosition = new Vector2(-104f, -222f);
+            }
+
+            Image face = muteButton.targetGraphic as Image;
+            if (face == null) face = muteButton.GetComponent<Image>();
+            if (face != null)
+            {
+                face.enabled = true;
+                face.color = Color.white;
+                face.raycastTarget = true;
+                face.type = Image.Type.Simple;
+                face.preserveAspect = false;
+                muteButton.targetGraphic = face;
+
+                UIGradient gradient = face.GetComponent<UIGradient>();
+                if (gradient == null) gradient = face.gameObject.AddComponent<UIGradient>();
+                gradient.enabled = true;
+
+                Shadow shadow = face.GetComponent<Shadow>();
+                if (shadow == null) shadow = face.gameObject.AddComponent<Shadow>();
+                shadow.enabled = true;
+                shadow.effectColor = new Color(0f, 0.02f, 0.08f, 0.72f);
+                shadow.effectDistance = new Vector2(0f, -7f);
+                shadow.useGraphicAlpha = true;
+
+                Outline outline = face.GetComponent<Outline>();
+                if (outline == null) outline = face.gameObject.AddComponent<Outline>();
+                // PremiumSoundDial owns the one clean visible rim. A second mesh outline creates
+                // the stacked cyan rings visible at the bottom of the control.
+                outline.enabled = false;
+                outline.effectDistance = new Vector2(1.5f, -1.5f);
+                outline.useGraphicAlpha = true;
+            }
+
+            BuildPremiumSoundState(muteOnIcon, false);
+            BuildPremiumSoundState(muteOffIcon, true);
+            muteButton.gameObject.SetActive(true);
+        }
+
+        void BuildPremiumSoundState(GameObject stateObject, bool muted)
+        {
+            if (stateObject == null) return;
+
+            // Disable the legacy root glyph and every legacy child without destroying authored
+            // scene data. This makes the repair safe for old scenes and repeatable after Restart.
+            foreach (Graphic graphic in stateObject.GetComponents<Graphic>())
+            {
+                graphic.enabled = false;
+                graphic.raycastTarget = false;
+            }
+            for (int i = 0; i < stateObject.transform.childCount; i++)
+            {
+                Transform child = stateObject.transform.GetChild(i);
+                if (child.name != "PremiumSoundState") child.gameObject.SetActive(false);
+            }
+
+            RectTransform state = EnsureSoundRect(stateObject.transform, "PremiumSoundState");
+            state.anchorMin = Vector2.zero;
+            state.anchorMax = Vector2.one;
+            state.offsetMin = Vector2.zero;
+            state.offsetMax = Vector2.zero;
+            state.gameObject.SetActive(true);
+
+            Transform oldBars = state.Find("WaveBars");
+            Transform oldSlash = state.Find("MuteSlash");
+            Transform oldStatus = state.Find("StatusLabel");
+            Transform oldTopRail = state.Find("TopLightRail");
+            Transform oldBottomRail = state.Find("BottomLightRail");
+            Transform oldDivider = state.Find("Divider");
+            Transform oldCaption = state.Find("SoundCaption");
+            Transform oldDot = state.Find("StatusDot");
+            if (oldBars != null) oldBars.gameObject.SetActive(false);
+            if (oldSlash != null) oldSlash.gameObject.SetActive(false);
+            if (oldStatus != null) oldStatus.gameObject.SetActive(false);
+            if (oldTopRail != null) oldTopRail.gameObject.SetActive(false);
+            if (oldBottomRail != null) oldBottomRail.gameObject.SetActive(false);
+            if (oldDivider != null) oldDivider.gameObject.SetActive(false);
+            if (oldCaption != null) oldCaption.gameObject.SetActive(false);
+            if (oldDot != null) oldDot.gameObject.SetActive(false);
+
+            Color accent = muted
+                ? new Color(1f, 0.40f, 0.49f, 1f)
+                : Color.Lerp(frameColor, Color.white, 0.14f);
+
+            Image glow = EnsureSoundImage(state, "PremiumGlow");
+            RectTransform glowRect = glow.rectTransform;
+            glowRect.anchorMin = glowRect.anchorMax = glowRect.pivot = new Vector2(0.5f, 0.5f);
+            glowRect.anchoredPosition = Vector2.zero;
+            glowRect.sizeDelta = new Vector2(134f, 134f);
+            glow.sprite = glowSprite;
+            glow.preserveAspect = false;
+            glow.enabled = glowSprite != null;
+            Color glowColour = muted ? accent : Color.Lerp(frameColor, accent, 0.68f);
+            glow.color = new Color(glowColour.r, glowColour.g, glowColour.b,
+                muted ? 0.16f : 0.18f);
+            glow.raycastTarget = false;
+            glow.transform.SetAsFirstSibling();
+
+            Color dialSecondary = Color.Lerp(frameColor,
+                new Color(0.56f, 0.31f, 1f, 1f), 0.58f);
+            PremiumSoundDial dial = EnsureSoundDial(state, "SoundDial");
+            RectTransform dialRect = dial.rectTransform;
+            dialRect.anchorMin = dialRect.anchorMax = dialRect.pivot
+                = new Vector2(0.5f, 0.5f);
+            dialRect.anchoredPosition = Vector2.zero;
+            dialRect.sizeDelta = new Vector2(98f, 98f);
+            dial.SetState(muted, frameColor, dialSecondary);
+            dial.raycastTarget = false;
+
+            PremiumSoundIcon glyph = EnsureSoundGlyph(state, "SoundGlyph");
+            RectTransform glyphRect = glyph.rectTransform;
+            glyphRect.anchorMin = glyphRect.anchorMax = glyphRect.pivot
+                = new Vector2(0.5f, 0.5f);
+            glyphRect.anchoredPosition = new Vector2(0f, 7f);
+            glyphRect.sizeDelta = new Vector2(48f, 40f);
+            glyph.SetState(muted, accent);
+            glyph.raycastTarget = false;
+
+            Font font = movesLabel != null && movesLabel.font != null
+                ? movesLabel.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Text stateLabel = EnsureSoundText(state, "StateLabel");
+            RectTransform stateLabelRect = stateLabel.rectTransform;
+            stateLabelRect.anchorMin = stateLabelRect.anchorMax = stateLabelRect.pivot
+                = new Vector2(0.5f, 0.5f);
+            stateLabelRect.anchoredPosition = new Vector2(7f, -27f);
+            stateLabelRect.sizeDelta = new Vector2(34f, 18f);
+            stateLabel.text = muted ? "OFF" : "ON";
+            stateLabel.font = font;
+            stateLabel.fontSize = 12;
+            stateLabel.fontStyle = FontStyle.Bold;
+            stateLabel.alignment = TextAnchor.MiddleCenter;
+            stateLabel.color = Color.Lerp(accent, Color.white, 0.28f);
+            stateLabel.supportRichText = false;
+            stateLabel.raycastTarget = false;
+            CrispUiTypography.Polish(stateLabel);
+
+            Image statusDot = EnsureSoundImage(state, "StateLed");
+            RectTransform dotRect = statusDot.rectTransform;
+            dotRect.anchorMin = dotRect.anchorMax = dotRect.pivot = new Vector2(0.5f, 0.5f);
+            dotRect.anchoredPosition = new Vector2(-15f, -27f);
+            dotRect.sizeDelta = new Vector2(6f, 6f);
+            statusDot.sprite = cellSprite;
+            statusDot.color = accent;
+            statusDot.raycastTarget = false;
+
+            stateLabel.gameObject.SetActive(true);
+            statusDot.gameObject.SetActive(true);
+            dial.gameObject.SetActive(true);
+            glyph.gameObject.SetActive(true);
+            stateLabel.transform.SetAsLastSibling();
+        }
+
+        static RectTransform EnsureSoundRect(Transform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform));
+            if (existing == null) item.transform.SetParent(parent, false);
+            return item.transform as RectTransform;
+        }
+
+        static Image EnsureSoundImage(RectTransform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            if (existing == null) item.transform.SetParent(parent, false);
+            Image image = item.GetComponent<Image>();
+            if (image == null) image = item.AddComponent<Image>();
+            image.raycastTarget = false;
+            return image;
+        }
+
+        static Text EnsureSoundText(RectTransform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            if (existing == null) item.transform.SetParent(parent, false);
+            Text text = item.GetComponent<Text>();
+            if (text == null) text = item.AddComponent<Text>();
+            return text;
+        }
+
+        static PremiumSoundIcon EnsureSoundGlyph(RectTransform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer),
+                    typeof(PremiumSoundIcon));
+            if (existing == null) item.transform.SetParent(parent, false);
+            PremiumSoundIcon icon = item.GetComponent<PremiumSoundIcon>();
+            if (icon == null) icon = item.AddComponent<PremiumSoundIcon>();
+            return icon;
+        }
+
+        static PremiumSoundDial EnsureSoundDial(RectTransform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer),
+                    typeof(PremiumSoundDial));
+            if (existing == null) item.transform.SetParent(parent, false);
+            PremiumSoundDial dial = item.GetComponent<PremiumSoundDial>();
+            if (dial == null) dial = item.AddComponent<PremiumSoundDial>();
+            return dial;
+        }
+
+        // Cabinet mapping: stick=move, Black=confirm, Red=undo, Yellow=restart and Purple=skip
+        // walkthrough. Green, Blue and White intentionally do nothing; Orange remains Luxodd's.
         bool HandleArcadeInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
@@ -548,13 +893,6 @@ namespace Parabox
                 suppressMirroredArcadeMove = false;
             }
 
-            if (arcade.MuteDown)
-            {
-                Sfx.Click();
-                Sfx.ToggleMute();
-                UpdateMuteIcon();
-                return true;
-            }
             if (Lost)
             {
                 // The leaderboard is informational and Luxodd owns the upcoming transaction.
@@ -569,8 +907,7 @@ namespace Parabox
 
             if (Tutoring)
             {
-                if (CanSkipCurrentTutorial()
-                    && (arcade.SkipDown || (!tutorialInteractive && arcade.UndoDown)))
+                if (CanSkipCurrentTutorial() && arcade.SkipDown)
                 {
                     Sfx.Click();
                     TutorialSkip();
@@ -600,17 +937,14 @@ namespace Parabox
                 return HandleArcadeTutorialInput(arcade);
             }
 
-            if (arcade.BackDown || arcade.LevelsDown || (won && arcade.UndoDown))
-            {
-                Sfx.Click();
-                GoToMenu();
-                return true;
-            }
-
             if (won)
             {
-                if (arcade.ConfirmDown) { Sfx.Click(); NextLevel(); return true; }
-                return false;
+                if (winControlsReady && arcade.ConfirmDown)
+                {
+                    Sfx.Click();
+                    NextLevel();
+                }
+                return true;
             }
             if (arcade.RestartDown) { Sfx.Click(); Restart(); return true; }
             if (arcade.UndoDown)
@@ -690,6 +1024,8 @@ namespace Parabox
                 AnimateTimer();
             }
 
+            TickTutorialProgressWatchdog();
+
             if (HandleArcadeInput()) return;
 
             var kb = Keyboard.current;
@@ -758,7 +1094,8 @@ namespace Parabox
 
             if (won)
             {
-                if (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame)
+                if (winControlsReady
+                    && (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame))
                     NextLevel();
                 return;
             }
@@ -773,6 +1110,7 @@ namespace Parabox
             {
                 if (model.Undo())
                 {
+                    undoCount++;
                     Sfx.Undo();
                     SyncViews(false);
                     UpdateHud();
@@ -833,8 +1171,9 @@ namespace Parabox
                 return;
             }
 
-            // Only a successful PLAYER move starts the gameplay clock.
-            countdownArmed = true;
+            // Keep the clock armed after valid input. Gameplay normally arms it as soon as the
+            // player receives control; this also safely covers upgraded scenes and old saves.
+            ArmGameplayCountdown();
 
             SyncViews(false, dir);
 
@@ -1414,16 +1753,25 @@ namespace Parabox
         #if UNITY_EDITOR
         void BuildScoreHud()
         {
-            if (scoreRoot != null) return;
             Transform parent = timerRoot != null ? timerRoot.parent
                 : movesLabel != null ? movesLabel.transform.parent : transform;
+
+            if (scoreRoot != null && scoreLabel != null)
+            {
+                BuildLevelPointsHud(parent);
+                return;
+            }
 
             Transform existing = parent != null ? parent.Find("ScorePanel") : null;
             if (existing != null)
             {
                 scoreRoot = existing as RectTransform;
                 scoreLabel = existing.GetComponentInChildren<Text>(true);
-                if (scoreRoot != null && scoreLabel != null) return;
+                if (scoreRoot != null && scoreLabel != null)
+                {
+                    BuildLevelPointsHud(parent);
+                    return;
+                }
                 Object.DestroyImmediate(existing.gameObject);
             }
 
@@ -1475,35 +1823,674 @@ namespace Parabox
             scoreLabel.lineSpacing = 0.82f;
             CrispUiTypography.Polish(scoreLabel);
             scoreRoot.SetAsLastSibling();
+            BuildLevelPointsHud(parent);
         }
         #endif
 
+        void BuildLevelPointsHud(Transform parent)
+        {
+            if (levelPointsLabel != null) return;
+            Transform existing = parent != null ? parent.Find("LevelPointsText") : null;
+            if (existing != null)
+            {
+                levelPointsLabel = existing.GetComponent<Text>();
+                if (levelPointsLabel != null) return;
+                DestroySupplementalUiObject(existing.gameObject);
+            }
+
+            var labelObject = new GameObject("LevelPointsText", typeof(RectTransform),
+                typeof(CanvasRenderer), typeof(Text));
+            var rect = (RectTransform)labelObject.transform;
+            rect.SetParent(parent, false);
+            levelPointsLabel = labelObject.GetComponent<Text>();
+            levelPointsLabel.font = movesLabel != null && movesLabel.font != null
+                ? movesLabel.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            levelPointsLabel.fontSize = 20;
+            levelPointsLabel.fontStyle = FontStyle.Bold;
+            levelPointsLabel.alignment = TextAnchor.MiddleCenter;
+            levelPointsLabel.color = Color.Lerp(timerAccentCur, Color.white, 0.45f);
+            levelPointsLabel.raycastTarget = false;
+            levelPointsLabel.supportRichText = true;
+            CrispUiTypography.Polish(levelPointsLabel);
+        }
+
+        void BuildWinScoreReadout()
+        {
+            if (winScoreValue != null || winPanel == null) return;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window == null) return;
+            Transform existing = window.Find("WinScoreValue");
+            if (existing != null)
+            {
+                winScoreValue = existing.GetComponent<Text>();
+                if (winScoreValue != null) return;
+                DestroySupplementalUiObject(existing.gameObject);
+            }
+
+            var scoreObject = new GameObject("WinScoreValue", typeof(RectTransform),
+                typeof(CanvasRenderer), typeof(Text));
+            RectTransform rect = (RectTransform)scoreObject.transform;
+            rect.SetParent(window, false);
+            winScoreValue = scoreObject.GetComponent<Text>();
+            winScoreValue.font = winStats != null && winStats.font != null
+                ? winStats.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            winScoreValue.fontSize = 48;
+            winScoreValue.fontStyle = FontStyle.Bold;
+            winScoreValue.alignment = TextAnchor.MiddleCenter;
+            winScoreValue.color = new Color(1f, 0.91f, 0.65f, 1f);
+            winScoreValue.raycastTarget = false;
+            winScoreValue.supportRichText = false;
+            CrispUiTypography.Polish(winScoreValue);
+        }
+
+        void BuildWinPlayerBadges()
+        {
+            if (winPanel == null || playerPrefab == null) return;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window == null) return;
+
+            SpriteRenderer bodyRenderer = FindPlayerRenderer("Body");
+            SpriteRenderer leftEyeRenderer = FindPlayerRenderer("EyeL");
+            SpriteRenderer rightEyeRenderer = FindPlayerRenderer("EyeR");
+            if (bodyRenderer == null || bodyRenderer.sprite == null) return;
+
+            for (int i = 0; i < 3; i++)
+            {
+                RectTransform badge = window.Find("WinStar" + i) as RectTransform;
+                if (badge == null) continue;
+
+                Transform oldBody = badge.Find("Star");
+                if (oldBody != null) oldBody.name = "PlayerBody";
+                Image body = EnsureWinBadgeImage(badge, "PlayerBody", bodyRenderer.sprite,
+                    Vector2.zero, new Vector2(74f, 74f));
+                body.color = bodyRenderer.color;
+
+                Transform shine = badge.Find("Shine");
+                if (shine != null) shine.gameObject.SetActive(false);
+                Image glow = badge.Find("Glow") != null
+                    ? badge.Find("Glow").GetComponent<Image>() : null;
+                if (glow != null)
+                {
+                    glow.color = new Color(1f, 0.28f, 0.60f, 0.46f);
+                    glow.raycastTarget = false;
+                }
+
+                Image lightRing = EnsureWinBadgeImage(badge, "PlayerLightRing", ringSprite,
+                    Vector2.zero, new Vector2(104f, 104f));
+                lightRing.color = new Color(0.44f, 0.96f, 1f, 0f);
+                lightRing.enabled = ringSprite != null;
+
+                Image lightFlash = EnsureWinBadgeImage(badge, "PlayerLightFlash", bodyRenderer.sprite,
+                    Vector2.zero, new Vector2(74f, 74f));
+                lightFlash.color = new Color(1f, 1f, 1f, 0f);
+
+                if (leftEyeRenderer != null && leftEyeRenderer.sprite != null)
+                {
+                    Image eye = EnsureWinBadgeImage(badge, "PlayerEyeL", leftEyeRenderer.sprite,
+                        new Vector2(-13f, 5f), new Vector2(13f, 18f));
+                    eye.color = leftEyeRenderer.color;
+                }
+                if (rightEyeRenderer != null && rightEyeRenderer.sprite != null)
+                {
+                    Image eye = EnsureWinBadgeImage(badge, "PlayerEyeR", rightEyeRenderer.sprite,
+                        new Vector2(13f, 5f), new Vector2(13f, 18f));
+                    eye.color = rightEyeRenderer.color;
+                }
+
+                if (glow != null) glow.transform.SetAsFirstSibling();
+                lightRing.transform.SetSiblingIndex(Mathf.Min(1, badge.childCount - 1));
+                body.transform.SetSiblingIndex(Mathf.Min(2, badge.childCount - 1));
+                lightFlash.transform.SetSiblingIndex(Mathf.Min(3, badge.childCount - 1));
+                Transform leftEye = badge.Find("PlayerEyeL");
+                Transform rightEye = badge.Find("PlayerEyeR");
+                if (leftEye != null) leftEye.SetAsLastSibling();
+                if (rightEye != null) rightEye.SetAsLastSibling();
+
+                CanvasGroup group = badge.GetComponent<CanvasGroup>();
+                if (group == null) group = badge.gameObject.AddComponent<CanvasGroup>();
+                group.interactable = false;
+                group.blocksRaycasts = false;
+            }
+        }
+
+        SpriteRenderer FindPlayerRenderer(string childName)
+        {
+            Transform child = playerPrefab != null ? playerPrefab.transform.Find(childName) : null;
+            return child != null ? child.GetComponent<SpriteRenderer>() : null;
+        }
+
+        static Image EnsureWinBadgeImage(RectTransform parent, string name, Sprite sprite,
+            Vector2 position, Vector2 size)
+        {
+            Transform existing = parent.Find(name);
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            if (existing == null) item.transform.SetParent(parent, false);
+            RectTransform rect = item.transform as RectTransform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = size;
+            Image image = item.GetComponent<Image>();
+            image.sprite = sprite;
+            image.type = Image.Type.Simple;
+            image.preserveAspect = true;
+            image.raycastTarget = false;
+            item.SetActive(true);
+            return image;
+        }
+
+        static void DestroySupplementalUiObject(GameObject item)
+        {
+            if (item == null) return;
+#if UNITY_EDITOR
+            if (!Application.isPlaying) Object.DestroyImmediate(item);
+            else Object.Destroy(item);
+#else
+            Object.Destroy(item);
+#endif
+        }
+
         void UpdateScoreHud()
         {
-            if (scoreLabel == null) return;
             int count = levelPrefabs != null ? levelPrefabs.Length : 0;
             int total = ScoreSystem.Total(count);
-            string gain = won && lastScoreGain > 0
-                ? $"\n<size=12>+{lastScoreGain:n0} THIS LEVEL</size>" : string.Empty;
-            scoreLabel.text = $"<size=14>TOTAL SCORE</size>\n{total:n0}{gain}";
-            if (scoreRoot != null) scoreRoot.sizeDelta = new Vector2(220f, gain.Length > 0 ? 94f : 82f);
+            int maximum = ScoreSystem.TotalMaximum(count);
+            if (scoreLabel != null)
+                scoreLabel.text = $"TOTAL POINTS  {total:n0} / {maximum:n0}";
+            if (levelPointsLabel != null)
+            {
+                int levelBest = ScoreSystem.Best(levelIndex);
+                int levelMaximum = ScoreSystem.MaxPoints(levelIndex);
+                levelPointsLabel.text = $"LEVEL POINTS  {levelBest:n0} / {levelMaximum:n0}";
+            }
+        }
+
+        // Points are information, not actions. Keep MOVES, this level's earned/max score and the
+        // campaign total as three plain-text HUD facts; none of them may resemble a button.
+        void ConfigureScoreHudPresentation()
+        {
+            if (movesLabel != null)
+            {
+                RectTransform movesRect = movesLabel.rectTransform;
+                movesRect.anchorMin = movesRect.anchorMax = movesRect.pivot = new Vector2(0.5f, 1f);
+                movesRect.anchoredPosition = new Vector2(-260f, -96f);
+                movesRect.sizeDelta = new Vector2(220f, 40f);
+                movesLabel.fontSize = 20;
+                movesLabel.fontStyle = FontStyle.Bold;
+            }
+
+            if (levelPointsLabel != null)
+            {
+                RectTransform levelPointsRect = levelPointsLabel.rectTransform;
+                levelPointsRect.anchorMin = levelPointsRect.anchorMax = levelPointsRect.pivot
+                    = new Vector2(0.5f, 1f);
+                levelPointsRect.anchoredPosition = new Vector2(0f, -96f);
+                levelPointsRect.sizeDelta = new Vector2(290f, 40f);
+                levelPointsLabel.fontSize = 20;
+                levelPointsLabel.fontStyle = FontStyle.Bold;
+                levelPointsLabel.alignment = TextAnchor.MiddleCenter;
+                levelPointsLabel.color = Color.Lerp(timerAccentCur, Color.white, 0.45f);
+                levelPointsLabel.lineSpacing = 1f;
+                levelPointsLabel.supportRichText = false;
+            }
+
+            if (scoreRoot == null) return;
+            scoreRoot.anchorMin = scoreRoot.anchorMax = scoreRoot.pivot = new Vector2(0.5f, 1f);
+            scoreRoot.anchoredPosition = new Vector2(310f, -96f);
+            scoreRoot.sizeDelta = new Vector2(330f, 40f);
+
+            Image panel = scoreRoot.GetComponent<Image>();
+            if (panel != null)
+            {
+                panel.enabled = false;
+                panel.color = Color.clear;
+                panel.raycastTarget = false;
+                UIGradient gradient = panel.GetComponent<UIGradient>();
+                if (gradient != null) gradient.enabled = false;
+            }
+            Shadow shadow = scoreRoot.GetComponent<Shadow>();
+            if (shadow != null) shadow.enabled = false;
+            Outline outline = scoreRoot.GetComponent<Outline>();
+            if (outline != null) outline.enabled = false;
+            if (scoreLabel != null)
+            {
+                scoreLabel.fontSize = 20;
+                scoreLabel.fontStyle = FontStyle.Bold;
+                scoreLabel.alignment = TextAnchor.MiddleCenter;
+                scoreLabel.color = Color.Lerp(timerAccentCur, Color.white, 0.52f);
+                scoreLabel.lineSpacing = 1f;
+                scoreLabel.supportRichText = false;
+                RectTransform textRect = scoreLabel.rectTransform;
+                textRect.anchorMin = Vector2.zero;
+                textRect.anchorMax = Vector2.one;
+                textRect.offsetMin = Vector2.zero;
+                textRect.offsetMax = Vector2.zero;
+            }
+            if (levelPointsLabel != null) levelPointsLabel.transform.SetAsLastSibling();
+            scoreRoot.SetAsLastSibling();
+        }
+
+        // A win should teach the scoring rules at a glance. The score uses its own large readout,
+        // while four plain-language rows explain exactly how to improve the next attempt.
+        void ConfigureWinScorePresentation()
+        {
+            if (winPanel == null) return;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window != null)
+            {
+                window.sizeDelta = new Vector2(720f, 620f);
+                ConfigureWinBoardBackground(window);
+                RectTransform ring = window.Find("WinOutline") as RectTransform;
+                if (ring != null) ring.sizeDelta = new Vector2(720f, 620f);
+                RectTransform ring2 = window.Find("WinOutline2") as RectTransform;
+                if (ring2 != null) ring2.sizeDelta = new Vector2(744f, 644f);
+                for (int i = 0; i < 3; i++)
+                {
+                    RectTransform star = window.Find("WinStar" + i) as RectTransform;
+                    if (star != null)
+                    {
+                        star.anchoredPosition = new Vector2((i - 1) * 84f, 252f);
+                        star.sizeDelta = new Vector2(80f, 80f);
+                    }
+                }
+                RectTransform glow = window.Find("BtnGlow") as RectTransform;
+                if (glow != null) glow.anchoredPosition = new Vector2(-155f, -230f);
+            }
+
+            if (winTitle != null)
+            {
+                winTitle.rectTransform.anchoredPosition = new Vector2(0f, 165f);
+                winTitle.rectTransform.sizeDelta = new Vector2(670f, 76f);
+                winTitle.fontSize = 50;
+                winTitle.fontStyle = FontStyle.Bold;
+                winTitle.alignment = TextAnchor.MiddleCenter;
+                winTitle.supportRichText = false;
+                winTitle.color = Color.white;
+                UIGradient titleGradient = winTitle.GetComponent<UIGradient>();
+                if (titleGradient == null)
+                    titleGradient = winTitle.gameObject.AddComponent<UIGradient>();
+                titleGradient.enabled = true;
+                titleGradient.top = new Color(1f, 1f, 1f, 1f);
+                titleGradient.bottom = new Color(0.34f, 0.92f, 1f, 1f);
+                Shadow titleShadow = winTitle.GetComponent<Shadow>();
+                if (titleShadow == null)
+                    titleShadow = winTitle.gameObject.AddComponent<Shadow>();
+                titleShadow.enabled = true;
+                titleShadow.effectColor = new Color(0f, 0.16f, 0.28f, 0.52f);
+                titleShadow.effectDistance = new Vector2(0f, -2f);
+                titleShadow.useGraphicAlpha = true;
+                winTitle.SetVerticesDirty();
+                ConfigureWinTitleAccents(window);
+            }
+            if (winScoreValue != null)
+            {
+                winScoreValue.rectTransform.anchoredPosition = new Vector2(0f, 102f);
+                winScoreValue.rectTransform.sizeDelta = new Vector2(670f, 62f);
+                winScoreValue.fontSize = 48;
+                winScoreValue.alignment = TextAnchor.MiddleCenter;
+                winScoreValue.supportRichText = false;
+                winScoreValue.color = new Color(1f, 0.91f, 0.65f, 1f);
+            }
+            if (winStats != null)
+            {
+                winStats.rectTransform.anchoredPosition = new Vector2(0f, -68f);
+                winStats.rectTransform.sizeDelta = new Vector2(650f, 250f);
+                winStats.fontSize = 20;
+                winStats.alignment = TextAnchor.MiddleCenter;
+                winStats.supportRichText = false;
+                winStats.lineSpacing = 0.92f;
+                winStats.horizontalOverflow = HorizontalWrapMode.Wrap;
+                winStats.verticalOverflow = VerticalWrapMode.Overflow;
+            }
+            RectTransform nextRect = nextButton != null ? nextButton.transform as RectTransform : null;
+            RectTransform menuRect = menuButton != null ? menuButton.transform as RectTransform : null;
+            Vector2 sharedWinButtonSize = new Vector2(260f, 82f);
+            if (nextRect != null)
+            {
+                nextRect.anchoredPosition = new Vector2(-155f, -230f);
+                nextRect.sizeDelta = sharedWinButtonSize;
+            }
+            if (menuRect != null)
+            {
+                menuRect.anchoredPosition = new Vector2(155f, -230f);
+                menuRect.sizeDelta = sharedWinButtonSize;
+            }
+        }
+
+        // The results board should feel like part of the sci-fi room, not a flat blue card. Build
+        // the background from the active chapter palette so it remains premium and readable in
+        // every world: deep glass, two restrained light blooms and a code-drawn circuit surface.
+        void ConfigureWinBoardBackground(RectTransform window)
+        {
+            if (window == null) return;
+
+            Image panel = window.GetComponent<Image>();
+            if (panel != null)
+            {
+                panel.enabled = true;
+                panel.color = Color.white;
+                panel.raycastTarget = false;
+                UIGradient gradient = panel.GetComponent<UIGradient>();
+                if (gradient == null) gradient = panel.gameObject.AddComponent<UIGradient>();
+                gradient.enabled = true;
+                Color glassTop = Color.Lerp(new Color(0.025f, 0.072f, 0.145f, 1f),
+                    frameColor, 0.13f);
+                Color glassBottom = Color.Lerp(new Color(0.008f, 0.018f, 0.052f, 1f),
+                    gutterColor, 0.42f);
+                glassBottom.a = 0.99f;
+                gradient.top = glassTop;
+                gradient.bottom = glassBottom;
+
+                Shadow shadow = panel.GetComponent<Shadow>();
+                if (shadow == null) shadow = panel.gameObject.AddComponent<Shadow>();
+                shadow.enabled = true;
+                shadow.effectColor = new Color(0f, 0.01f, 0.04f, 0.82f);
+                shadow.effectDistance = new Vector2(0f, -12f);
+                shadow.useGraphicAlpha = true;
+                panel.SetVerticesDirty();
+            }
+
+            Image upperGlow = EnsureWinTitleDecoration(window, "ResultAmbientGlow",
+                new Vector2(0f, 142f), new Vector2(650f, 370f));
+            upperGlow.sprite = glowSprite;
+            upperGlow.type = Image.Type.Simple;
+            upperGlow.preserveAspect = false;
+            upperGlow.enabled = glowSprite != null;
+            upperGlow.color = new Color(frameColor.r, frameColor.g, frameColor.b, 0.115f);
+
+            Image lowerGlow = EnsureWinTitleDecoration(window, "ResultLowerGlow",
+                new Vector2(0f, -222f), new Vector2(530f, 220f));
+            lowerGlow.sprite = glowSprite;
+            lowerGlow.type = Image.Type.Simple;
+            lowerGlow.preserveAspect = false;
+            lowerGlow.enabled = glowSprite != null;
+            Color purple = Color.Lerp(frameColor, new Color(0.57f, 0.28f, 1f, 1f), 0.62f);
+            lowerGlow.color = new Color(purple.r, purple.g, purple.b, 0.075f);
+
+            PremiumResultBackdrop pattern = EnsureResultBackdrop(window, "ResultBackdropPattern");
+            RectTransform patternRect = pattern.rectTransform;
+            patternRect.anchorMin = Vector2.zero;
+            patternRect.anchorMax = Vector2.one;
+            patternRect.offsetMin = new Vector2(12f, 12f);
+            patternRect.offsetMax = new Vector2(-12f, -12f);
+            pattern.SetPalette(frameColor, purple);
+            pattern.raycastTarget = false;
+
+            // Always keep decorative light below score text, badges and buttons.
+            upperGlow.transform.SetAsFirstSibling();
+            lowerGlow.transform.SetSiblingIndex(Mathf.Min(1, window.childCount - 1));
+            pattern.transform.SetSiblingIndex(Mathf.Min(2, window.childCount - 1));
+        }
+
+        static PremiumResultBackdrop EnsureResultBackdrop(RectTransform parent, string name)
+        {
+            Transform existing = parent != null ? parent.Find(name) : null;
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer),
+                    typeof(PremiumResultBackdrop));
+            if (existing == null) item.transform.SetParent(parent, false);
+            PremiumResultBackdrop backdrop = item.GetComponent<PremiumResultBackdrop>();
+            if (backdrop == null) backdrop = item.AddComponent<PremiumResultBackdrop>();
+            item.SetActive(true);
+            return backdrop;
+        }
+
+        void ConfigureWinTitleAccents(RectTransform window)
+        {
+            if (window == null || winTitle == null) return;
+            Image glow = EnsureWinTitleDecoration(window, "WinTitleGlow",
+                new Vector2(0f, 165f), new Vector2(430f, 92f));
+            glow.sprite = glowSprite;
+            glow.type = Image.Type.Simple;
+            glow.enabled = glowSprite != null;
+            glow.color = new Color(0.22f, 0.90f, 1f, 0.12f);
+
+            Image left = EnsureWinTitleDecoration(window, "WinTitleAccentLeft",
+                new Vector2(-246f, 165f), new Vector2(104f, 3f));
+            Image right = EnsureWinTitleDecoration(window, "WinTitleAccentRight",
+                new Vector2(246f, 165f), new Vector2(104f, 3f));
+            left.color = right.color = new Color(0.38f, 0.94f, 1f, 0.72f);
+
+            int titleIndex = winTitle.transform.GetSiblingIndex();
+            glow.transform.SetSiblingIndex(Mathf.Max(0, titleIndex - 1));
+            left.transform.SetSiblingIndex(Mathf.Max(0, winTitle.transform.GetSiblingIndex()));
+            right.transform.SetSiblingIndex(Mathf.Max(0, winTitle.transform.GetSiblingIndex()));
+            winTitle.transform.SetAsLastSibling();
+        }
+
+        static Image EnsureWinTitleDecoration(RectTransform parent, string name,
+            Vector2 position, Vector2 size)
+        {
+            Transform existing = parent.Find(name);
+            GameObject item = existing != null ? existing.gameObject
+                : new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            if (existing == null) item.transform.SetParent(parent, false);
+            RectTransform rect = item.transform as RectTransform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = size;
+            Image image = item.GetComponent<Image>();
+            image.raycastTarget = false;
+            item.SetActive(true);
+            return image;
+        }
+
+        void UpdateWinPlayerBadges()
+        {
+            if (winPanel == null || lastScoreBreakdown.maxScore <= 0) return;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window == null) return;
+            int earned = EarnedWinBadgeCount();
+            Color liveBody = new Color(1f, 0.3725f, 0.6275f, 1f);
+            Transform bodySource = playerPrefab != null ? playerPrefab.transform.Find("Body") : null;
+            SpriteRenderer renderer = bodySource != null
+                ? bodySource.GetComponent<SpriteRenderer>() : null;
+            if (renderer != null) liveBody = renderer.color;
+
+            for (int i = 0; i < 3; i++)
+            {
+                Transform badge = window.Find("WinStar" + i);
+                if (badge == null) continue;
+                bool lit = i < earned;
+                Image body = badge.Find("PlayerBody") != null
+                    ? badge.Find("PlayerBody").GetComponent<Image>() : null;
+                if (body != null)
+                    body.color = lit ? liveBody : new Color(0.22f, 0.31f, 0.40f, 0.58f);
+                foreach (string eyeName in new[] { "PlayerEyeL", "PlayerEyeR" })
+                {
+                    Image eye = badge.Find(eyeName) != null
+                        ? badge.Find(eyeName).GetComponent<Image>() : null;
+                    if (eye != null)
+                    {
+                        Color eyeColor = eye.color;
+                        eyeColor.a = lit ? 1f : 0.24f;
+                        eye.color = eyeColor;
+                    }
+                }
+                Transform glow = badge.Find("Glow");
+                if (glow != null) glow.gameObject.SetActive(lit);
+            }
+        }
+
+        int EarnedWinBadgeCount()
+        {
+            if (lastScoreBreakdown.maxScore <= 0) return 0;
+            float ratio = lastScoreBreakdown.runScore / (float)lastScoreBreakdown.maxScore;
+            return ratio >= 0.85f ? 3 : ratio >= 0.70f ? 2 : 1;
+        }
+
+        // The player badges are the level's rating, so they arrive as a reward rather than simply
+        // being visible when the panel opens. Each one lands on its own beat, briefly catches a
+        // white highlight and sends a cyan light ring through its pink halo.
+        void PrepareWinPlayerBadgeReveal()
+        {
+            if (winPanel == null) return;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window == null) return;
+            int earned = EarnedWinBadgeCount();
+
+            for (int i = 0; i < 3; i++)
+            {
+                RectTransform badge = window.Find("WinStar" + i) as RectTransform;
+                if (badge == null) continue;
+                CanvasGroup group = badge.GetComponent<CanvasGroup>();
+                if (group == null) group = badge.gameObject.AddComponent<CanvasGroup>();
+                group.alpha = 0f;
+                group.interactable = false;
+                group.blocksRaycasts = false;
+                badge.localScale = Vector3.one * 0.34f;
+                badge.localRotation = Quaternion.Euler(0f, 0f, i % 2 == 0 ? -9f : 9f);
+
+                bool lit = i < earned;
+                Image glow = FindWinBadgeImage(badge, "Glow");
+                if (glow != null)
+                {
+                    glow.gameObject.SetActive(lit);
+                    glow.color = new Color(1f, 0.24f, 0.62f, 0f);
+                    glow.rectTransform.localScale = Vector3.one * 0.62f;
+                }
+                Image ring = FindWinBadgeImage(badge, "PlayerLightRing");
+                if (ring != null)
+                {
+                    ring.gameObject.SetActive(lit && ringSprite != null);
+                    ring.color = new Color(0.44f, 0.96f, 1f, 0f);
+                    ring.rectTransform.localScale = Vector3.one * 0.54f;
+                }
+                Image flash = FindWinBadgeImage(badge, "PlayerLightFlash");
+                if (flash != null)
+                {
+                    flash.gameObject.SetActive(lit);
+                    flash.color = new Color(1f, 1f, 1f, 0f);
+                }
+            }
+        }
+
+        System.Collections.IEnumerator AnimateWinPlayerBadgeReveal()
+        {
+            PrepareWinPlayerBadgeReveal();
+            if (winPanel == null) yield break;
+            RectTransform window = winPanel.transform.Find("Window") as RectTransform;
+            if (window == null) yield break;
+
+            int earned = EarnedWinBadgeCount();
+            const float stagger = 0.16f;
+            const float duration = 0.54f;
+            float elapsed = 0f;
+            float totalDuration = duration + stagger * 2f;
+
+            while (elapsed < totalDuration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                for (int i = 0; i < 3; i++)
+                {
+                    RectTransform badge = window.Find("WinStar" + i) as RectTransform;
+                    if (badge == null) continue;
+                    float localTime = elapsed - i * stagger;
+                    if (localTime < 0f) continue;
+                    float p = Mathf.Clamp01(localTime / duration);
+                    float settle = WinBadgeEaseOutBack(p);
+                    bool lit = i < earned;
+
+                    CanvasGroup group = badge.GetComponent<CanvasGroup>();
+                    if (group != null) group.alpha = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(p * 2.6f));
+                    badge.localScale = Vector3.one * Mathf.LerpUnclamped(0.34f, 1f, settle);
+                    badge.localRotation = Quaternion.Euler(0f, 0f,
+                        Mathf.Lerp((i % 2 == 0 ? -9f : 9f), 0f, Mathf.SmoothStep(0f, 1f, p)));
+
+                    Image glow = FindWinBadgeImage(badge, "Glow");
+                    if (glow != null && lit)
+                    {
+                        float glowPulse = Mathf.Sin(p * Mathf.PI);
+                        glow.color = new Color(1f, 0.24f, 0.62f,
+                            Mathf.Lerp(0f, 0.46f, p) + glowPulse * 0.34f);
+                        glow.rectTransform.localScale = Vector3.one
+                            * Mathf.Lerp(0.62f, 1.10f, Mathf.SmoothStep(0f, 1f, p));
+                    }
+
+                    Image ring = FindWinBadgeImage(badge, "PlayerLightRing");
+                    if (ring != null && lit)
+                    {
+                        float ringAlpha = Mathf.Sin(p * Mathf.PI) * 0.88f;
+                        ring.color = new Color(0.44f, 0.96f, 1f, ringAlpha);
+                        ring.rectTransform.localScale = Vector3.one * Mathf.Lerp(0.54f, 1.42f, p);
+                    }
+
+                    Image flash = FindWinBadgeImage(badge, "PlayerLightFlash");
+                    if (flash != null && lit)
+                    {
+                        float flashAlpha = Mathf.Sin(Mathf.Clamp01(p * 1.35f) * Mathf.PI) * 0.70f;
+                        flash.color = new Color(1f, 1f, 1f, flashAlpha);
+                    }
+                }
+                yield return null;
+            }
+
+            for (int i = 0; i < 3; i++)
+            {
+                RectTransform badge = window.Find("WinStar" + i) as RectTransform;
+                if (badge == null) continue;
+                CanvasGroup group = badge.GetComponent<CanvasGroup>();
+                if (group != null) group.alpha = 1f;
+                badge.localScale = Vector3.one;
+                badge.localRotation = Quaternion.identity;
+                bool lit = i < earned;
+
+                Image glow = FindWinBadgeImage(badge, "Glow");
+                if (glow != null)
+                {
+                    glow.gameObject.SetActive(lit);
+                    glow.color = new Color(1f, 0.28f, 0.60f, lit ? 0.46f : 0f);
+                    glow.rectTransform.localScale = Vector3.one;
+                }
+                Image ring = FindWinBadgeImage(badge, "PlayerLightRing");
+                if (ring != null) ring.gameObject.SetActive(false);
+                Image flash = FindWinBadgeImage(badge, "PlayerLightFlash");
+                if (flash != null) flash.gameObject.SetActive(false);
+            }
+        }
+
+        static Image FindWinBadgeImage(RectTransform badge, string childName)
+        {
+            Transform child = badge != null ? badge.Find(childName) : null;
+            return child != null ? child.GetComponent<Image>() : null;
+        }
+
+        static float WinBadgeEaseOutBack(float value)
+        {
+            value = Mathf.Clamp01(value) - 1f;
+            const float overshoot = 1.70158f;
+            return 1f + (overshoot + 1f) * value * value * value
+                + overshoot * value * value;
         }
 
         void Win()
         {
             won = true;
+            winControlsReady = false;
+            SetWinButtonsInteractable(false);
 
             int moves = model.MoveCount;
             int prevBest = PlayerPrefs.GetInt(BestKey(levelIndex), int.MaxValue);
             bool newBest = moves < prevBest;
             int best = Mathf.Min(moves, prevBest);
+            lastWinMoves = moves;
+            lastWinMoveBest = best;
+            lastWinWasMoveBest = newBest;
             PlayerPrefs.SetInt(BestKey(levelIndex), best);
             PlayerPrefs.SetInt(SessionClearKey(levelIndex), 1);
 
-            int runScore = ScoreSystem.Calculate(levelIndex, par, moves, moveLimit, timeLeft);
+            lastScoreBreakdown = ScoreSystem.Calculate(levelIndex,
+                MoveParForLevel(levelIndex, par), moves, moveLimit,
+                timeLeft, timeLimit, undoCount);
+            int runScore = lastScoreBreakdown.runScore;
             ScoreSystem.Award scoreAward = ScoreSystem.RecordBest(
                 levelIndex, runScore, levelPrefabs != null ? levelPrefabs.Length : 0);
+            lastScoreAward = scoreAward;
             lastScoreGain = scoreAward.gained;
+            // Freeze the exact total shown on the results screen. Submission uses this same
+            // snapshot, so later PlayerPrefs/cloud activity cannot change one side of the flow.
+            endOfRunTotalScore = scoreAward.total;
+            PlayerPrefs.SetInt("Parabox.JustBeat", levelIndex);
             PlayerPrefs.Save();
             UpdateScoreHud();
             ReportLevelEndOnce();
@@ -1511,28 +2498,18 @@ namespace Parabox
             bool last = levelIndex >= levelPrefabs.Length - 1;
             bool allDone = AllLevelsBeaten();
 
-            winTitle.text = (last && allDone) ? "You Win!" : "Level Complete!";
-
-            if (winStats != null)
-            {
-                winStats.text = newBest
-                    ? $"Solved in {moves} moves — new best!"
-                    : $"Solved in {moves} moves   (best {best})";
-                winStats.text += scoreAward.gained > 0
-                    ? $"\nScore +{scoreAward.gained:n0}     Total {scoreAward.total:n0}"
-                    : $"\nLevel score {scoreAward.levelBest:n0}     Total {scoreAward.total:n0}";
-                if (last && allDone)
-                    winStats.text += "\nAll levels complete — thanks for playing!";
-            }
+            if (winTitle != null)
+                winTitle.text = ScoreSystem.Rating(runScore, lastScoreBreakdown.maxScore);
+            UpdateWinPlayerBadges();
+            UpdateWinScoreText(0);
 
             Text nextLabel = nextButton != null
                 ? nextButton.GetComponentInChildren<Text>(true) : null;
             if (nextLabel != null)
                 nextLabel.text = last ? "PLAY AGAIN" : "NEXT LEVEL";
 
-            // Finishing the whole game is not the same event as finishing a level, so it does not
-            // get the same panel. The finale takes the screen over entirely; the ordinary win UI
-            // never appears.
+            // The campaign finale still gets its own full-screen ceremony, but the Level 50 points
+            // are shown first so no leaderboard award is ever hidden from the player.
             if (last && allDone)
             {
                 finaleSequenceActive = true;
@@ -1541,6 +2518,90 @@ namespace Parabox
             }
 
             StartCoroutine(WinSequence());
+        }
+
+        void SetWinButtonsInteractable(bool interactable)
+        {
+            if (nextButton != null) nextButton.interactable = interactable;
+            if (menuButton != null) menuButton.interactable = interactable;
+        }
+
+        void UpdateWinScoreText(int displayedScore)
+        {
+            if (winStats == null && winScoreValue == null) return;
+            int levelCount = levelPrefabs != null ? levelPrefabs.Length : 0;
+            int totalMaximum = ScoreSystem.TotalMaximum(levelCount);
+            string moveResult = lastWinWasMoveBest
+                ? $"NEW MOVE BEST  •  {lastWinMoves} MOVES"
+                : $"{lastWinMoves} MOVES  •  BEST {lastWinMoveBest}";
+            string undoResult = undoCount <= 0
+                ? $"NO UNDO  +{lastScoreBreakdown.noUndoPoints:n0}"
+                : $"NO UNDO  +0  ({undoCount} USED)";
+            string bestResult = lastScoreAward.newBest
+                ? $"NEW LEVEL BEST  •  +{lastScoreGain:n0} ADDED TO TOTAL"
+                : $"LEVEL BEST  {lastScoreAward.levelBest:n0} / {lastScoreBreakdown.maxScore:n0}";
+
+            if (winScoreValue != null)
+                winScoreValue.text = $"{displayedScore:n0} / {lastScoreBreakdown.maxScore:n0}  POINTS";
+            if (winStats != null)
+            {
+                winStats.text = $"HOW YOU EARNED YOUR POINTS\n\n"
+                    + $"LEVEL COMPLETE  +{lastScoreBreakdown.completionPoints:n0}\n"
+                    + $"FEWER MOVES BONUS  +{lastScoreBreakdown.movePoints:n0}\n"
+                    + $"TIME LEFT BONUS  +{lastScoreBreakdown.speedPoints:n0}\n"
+                    + $"{undoResult}\n\n"
+                    + $"{bestResult}\n{moveResult}\n"
+                    + $"TOTAL POINTS  {lastScoreAward.total:n0} / {totalMaximum:n0}";
+            }
+        }
+
+        System.Collections.IEnumerator RevealScorePanel(bool autoCloseForFinale)
+        {
+            ConfigureWinScorePresentation();
+            SetWinButtonsInteractable(false);
+            winControlsReady = false;
+            if (winPanel == null)
+            {
+                winControlsReady = !autoCloseForFinale;
+                SetWinButtonsInteractable(winControlsReady);
+                yield break;
+            }
+
+            winPanel.SetActive(true);
+            winPanel.transform.SetAsLastSibling();
+            UpdateWinScoreText(0);
+            yield return AnimateWinPlayerBadgeReveal();
+
+            const float countDuration = 1.20f;
+            float t = 0f;
+            int lastShown = -1;
+            while (t < countDuration)
+            {
+                t += Time.unscaledDeltaTime;
+                float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / countDuration));
+                int shown = Mathf.RoundToInt(lastScoreBreakdown.runScore * k);
+                if (shown != lastShown)
+                {
+                    lastShown = shown;
+                    UpdateWinScoreText(shown);
+                }
+                yield return null;
+            }
+            UpdateWinScoreText(lastScoreBreakdown.runScore);
+            Sfx.Ding();
+
+            if (autoCloseForFinale)
+            {
+                float hold = 0f;
+                while (hold < 2.2f) { hold += Time.unscaledDeltaTime; yield return null; }
+                winPanel.SetActive(false);
+                yield break;
+            }
+
+            winControlsReady = true;
+            SetWinButtonsInteractable(true);
+            if (nextButton != null && EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(nextButton.gameObject);
         }
 
         // The completion, staged. The old version fired the burst on the same frame as the last
@@ -1588,19 +2649,10 @@ namespace Parabox
             t = 0f;
             while (t < 1.5f) { t += Time.unscaledDeltaTime; yield return null; }
 
-            // ---- 4. out to the map -------------------------------------------------------
-            // Campaign completion is handled only by FinaleSequence after AllLevelsBeaten has
-            // succeeded. Reaching Level 50 directly must never manufacture a completed campaign.
-            // No panel and no Next button: the reward is watching your route light up, so the
-            // map IS the completion screen. It opens focused on what you just unlocked.
-            PlayerPrefs.SetInt("Parabox.JustBeat", levelIndex);
-            PlayerPrefs.SetInt(OpenLevelsKey, 1);
-            PlayerPrefs.Save();
-            // NO fade-out. This used to run screenFade.FadeOut, which drives the Game scene's
-            // board-blue overlay to FULL opacity — so finishing a level washed the whole screen
-            // solid blue before the map arrived. It was added to avoid a "hard cut" that nobody
-            // had complained about, and it cost more than it bought.
-            SceneManager.LoadScene("MainMenu");
+            // ---- 4. make the reward unmistakable -----------------------------------------
+            // Stay on the completed level and count every earned point before offering the two
+            // exits. This is the player's leaderboard moment, not a silent automatic scene cut.
+            yield return RevealScorePanel(false);
         }
 
         // Finishing the game.
@@ -1770,10 +2822,13 @@ namespace Parabox
         System.Collections.IEnumerator FinaleSequence()
         {
             Sfx.Win();
-            if (winPanel != null) winPanel.SetActive(false);
 
             float e = 0f;                       // sit with the solved board for a beat
             while (e < 1.2f) { e += Time.unscaledDeltaTime; yield return null; }
+
+            // Level 50 still awards ordinary level points. Show and count them before the larger
+            // all-game finale takes ownership of the screen.
+            yield return RevealScorePanel(true);
 
             if (hudGroup != null)               // the HUD has no business being here
             {
@@ -1806,7 +2861,9 @@ namespace Parabox
                     ReturnToLevels();
                 },
                 levels: levelPrefabs.Length,
-                totalMoves: TotalMovesAcrossRun());
+                totalMoves: TotalMovesAcrossRun(),
+                totalPoints: ScoreSystem.Total(levelPrefabs.Length),
+                maximumPoints: ScoreSystem.TotalMaximum(levelPrefabs.Length));
         }
 
         // A completed campaign becomes a completely fresh run when the player leaves the finale:
@@ -1835,19 +2892,31 @@ namespace Parabox
 
         void NextLevel()
         {
-            if (!won) return;
+            if (!won || !winControlsReady) return;
             int next = (levelIndex + 1) % levelPrefabs.Length;
             PlayerPrefs.SetInt(LevelKey, next);
+            PlayerPrefs.DeleteKey("Parabox.JustBeat");
             PlayerPrefs.Save();
             LuxoddGameService.SyncProgress();
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
         }
 
         // -------------------------------------------------- timer
+        void ArmGameplayCountdown()
+        {
+            if (!GameplayCountdownEnabled || editorPreviewMode || Terminal || Tutoring
+                || timeLeft <= 0f) return;
+            countdownArmed = true;
+        }
+
         void TickTimer()
         {
-            if (Terminal || !countdownArmed) return;
-            timeLeft = Mathf.Max(0f, timeLeft - Time.deltaTime);
+            if (Terminal || Tutoring || !countdownArmed) return;
+            // Gameplay UI and arcade input use real time, so the timer must do the same. Unscaled
+            // time keeps it moving if another presentation briefly changes Time.timeScale.
+            float delta = Time.unscaledDeltaTime;
+            if (float.IsNaN(delta) || float.IsInfinity(delta) || delta <= 0f) return;
+            timeLeft = Mathf.Max(0f, timeLeft - delta);
             if (timeLeft <= 0f)
                 TimeUp();
         }
@@ -1930,6 +2999,8 @@ namespace Parabox
             cinematic = false;
             tutorialSequence.Clear();
             tutorialSequenceIndex = 0;
+            tutorialProgressDeadlineRealtime = -1f;
+            tutorialWatchdogRecovering = false;
             if (model != null && model.player != null) FocusRoom(model.player.roomId);
         }
 
@@ -1948,11 +3019,20 @@ namespace Parabox
         // or reads its solution. The end choice always enters the untouched campaign level;
         // players never practise inside the separate teaching board.
         public const string TutorialKey = "Parabox.Tutorial.Seen";
-        // The versioned prefix invalidates older solution replays and abstract rule cards. Existing
-        // players receive each spoiler-free gameplay mini-board once after a presentation upgrade.
+        // Kept for save migration and reset-menu compatibility. Tutorial playback itself is now
+        // session-scoped: closing/reopening the website or restarting the Luxodd cabinet game starts
+        // a fresh tutorial session, while returning to a level during one launch does not repeat it.
         const string MechanicBriefingPrefix = TutorialVideoVersion.MechanicSeenPrefix;
+        // Chapter I now has an explicit pre-Level-1 presentation contract. Do not inherit the old
+        // generic TutorialKey: previous builds could set it without showing the current mini-board.
+        // This new key makes the corrected tutorial appear once, then suppresses normal replays.
+        const string ChapterOneBriefingKey = "Parabox.MechanicBriefing.Chapter1.V14.Seen";
         public static string MechanicBriefingKey(int levelIndex)
-            => MechanicBriefingPrefix + Mathf.Clamp(levelIndex, 0, 49);
+        {
+            int clamped = Mathf.Clamp(levelIndex, 0, 49);
+            return clamped == 0 ? ChapterOneBriefingKey : MechanicBriefingPrefix + clamped;
+        }
+        static readonly HashSet<int> TutorialsSeenThisPlaySession = new HashSet<int>();
         Coroutine _cine;
         public int TutorialPlaybackSerial { get; private set; }
         GameObject _goalGlow;
@@ -1969,6 +3049,9 @@ namespace Parabox
         readonly HashSet<string> missingTutorialWarnings = new HashSet<string>();
         int tutorialSequenceIndex;
         bool tutorialInteractive;
+        float tutorialProgressDeadlineRealtime = -1f;
+        bool tutorialWatchdogRecovering;
+        const float TutorialProgressTimeout = 20f;
         const float TutorialStageOffset = 4096f;
         const float TutorialPlaybackRate = 0.7f;
 
@@ -1979,27 +3062,44 @@ namespace Parabox
 
         List<MechanicCatalog.Id> CurrentTutorialMechanics()
         {
-            // Chapter openers always replay their explanation. Chapter I also stages two focused
-            // introductions: button/gate before Level 7. Sliding cargo was removed from Chapter I.
-            return MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex);
+            var lessons = new List<MechanicCatalog.Id>();
+            if (TutorialAlreadySeenForCurrentLevel()) return lessons;
+
+            // Chapter tutorials are fixed gates before their opener puzzle. Focused mechanic
+            // tutorials still require genuine first-appearance evidence so ordinary levels and
+            // reloads go straight to gameplay.
+            var introductions = new HashSet<MechanicCatalog.Id>(
+                MechanicCatalog.IntroductionsAt(levelPrefabs, levelIndex));
+            foreach (MechanicCatalog.Id lesson in
+                     MechanicCatalog.TutorialsAt(levelPrefabs, levelIndex))
+            {
+                if (MechanicCatalog.IsChapterTutorial(levelIndex, lesson)
+                    || introductions.Contains(lesson))
+                    lessons.Add(lesson);
+            }
+            return lessons;
         }
 
-        bool CurrentTutorialIsNewMechanic()
-        {
-            if (tutorialSequenceIndex < 0 || tutorialSequenceIndex >= tutorialSequence.Count)
-                return false;
-            MechanicCatalog.Id current = tutorialSequence[tutorialSequenceIndex];
-            return !MechanicCatalog.IsChapterTutorial(levelIndex, current)
-                && MechanicCatalog.IntroductionsAt(levelPrefabs, levelIndex).Contains(current);
-        }
+        bool TutorialAlreadySeenForCurrentLevel()
+            => TutorialsSeenThisPlaySession.Contains(levelIndex);
 
-        bool CanSkipCurrentTutorial() => !CurrentTutorialIsNewMechanic();
+        void MarkCurrentTutorialSeen()
+            => TutorialsSeenThisPlaySession.Add(levelIndex);
 
-        // Tutorials replay whenever their associated level is entered. This includes chapter
-        // explanations at 1/11/21/31/41 plus the focused Chapter I lessons at Levels 5 and 7.
+        // Purple is the Luxodd cabinet's dedicated tutorial action. It must remain available for
+        // chapter walkthroughs and first-appearance mechanic lessons alike.
+        bool CanSkipCurrentTutorial() => true;
+
+        // Tutorials run once, only where the current level genuinely introduces their mechanic.
         bool WillTutorial()
         {
-            if (editorPreviewMode) return false;
+            // A first-time Level 1 tutorial is a hard entry gate, including direct Editor preview
+            // and a reload carrying restart suppression. Those shortcuts may skip ordinary repeat
+            // presentations, but they must never make the player's first tutorial unreachable.
+            bool chapterOneTutorialPending = levelIndex == 0
+                && !TutorialAlreadySeenForCurrentLevel();
+            if (editorPreviewMode && !chapterOneTutorialPending) return false;
+            if (suppressTutorialForThisLoad && !chapterOneTutorialPending) return false;
             if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
                 Debug.LogError("[Parabox] Real tutorial video references are missing from Game.unity.");
@@ -2025,6 +3125,61 @@ namespace Parabox
         {
             if (!WillTutorial()) return;
             _cine = StartCoroutine(TutorialCinematic(true));
+            // Do not mark this as seen merely because a coroutine was requested. Scene reloads or
+            // an initialization failure could otherwise suppress a tutorial the player never saw.
+            // CompleteTutorialExit records it only after the presentation has visibly finished.
+        }
+
+        void MarkTutorialProgress()
+        {
+            tutorialProgressDeadlineRealtime = Time.realtimeSinceStartup + TutorialProgressTimeout;
+        }
+
+        bool TutorialChoicesReady()
+            => tutorialFx != null
+               && tutorialFx.choiceGroup != null
+               && tutorialFx.choiceGroup.interactable
+               && tutorialFx.tryButton != null
+               && tutorialFx.tryButton.gameObject.activeInHierarchy
+               && tutorialFx.tryButton.interactable;
+
+        void TickTutorialProgressWatchdog()
+        {
+            if (!Tutoring || tutorialExiting || tutorialInteractive || tutorialWatchdogRecovering)
+                return;
+            if (TutorialChoicesReady()) return; // deliberately waiting for the player's decision
+            if (tutorialProgressDeadlineRealtime < 0f)
+            {
+                MarkTutorialProgress();
+                return;
+            }
+            if (Time.realtimeSinceStartup < tutorialProgressDeadlineRealtime) return;
+
+            // A thrown coroutine exception, invalid demo route or missing transition must never
+            // leave the opaque tutorial layer owning the game forever. Fail open to the untouched
+            // campaign puzzle after a generous no-progress window.
+            tutorialWatchdogRecovering = true;
+            tutorialExiting = true;
+            if (_cine != null)
+            {
+                StopCoroutine(_cine);
+                _cine = null;
+            }
+            Debug.LogError("[Parabox] Tutorial stopped making progress; recovering to gameplay.");
+            _cine = StartCoroutine(RecoverStalledTutorial());
+        }
+
+        System.Collections.IEnumerator RecoverStalledTutorial()
+        {
+            countdownArmed = false;
+            tutorialInteractive = false;
+            if (tutorialFx != null)
+            {
+                tutorialFx.HideChoice();
+                tutorialFx.HideSkip();
+            }
+            yield return TutorialExitToPlay();
+            tutorialWatchdogRecovering = false;
         }
 
         // Keep mechanic briefings visually clean. Earlier versions placed large cyan focus rings
@@ -2042,22 +3197,28 @@ namespace Parabox
             mechanicSpotlightRoot = null;
         }
 
-        // The master timeline. At most one solver-proven NEW MECHANIC mini-game runs per chapter,
-        // at the first supported new rule in that chapter. The chapter tutorial remains separate.
-        // Chapter II therefore keeps only its chapter mini-game when it adds no supported new rule.
+        // The master timeline. A solver-proven mini-game runs only for a first-time mechanic.
         // Tutorials use separate models and render off-screen, so the campaign puzzle stays untouched.
         System.Collections.IEnumerator TutorialCinematic(bool resetSequence)
         {
             TutorialPlaybackSerial++;
             cinematic = true;
-            countdownArmed = true;
+            countdownArmed = false;
             tutorialInteractive = false;
+            tutorialWatchdogRecovering = false;
+            MarkTutorialProgress();
             if (resetSequence || tutorialSequence.Count == 0)
             {
                 tutorialSequence.Clear();
                 tutorialSequence.AddRange(CurrentTutorialMechanics());
                 if (tutorialSequence.Count == 0)
-                    tutorialSequence.Add(MechanicCatalog.Id.Navigation);
+                {
+                    countdownArmed = false;
+                    cinematic = false;
+                    tutorialProgressDeadlineRealtime = -1f;
+                    _cine = null;
+                    yield break;
+                }
                 tutorialSequenceIndex = 0;
             }
             tutorialSequenceIndex = Mathf.Clamp(tutorialSequenceIndex, 0,
@@ -2076,8 +3237,7 @@ namespace Parabox
                 tutorialFx.HideMechanicDemoImmediately();
                 tutorialFx.SetTitle("TUTORIAL");
                 tutorialFx.HideMechanicBriefingImmediately();
-                if (CanSkipCurrentTutorial()) tutorialFx.ShowSkip();
-                else tutorialFx.HideSkip();
+                tutorialFx.ShowSkip();
             }
             if (tutorialFx == null || tutorialFx.videoImage == null || tutorialBgCamera == null)
             {
@@ -2092,7 +3252,7 @@ namespace Parabox
 
             // Dedicate the display to the lesson while leaving the gameplay model untouched.
             if (hudReveal != null) hudReveal.StandDown();
-            SetTutorialTimerPresentation(true);
+            SetTutorialTimerPresentation(false);
             SetHud(0f, false);
             if (cameraFollow != null) cameraFollow.enabled = false;
 
@@ -2100,12 +3260,21 @@ namespace Parabox
             tutorialFx.SetVideo(null);
             tutorialFx.PanelIn(TutorialDuration(0.5f));
             yield return WaitU(TutorialDuration(0.6f));
+            MarkTutorialProgress();
 
             yield return RunTutorialPuzzle(tutorialSequence[tutorialSequenceIndex]);
-            // The demonstrated video spends time; the choice card does not punish the player for
-            // reading. Keep the remaining value visible and resume it on the next video or move.
+            MarkTutorialProgress();
+            // Tutorial playback is outside gameplay, so the level clock remains paused here.
             countdownArmed = false;
             yield return tutorialFx.ShowChoice();
+            if (!TutorialChoicesReady())
+            {
+                Debug.LogError("[Parabox] Tutorial choice controls were not ready; recovering to gameplay.");
+                tutorialExiting = true;
+                yield return TutorialExitToPlay();
+                yield break;
+            }
+            tutorialProgressDeadlineRealtime = -1f;
             _cine = null;
         }
 
@@ -2185,6 +3354,7 @@ namespace Parabox
                     Debug.LogError($"[Parabox] Tutorial {prefab.name} route blocked at '{command}'.");
                     yield break;
                 }
+                MarkTutorialProgress();
 
                 SyncTutorialViews(false, direction, before);
                 Vector2 squashDirection = new Vector2(direction.x, direction.y);
@@ -2227,6 +3397,7 @@ namespace Parabox
                 Debug.LogError($"[Parabox] Tutorial {prefab.name} finished its route without winning.");
                 yield break;
             }
+            MarkTutorialProgress();
             yield return WaitU(TutorialDuration(0.9f));
         }
 
@@ -2542,6 +3713,7 @@ namespace Parabox
         {
             countdownArmed = false;
             tutorialInteractive = false;
+            tutorialProgressDeadlineRealtime = -1f;
             if (tutorialFx != null)
             {
                 tutorialFx.HideChoice();
@@ -2578,19 +3750,20 @@ namespace Parabox
 
         void CompleteTutorialExit()
         {
-            // Preserve the tutorial video's time cost. The remaining allowance resumes with the
-            // player's first successful campaign move rather than during the fade/choice card.
+            // The tutorial is finished and the untouched campaign board is now under player
+            // control. Start the gameplay clock immediately.
             countdownArmed = false;
             cinematic = false;                      // gameplay is live from here
             tutorialExiting = false;
             tutorialInteractive = false;
             tutorialSequence.Clear();
             tutorialSequenceIndex = 0;
+            tutorialProgressDeadlineRealtime = -1f;
+            tutorialWatchdogRecovering = false;
             _cine = null;
             FocusRoom(model.player.roomId);         // restore normal all-room visibility after close-up
-            PlayerPrefs.SetInt(TutorialKey, 1);
-            PlayerPrefs.Save();
-            LuxoddGameService.SyncProgress();
+            ArmGameplayCountdown();
+            MarkCurrentTutorialSeen();
         }
 
         public void TutorialWatchAgain()
@@ -2635,11 +3808,10 @@ namespace Parabox
             StartCoroutine(TutorialExitToPlay());
         }
 
-        // Available on chapter walkthroughs. First-appearance NEW MECHANIC videos deliberately
-        // hide and disable Skip, including Purple/RB and keyboard Tab.
+        // Available on every tutorial through the visible purple action and Luxodd Purple/RB.
         public void TutorialSkip()
         {
-            if (!Tutoring || tutorialExiting || !CanSkipCurrentTutorial()) return;
+            if (!Tutoring || tutorialExiting) return;
 
             if (_cine != null)
             {
@@ -2700,6 +3872,8 @@ namespace Parabox
             tutorialInteractive = false;
             tutorialSequence.Clear();
             tutorialSequenceIndex = 0;
+            tutorialProgressDeadlineRealtime = -1f;
+            tutorialWatchdogRecovering = false;
             if (model != null && model.player != null) FocusRoom(model.player.roomId);
             tutorialExiting = false;
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
@@ -2785,11 +3959,9 @@ namespace Parabox
                 gameplayTimerAnchoredPosition = timerRoot.anchoredPosition;
                 gameplayTimerPositionCaptured = true;
             }
-            // The purple Skip control owns the upper-right corner. During tutorials, give the
-            // timer a separate row below it; restore the normal gameplay position on exit.
-            timerRoot.anchoredPosition = visible
-                ? gameplayTimerAnchoredPosition + Vector2.down * TutorialTimerDrop
-                : gameplayTimerAnchoredPosition;
+            // Skip now sits centred below the tutorial video, so the timer keeps its normal
+            // gameplay position at the top-right during both the video and the final choices.
+            timerRoot.anchoredPosition = gameplayTimerAnchoredPosition;
             if (timerCanvas != null)
             {
                 timerCanvas.ignoreParentGroups = visible;
@@ -2892,34 +4064,54 @@ namespace Parabox
             Sfx.Death();
             PlayLoseBoardLight();
 
+            // A failed level earns no new level points, but the player must still see both that
+            // result and the overall score which will be submitted at session end.
+            int levelCount = levelPrefabs != null ? levelPrefabs.Length : 0;
+            const int lostRunLevelScore = 0;
+            endOfRunTotalScore = ScoreSystem.Total(levelCount);
+
             if (loseFx != null)
             {
-                // Keep the board/model intact. LoseFx reveals the leaderboard, holds it for 3.5
-                // seconds, then asks this manager to launch Luxodd's official transaction.
-                loseFx.Play(title, sub, BeginLossTransaction);
+                // Keep the board/model intact. The terminal state, reason and five-second return
+                // countdown remain visible until ownership goes back to the arcade shell.
+                loseFx.SetScoreSummary(lostRunLevelScore, endOfRunTotalScore);
+                loseFx.PlayGameOver(title, ReturnToArcadeAfterGameOver);
                 return;
             }
-            // Old-scene safety: even without LoseFx, never expose local post-loss choices.
+            // Old-scene safety: even without LoseFx, show the same explicit terminal countdown.
             if (timeUpPanel != null) timeUpPanel.SetActive(true);
-            StartCoroutine(BeginLossTransactionAfterDelay(3.5f));
+            StartCoroutine(ReturnToArcadeAfterDelay(title, 5f));
         }
 
-        System.Collections.IEnumerator BeginLossTransactionAfterDelay(float delay)
+        System.Collections.IEnumerator ReturnToArcadeAfterDelay(string reason, float delay)
         {
+            Text legacyTitle = null;
+            Text legacySub = null;
+            if (timeUpPanel != null)
+            {
+                foreach (Text label in timeUpPanel.GetComponentsInChildren<Text>(true))
+                {
+                    if (label.name == "LoseTitle") legacyTitle = label;
+                    else if (label.name == "LoseSub") legacySub = label;
+                }
+            }
+            if (legacyTitle != null) legacyTitle.text = "GAME OVER";
             while (delay > 0f)
             {
+                if (legacySub != null)
+                    legacySub.text = LoseFx.ReturnMessage(reason, Mathf.CeilToInt(delay));
                 delay -= Time.unscaledDeltaTime;
                 yield return null;
             }
-            BeginLossTransaction();
+            ReturnToArcadeAfterGameOver();
         }
 
-        void BeginLossTransaction()
+        void ReturnToArcadeAfterGameOver()
         {
             if (!Lost || lossTransactionRequested) return;
             lossTransactionRequested = true;
-            int totalScore = ScoreSystem.Total(levelPrefabs != null ? levelPrefabs.Length : 0);
-            LuxoddGameService.RequestLossTransaction(levelIndex, totalScore, ContinueCurrentSession);
+            ReportLevelEndOnce();
+            LuxoddGameService.ReturnToSystem();
         }
 
         void PlayLoseBoardLight()
@@ -2983,8 +4175,41 @@ namespace Parabox
             // belongs exclusively to the delayed Luxodd transaction.
             if (Tutoring) return;
             if (Lost) return; // loss recovery belongs exclusively to the Luxodd transaction
+            restartTutorialSuppressionPending = true;
+            restartTutorialSuppressionLevel = levelIndex;
+            PreserveTimerForRestart();
             ReportLevelEndOnce();
             ReloadCurrentLevel();
+        }
+
+        void PreserveTimerForRestart()
+        {
+            restartTimerPending = true;
+            restartTimerLevel = levelIndex;
+            restartTimerRemaining = Mathf.Max(0f, timeLeft);
+            restartTimerCapturedAt = Time.realtimeSinceStartup;
+            restartTimerWasArmed = countdownArmed;
+        }
+
+        void RestoreTimerAfterRestart()
+        {
+            if (!restartTimerPending) return;
+
+            bool sameLevel = restartTimerLevel == levelIndex;
+            float remaining = restartTimerRemaining;
+            float capturedAt = restartTimerCapturedAt;
+            bool wasArmed = restartTimerWasArmed;
+            ResetRestartTimerTransfer(); // consume the transfer even if a different level loaded
+
+            if (!sameLevel) return;
+
+            // Once the player has started the clock, scene loading is part of the same arcade
+            // attempt. Subtract it so repeated restarts cannot manufacture free playing time.
+            if (wasArmed)
+                remaining -= Mathf.Max(0f, Time.realtimeSinceStartup - capturedAt);
+
+            timeLeft = Mathf.Clamp(remaining, 0f, timeLimit);
+            countdownArmed = wasArmed;
         }
 
         // Luxodd Continue keeps this attempt alive. The model, positions, move count and undo
@@ -3009,6 +4234,7 @@ namespace Parabox
             if (loseFx != null) loseFx.DismissImmediate();
             UpdateHud();
             AnimateTimer();
+            ArmGameplayCountdown();
             Sfx.Mechanic();
         }
 
@@ -3022,8 +4248,10 @@ namespace Parabox
         {
             if (levelEndReported) return;
             levelEndReported = true;
-            int totalScore = ScoreSystem.Total(levelPrefabs != null ? levelPrefabs.Length : 0);
-            LuxoddGameService.ReportLevelEnd(levelIndex, totalScore);
+            if (endOfRunTotalScore < 0)
+                endOfRunTotalScore = ScoreSystem.Total(
+                    levelPrefabs != null ? levelPrefabs.Length : 0);
+            LuxoddGameService.ReportLevelEnd(levelIndex, endOfRunTotalScore);
         }
 
         // Menu always returns to the LEVEL BOARD, not the title screen — you came from a level,

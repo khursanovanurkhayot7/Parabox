@@ -466,6 +466,21 @@ namespace Parabox
                 views[e].SetTarget(roomRoots[e.roomId], Cell(room, e.pos), true);
             }
 
+            // Chapters II-III use room-boxes containing live miniature puzzles. Their shell draws a
+            // high-order bezel, so the complete miniature needs one layer above it. Promote the
+            // ROOM ROOT instead of adding a fixed offset to the renderers currently inside it.
+            // The player begins Level 11 in the parent room and is reparented into this room later;
+            // a static per-renderer offset left that newly-entered player behind the promoted floor,
+            // making the player disappear. A SortingGroup on the room automatically includes every
+            // actor that enters or leaves at runtime while preserving body/eye ordering.
+            if (a.chapter >= 1 && a.chapter <= 2)
+            {
+                foreach (var e in model.entities)
+                    if (e.interiorRoomId >= 1
+                        && roomRoots.TryGetValue(e.interiorRoomId, out Transform nestedRoot))
+                        PromoteNestedContents(nestedRoot);
+            }
+
             return worldRoot;
         }
 
@@ -550,6 +565,16 @@ namespace Parabox
             }
         }
 
+        static void PromoteNestedContents(Transform nestedRoot)
+        {
+            if (nestedRoot == null) return;
+            const int previewLayerOffset = 80;
+            var group = nestedRoot.GetComponent<UnityEngine.Rendering.SortingGroup>();
+            if (group == null)
+                group = nestedRoot.gameObject.AddComponent<UnityEngine.Rendering.SortingGroup>();
+            group.sortingOrder = previewLayerOffset;
+        }
+
         // A single rotated bar built from the 1x1 cell sprite. Every chevron, fracture line and
         // gate slat in the mechanic art is made of these, so no new sprite assets are needed.
         static GameObject Bar(Transform parent, Sprite s, Color c, int order,
@@ -588,9 +613,10 @@ namespace Parabox
             return go;
         }
 
-        // A shell button / weight plate. Both use the same recessed-panel construction so they
-        // belong to one mechanic family, while colour and iconography explain who can press them:
-        // green = any actor, amber + cargo mark = real crate weight only.
+        // A shell button / weight plate. The ordinary button uses TWO linked identities:
+        // an amber hatched socket matches the ordinary cargo that should be parked here, while
+        // its thin green outer ring matches the green gate it opens. This removes the old visual
+        // contradiction where an orange crate appeared to belong on a completely green target.
         static void PaintSwitches(Transform root, PRoom room, BoardAssets a,
                                   bool[,] cells, Color tint, bool heavy)
         {
@@ -603,42 +629,69 @@ namespace Parabox
                     sw.transform.SetParent(root, false);
                     sw.transform.localPosition = Cell(room, new Vector2Int(cx, cy));
 
+                    Color socketTint = heavy ? tint : OptionOneBox;
+
                     var bed = new GameObject("Recess");
                     bed.transform.SetParent(sw.transform, false);
                     bed.transform.localScale = Vector3.one * 0.90f;
                     var bsr = bed.AddComponent<SpriteRenderer>();
                     bsr.sprite = a.cellSprite;
-                    bsr.color = Color.Lerp(new Color(0.02f, 0.055f, 0.12f, 1f), tint,
-                        heavy ? 0.24f : 0.12f);
+                    bsr.color = Color.Lerp(new Color(0.02f, 0.055f, 0.12f, 1f), socketTint,
+                        heavy ? 0.24f : 0.16f);
                     bsr.sortingOrder = OrderFloorCell + 1;
 
                     if (a.ringSprite != null)
                     {
                         var halo = new GameObject("SoftHalo");
                         halo.transform.SetParent(sw.transform, false);
-                        halo.transform.localScale = Vector3.one * (heavy ? 0.86f : 0.82f);
+                        halo.transform.localScale = Vector3.one * (heavy ? 0.86f : 0.84f);
                         var hsr = halo.AddComponent<SpriteRenderer>();
                         hsr.sprite = a.ringSprite;
                         hsr.color = new Color(tint.r, tint.g, tint.b, heavy ? 0.20f : 0.16f);
                         hsr.sortingOrder = OrderFloorCell + 2;
 
-                        var ring = new GameObject("Ring");
+                        var ring = new GameObject(heavy ? "WeightRing" : "GateLinkRing");
                         ring.transform.SetParent(sw.transform, false);
-                        ring.transform.localScale = Vector3.one * (heavy ? 0.76f : 0.68f);
+                        ring.transform.localScale = Vector3.one * (heavy ? 0.76f : 0.78f);
                         var rsr = ring.AddComponent<SpriteRenderer>();
                         rsr.sprite = a.ringSprite;
                         rsr.color = Lighten(tint, heavy ? 0.08f : 0.04f);
                         rsr.sortingOrder = OrderFloorCell + 3;
+
+                        if (!heavy)
+                        {
+                            var cargoRing = new GameObject("CargoMatchRing");
+                            cargoRing.transform.SetParent(sw.transform, false);
+                            cargoRing.transform.localScale = Vector3.one * 0.61f;
+                            var cargoRingRenderer = cargoRing.AddComponent<SpriteRenderer>();
+                            cargoRingRenderer.sprite = a.ringSprite;
+                            cargoRingRenderer.color = Lighten(socketTint, 0.12f);
+                            cargoRingRenderer.sortingOrder = OrderFloorCell + 4;
+                        }
                     }
 
                     var core = new GameObject("Core");
                     core.transform.SetParent(sw.transform, false);
                     core.transform.localPosition = heavy ? new Vector3(0f, 0.10f, 0f) : Vector3.zero;
-                    core.transform.localScale = Vector3.one * (heavy ? 0.36f : 0.30f);
+                    core.transform.localScale = Vector3.one * (heavy ? 0.36f : 0.40f);
                     var csr2 = core.AddComponent<SpriteRenderer>();
                     csr2.sprite = a.cellSprite;
-                    csr2.color = heavy ? Darken(tint, 0.20f) : Lighten(tint, 0.10f);
-                    csr2.sortingOrder = OrderFloorCell + 4;
+                    csr2.color = heavy ? Darken(tint, 0.20f) : Darken(socketTint, 0.45f);
+                    csr2.sortingOrder = OrderFloorCell + 5;
+
+                    if (!heavy)
+                    {
+                        // Same three diagonal hatch marks as ordinary cargo: shape and colour now
+                        // teach the pairing even before the Level 5 tutorial text is read.
+                        Color hatch = Lighten(socketTint, 0.24f);
+                        hatch.a = 0.92f;
+                        Bar(sw.transform, a.cellSprite, hatch, OrderFloorCell + 6,
+                            new Vector2(-0.12f, 0.12f), 0.30f, 0.038f, 45f);
+                        Bar(sw.transform, a.cellSprite, hatch, OrderFloorCell + 6,
+                            Vector2.zero, 0.30f, 0.038f, 45f);
+                        Bar(sw.transform, a.cellSprite, hatch, OrderFloorCell + 6,
+                            new Vector2(0.12f, -0.12f), 0.30f, 0.038f, 45f);
+                    }
 
                     if (heavy)   // a cargo face plus down arrow = "place a crate here"
                     {
