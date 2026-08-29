@@ -295,7 +295,13 @@ namespace Parabox.EditorTools
             if (skipRect == null || skipRect.anchorMin != centre || skipRect.anchorMax != centre
                 || Mathf.Abs(skipRect.anchoredPosition.x) > 0.01f
                 || skipRect.anchoredPosition.y > -350f)
-                throw new InvalidDataException("Tutorial Skip must be centred below the walkthrough video.");
+                throw new InvalidDataException("Tutorial Skip must stay centred below the card.");
+            Text skipNumber = FindChildText(tutorial.skipButton.transform, "ButtonNumber");
+            if (skipNumber == null || skipNumber.text != "6")
+                throw new InvalidDataException("Purple tutorial Skip must display cabinet button number 6.");
+            if (tutorial.skipCountdownText == null
+                || tutorial.skipCountdownText.text != "AUTO-CONTINUE IN 10")
+                throw new InvalidDataException("Purple tutorial Skip must have a 10-second auto-continue timer.");
             if (tutorial.skipButton.gameObject.activeSelf)
                 throw new InvalidDataException("Tutorial Skip must start hidden outside a walkthrough.");
             if (tutorial.panelGroup == null || tutorial.panelRT == null
@@ -486,26 +492,9 @@ namespace Parabox.EditorTools
                 group.blocksRaycasts = true;
                 if (button.image != null) button.image.raycastTarget = true;
 
-                // UIHoverScale highlights are siblings, so they stay visible even though the
-                // duplicate button artwork is transparent. This gives clear joystick focus.
-                UIHoverScale hover = button.GetComponent<UIHoverScale>();
-                if (hover != null && hover.highlight != null)
-                {
-                    RectTransform highlight = hover.highlight.transform as RectTransform;
-                    if (highlight != null)
-                    {
-                        highlight.anchoredPosition = position;
-                        highlight.sizeDelta = new Vector2(104f, 86f);
-                    }
-
-                    Image highlightImage = hover.highlight.GetComponent<Image>();
-                    if (highlightImage != null)
-                    {
-                        int chapter = Mathf.Clamp(i / MainMenuUI.PerCategory, 0,
-                            SpiralChapterColors.Length - 1);
-                        highlightImage.color = WithAlpha(SpiralChapterColors[chapter], 0.44f);
-                    }
-                }
+                int chapter = Mathf.Clamp(i / MainMenuUI.PerCategory, 0,
+                    SpiralChapterColors.Length - 1);
+                EnsureLevelFocusSelector(button, SpiralChapterColors[chapter], 116f);
             }
 
             if (ui.pathDots != null)
@@ -682,19 +671,7 @@ namespace Parabox.EditorTools
                     perfect.localScale = Vector3.one * Mathf.Clamp(size / 64f, 0.72f, 1f);
                 }
 
-                UIHoverScale hover = button.GetComponent<UIHoverScale>();
-                if (hover != null)
-                {
-                    hover.hover = 1.09f;
-                    if (hover.highlight != null)
-                    {
-                        RectTransform hoverRect = hover.highlight.transform as RectTransform;
-                        hoverRect.anchoredPosition = position;
-                        hoverRect.sizeDelta = Vector2.one * (size + 56f);
-                        Image hoverImage = hover.highlight.GetComponent<Image>();
-                        if (hoverImage != null) hoverImage.color = WithAlpha(accent, 0.46f);
-                    }
-                }
+                EnsureLevelFocusSelector(button, accent, Mathf.Max(116f, size + 36f));
 
                 if (i == levelCount - 1)
                 {
@@ -1081,7 +1058,11 @@ namespace Parabox.EditorTools
             HideButtonAndDecorations(bar, gm.muteButton);
 
             StyleButton(gm.nextButton, BlackTop, BlackBottom, LightLabel, "NEXT LEVEL");
-            StyleButton(gm.menuButton, YellowTop, YellowBottom, DarkLabel, "LEVEL SELECT");
+            if (gm.menuButton != null)
+            {
+                gm.menuButton.interactable = false;
+                gm.menuButton.gameObject.SetActive(false);
+            }
             HideLegacyLossAction(gm.retryButton);
             HideLegacyLossAction(gm.backToLevelsButton);
 
@@ -1242,18 +1223,7 @@ namespace Parabox.EditorTools
             if (skip != null)
             {
                 tutorial.skipButton = skip;
-                RectTransform skipRect = skip.transform as RectTransform;
-                if (skipRect != null)
-                {
-                    skipRect.SetParent(tutorialRoot, false);
-                    skipRect.anchorMin = skipRect.anchorMax = new Vector2(0.5f, 0.5f);
-                    skipRect.pivot = new Vector2(0.5f, 0.5f);
-                    skipRect.anchoredPosition = new Vector2(0f, -410f);
-                    skipRect.sizeDelta = new Vector2(310f, 72f);
-                }
-                StyleButton(skip, PurpleTop, PurpleBottom, LightLabel, "SKIP TUTORIAL");
-                Text skipLabel = ButtonLabel(skip);
-                if (skipLabel != null) skipLabel.fontSize = 20;
+                tutorial.skipCountdownText = ConfigureNumberedTutorialSkip(skip, tutorialRoot);
                 Navigation skipNav = skip.navigation;
                 skipNav.mode = Navigation.Mode.None;
                 skip.navigation = skipNav;
@@ -1318,7 +1288,7 @@ namespace Parabox.EditorTools
             lesson.horizontalOverflow = HorizontalWrapMode.Wrap;
             lesson.verticalOverflow = VerticalWrapMode.Truncate;
 
-            Text hint = CreateText(panel.transform, "SkipHint", font, "PURPLE / RB  •  SKIP", 16,
+            Text hint = CreateText(panel.transform, "SkipHint", font, "PURPLE 6 / RB  •  SKIP", 16,
                 new Vector2(390f, -63f), new Vector2(190f, 24f));
             hint.color = WithAlpha(PurpleTop, 0.96f);
             hint.alignment = TextAnchor.MiddleRight;
@@ -1607,6 +1577,128 @@ namespace Parabox.EditorTools
                 if (text.name == "Label" || text.name == "Lbl" || text.name == "MuteLbl") return text;
             }
             return fallback;
+        }
+
+        static void EnsureLevelFocusSelector(Button button, Color accent, float size)
+        {
+            if (button == null) return;
+            Transform existing = button.transform.Find("LevelFocusSelector");
+            Image ring;
+            if (existing == null)
+            {
+                ring = CreateImage(button.transform, "LevelFocusSelector", LoadSprite("CellRing.png"),
+                    Color.white, Vector2.zero, Vector2.one * size);
+            }
+            else ring = existing.GetComponent<Image>();
+            if (ring == null) ring = existing.gameObject.AddComponent<Image>();
+
+            RectTransform selector = ring.rectTransform;
+            selector.anchorMin = selector.anchorMax = new Vector2(0.5f, 0.5f);
+            selector.pivot = new Vector2(0.5f, 0.5f);
+            selector.anchoredPosition = Vector2.zero;
+            selector.sizeDelta = Vector2.one * size;
+            selector.localScale = Vector3.one;
+            selector.localRotation = Quaternion.identity;
+            ring.sprite = LoadSprite("CellRing.png");
+            ring.type = Image.Type.Sliced;
+            ring.color = Color.Lerp(accent, Color.white, 0.72f);
+            ring.raycastTarget = false;
+
+            Outline outline = ring.GetComponent<Outline>();
+            if (outline == null) outline = ring.gameObject.AddComponent<Outline>();
+            outline.effectColor = WithAlpha(accent, 0.95f);
+            outline.effectDistance = new Vector2(2.5f, -2.5f);
+            Shadow shadow = null;
+            foreach (Shadow candidate in ring.GetComponents<Shadow>())
+                if (candidate.GetType() == typeof(Shadow)) { shadow = candidate; break; }
+            if (shadow == null) shadow = ring.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = WithAlpha(accent, 0.80f);
+            shadow.effectDistance = new Vector2(0f, -4f);
+            UIPulse pulse = ring.GetComponent<UIPulse>();
+            if (pulse == null) pulse = ring.gameObject.AddComponent<UIPulse>();
+            pulse.amplitude = 0.06f;
+            pulse.speed = 3.5f;
+
+            DestroyNamed(selector, "SelectorPointer");
+
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (hover == null) hover = button.gameObject.AddComponent<UIHoverScale>();
+            if (hover.highlight != null && hover.highlight != ring.gameObject)
+                hover.highlight.SetActive(false);
+            hover.highlight = ring.gameObject;
+            hover.hover = 1.16f;
+            hover.press = 0.90f;
+            selector.SetAsLastSibling();
+            ring.gameObject.SetActive(false);
+        }
+
+        static Text ConfigureNumberedTutorialSkip(Button skip, Transform tutorialRoot)
+        {
+            if (skip == null || tutorialRoot == null) return null;
+
+            RectTransform rect = skip.transform as RectTransform;
+            if (rect == null) return null;
+            rect.SetParent(tutorialRoot, false);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(0f, -410f);
+            rect.sizeDelta = new Vector2(310f, 72f);
+
+            foreach (RectTransform child in skip.GetComponentsInChildren<RectTransform>(true))
+            {
+                if (child == rect) continue;
+                if (child.name == "Face" || child.name == "Lip")
+                    child.sizeDelta = rect.sizeDelta;
+                else if (child.name == "Highlight")
+                    child.sizeDelta = rect.sizeDelta + new Vector2(130f, 130f);
+                else if (child.name == "Gloss")
+                    child.sizeDelta = rect.sizeDelta - new Vector2(6f, 6f);
+            }
+
+            StyleButton(skip, PurpleTop, PurpleBottom, LightLabel, "SKIP TUTORIAL");
+            Text label = ButtonLabel(skip);
+            if (label != null)
+            {
+                label.fontSize = 20;
+                label.alignment = TextAnchor.MiddleCenter;
+                label.rectTransform.anchorMin = Vector2.zero;
+                label.rectTransform.anchorMax = Vector2.one;
+                label.rectTransform.offsetMin = new Vector2(70f, 0f);
+                label.rectTransform.offsetMax = new Vector2(-12f, 0f);
+            }
+
+            DestroyNamed(skip.transform, "ButtonNumberBadge");
+            Image badge = CreateImage(skip.transform, "ButtonNumberBadge", LoadSprite("Disc.png"),
+                PurpleBottom, Vector2.zero, new Vector2(48f, 48f));
+            badge.rectTransform.anchorMin = badge.rectTransform.anchorMax = new Vector2(0f, 0.5f);
+            badge.rectTransform.pivot = new Vector2(0f, 0.5f);
+            badge.rectTransform.anchoredPosition = new Vector2(16f, 0f);
+            var badgeOutline = badge.gameObject.AddComponent<Outline>();
+            badgeOutline.effectColor = WithAlpha(Color.Lerp(PurpleTop, Color.white, 0.55f), 0.95f);
+            badgeOutline.effectDistance = new Vector2(2f, -2f);
+
+            Text number = CreateText(badge.transform, "ButtonNumber", ButtonFont(skip), "6", 26,
+                Vector2.zero, new Vector2(48f, 48f));
+            number.fontStyle = FontStyle.Bold;
+            number.rectTransform.anchorMin = Vector2.zero;
+            number.rectTransform.anchorMax = Vector2.one;
+            number.rectTransform.offsetMin = Vector2.zero;
+            number.rectTransform.offsetMax = Vector2.zero;
+            badge.rectTransform.SetAsLastSibling();
+            if (label != null) label.rectTransform.SetAsLastSibling();
+
+            DestroyNamed(skip.transform, "SkipCountdown");
+            Text countdown = CreateText(skip.transform, "SkipCountdown", ButtonFont(skip),
+                "AUTO-CONTINUE IN 10", 18, Vector2.zero, new Vector2(310f, 30f));
+            countdown.color = new Color(0.82f, 0.68f, 1f, 1f);
+            countdown.rectTransform.anchorMin = countdown.rectTransform.anchorMax = new Vector2(0.5f, 1f);
+            countdown.rectTransform.pivot = new Vector2(0.5f, 0f);
+            countdown.rectTransform.anchoredPosition = new Vector2(0f, 10f);
+            var countdownOutline = countdown.gameObject.AddComponent<Outline>();
+            countdownOutline.effectColor = new Color(0.01f, 0.02f, 0.06f, 0.90f);
+            countdownOutline.effectDistance = new Vector2(1.5f, -1.5f);
+            countdown.gameObject.SetActive(false);
+            return countdown;
         }
 
         static Text FindChildText(Transform parent, string name)

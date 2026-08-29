@@ -1089,13 +1089,21 @@ namespace Parabox.EditorTools
         {
             var tiles = LoadLevelTiles();
             if (tiles == null) throw new System.InvalidOperationException("Parabox level tiles are missing.");
-            var defs = Levels();
+            // Use the focused Chapter-I source directly. Pulling these two boards through the
+            // full 50-level ordering made this repair harder to reason about and could conceal a
+            // stale duplicate behind curriculum remapping.
+            var defs = ChapterOneFoundations();
+            ValidateChapterOneRebuildDefinitions(defs);
             for (int i = 4; i <= 5; i++)
+            {
+                RemoveLeakedLevelAuthoringRoots(i + 1);
                 BuildLevelPrefab(i, defs[i], tiles);
+            }
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("Parabox: regenerated the harder, progressive Levels 5 and 6 without entering Play Mode.");
+            Debug.Log("Parabox: rebuilt distinct Levels 5 and 6. Level 6 now has a separate "
+                + "horizontal-gate route and a longer validated solution.");
         }
 
         // Focused authoring-only correction for the two green button/gate puzzles. Their player
@@ -4078,22 +4086,24 @@ namespace Parabox.EditorTools
                     solution = "URRRUR"
                 },
 
-                // L06 — repeat the same hold-and-cross action with a slightly longer, still open
-                // route. Repetition comes before adding another cargo objective.
+                // L06 — the same button/gate rule now appears in a visibly different orientation.
+                // The cargo is pushed sideways onto the button, then the diver must reverse,
+                // cross a horizontal divider and turn again toward the exit. This adds one real
+                // route decision over L05 instead of merely extending the same corridor.
                 new LevelDef
                 {
                     name = "Gate Delivery",
                     rooms = new[] { new[]
                     {
-                        "##########",
-                        "#.B.#..p.#",
-                        "#.b.G....#",
-                        "#.P.#....#",
-                        "#...#....#",
-                        "##########"
+                        "########",
+                        "#...p..#",
+                        "#G######",
+                        "#.bB...#",
+                        "#P.....#",
+                        "########"
                     } },
-                    par = 7,
-                    solution = "URRRRRU"
+                    par = 8,
+                    solution = "URLUURRR"
                 },
 
                 // L07 — rotate the whole relationship: a horizontal divider separates the board.
@@ -7716,12 +7726,12 @@ namespace Parabox.EditorTools
             briefText.resizeTextMaxSize = 27;
             briefText.horizontalOverflow = HorizontalWrapMode.Wrap;
             briefText.verticalOverflow = VerticalWrapMode.Truncate;
-            var briefHint = MakeText(briefRT, "SkipHint", "PURPLE / RB  •  SKIP", 16,
+            var briefHint = MakeText(briefRT, "SkipHint", "PURPLE 6 / RB  •  SKIP", 16,
                 Hex("B76CFF"), new Vector2(390, -63), new Vector2(190, 24), FontStyle.Bold);
             briefHint.alignment = TextAnchor.MiddleRight;
 
-            // Repeat/Try live below the card after the video. Skip occupies that same centred area
-            // while the video is running, then disappears before the two final actions appear.
+            // Repeat/Try live below the card after the video. Purple button 6 stays in the
+            // centred area below the card throughout the tutorial so it never covers the lesson.
             var choiceRT = MakeRect(cine, "CineChoice", new Vector2(0, -410), new Vector2(900, 120),
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
             var choiceGroup = choiceRT.gameObject.AddComponent<CanvasGroup>();
@@ -7735,6 +7745,28 @@ namespace Parabox.EditorTools
             skipRT.anchorMin = skipRT.anchorMax = new Vector2(0.5f, 0.5f);
             skipRT.pivot = new Vector2(0.5f, 0.5f);
             skipRT.anchoredPosition = new Vector2(0f, -410f);
+            Text skipLabel = null;
+            foreach (Text candidate in skipBtn.GetComponentsInChildren<Text>(true))
+                if (candidate.name == "Label") { skipLabel = candidate; break; }
+            if (skipLabel != null)
+            {
+                skipLabel.rectTransform.anchoredPosition = new Vector2(30f, 0f);
+                skipLabel.rectTransform.sizeDelta = new Vector2(220f, 72f);
+            }
+            Image numberBadge = UIImage(skipRT, "ButtonNumberBadge", spr.disc, Hex("5A2297"),
+                new Vector2(-116f, 0f), new Vector2(48f, 48f));
+            var numberOutline = numberBadge.gameObject.AddComponent<Outline>();
+            numberOutline.effectColor = WithAlpha(Hex("E5C7FF"), 0.95f);
+            numberOutline.effectDistance = new Vector2(2f, -2f);
+            var buttonNumber = MakeText(numberBadge.transform, "ButtonNumber", "6", 26, Color.white,
+                Vector2.zero, new Vector2(48f, 48f), FontStyle.Bold);
+            buttonNumber.alignment = TextAnchor.MiddleCenter;
+            var skipCountdown = MakeText(skipRT, "SkipCountdown", "AUTO-CONTINUE IN 10", 18,
+                Hex("D1ADFF"), new Vector2(0f, 52f), new Vector2(310f, 30f), FontStyle.Bold);
+            var countdownOutline = skipCountdown.gameObject.AddComponent<Outline>();
+            countdownOutline.effectColor = new Color(0.01f, 0.02f, 0.06f, 0.90f);
+            countdownOutline.effectDistance = new Vector2(1.5f, -1.5f);
+            skipCountdown.gameObject.SetActive(false);
             skipBtn.navigation = new Navigation { mode = Navigation.Mode.None };
             skipBtn.gameObject.SetActive(false);
 
@@ -7754,6 +7786,7 @@ namespace Parabox.EditorTools
             tutFx.againButton = againBtn;
             tutFx.tryButton = tryBtn;
             tutFx.skipButton = skipBtn;
+            tutFx.skipCountdownText = skipCountdown;
 
             // win panel — premium "Level Complete" celebration
             var panelGO = new GameObject("WinPanel", typeof(RectTransform));
@@ -7811,13 +7844,17 @@ namespace Parabox.EditorTools
             var winTitleOutline = winTitle.gameObject.AddComponent<Outline>();
             winTitleOutline.effectColor = new Color(0f, 0.14f, 0.20f, 0.9f); winTitleOutline.effectDistance = new Vector2(2f, -2f);
 
-            var winStats = MakeText(windowRT, "WinStats", "Solved in 0 moves", 24, Hex("C4ECF4"),
+            var winStats = MakeText(windowRT, "WinStats", "TOTAL SCORE  0 / 0", 24, Hex("C4ECF4"),
                 new Vector2(0, 2f), new Vector2(560, 40));
 
-            // NEXT LEVEL — bright primary button (glowing); MENU — secondary
-            MenuButtonGlow(windowRT, new Vector2(-134, -108), new Vector2(252, 76), Hex("46D8C0"), spr);
-            var nextBtn = MakeButton(windowRT, "NextButton", "NEXT LEVEL", new Vector2(-134, -108), new Vector2(252, 76), 26, Hex("4CE2C8"), Hex("2AA890"));
+            // One centred primary action. The result-board border supplies the automatic-next
+            // countdown; the retired local Levels action remains only as an inactive compatibility
+            // reference for older scene data.
+            MenuButtonGlow(windowRT, new Vector2(0, -108), new Vector2(310, 76), Hex("46D8C0"), spr);
+            var nextBtn = MakeButton(windowRT, "NextButton", "NEXT LEVEL", new Vector2(0, -108), new Vector2(310, 76), 26, Hex("4CE2C8"), Hex("2AA890"));
             var menuBtn = MakeButton(windowRT, "MenuButton", "LEVELS", new Vector2(140, -108), new Vector2(206, 68), 24, ButtonCol);
+            menuBtn.interactable = false;
+            menuBtn.gameObject.SetActive(false);
 
             panelGO.SetActive(false);
 
@@ -8337,9 +8374,6 @@ namespace Parabox.EditorTools
         {
             var s = new Vector2(size, size);
 
-            var hl = UIImage(glowLayer, name + "HL", spr.glow, WithAlpha(th.frame, 0.5f), pos, s + new Vector2(64f, 64f));
-            hl.gameObject.SetActive(false);
-
             var rt = MakeRect(parent, name, pos, s);
             fill = rt.gameObject.AddComponent<Image>();
             fill.sprite = spr.cell;
@@ -8358,7 +8392,20 @@ namespace Parabox.EditorTools
             btn.colors = colors;
 
             var hover = rt.gameObject.AddComponent<UIHoverScale>();
-            hover.hover = 1.12f;
+            hover.hover = 1.16f;
+            hover.press = 0.90f;
+            var hl = UIImage(rt, "LevelFocusSelector", spr.cellRing,
+                Color.Lerp(th.frame, Color.white, 0.72f), Vector2.zero, new Vector2(116f, 116f));
+            var selectorOutline = hl.gameObject.AddComponent<Outline>();
+            selectorOutline.effectColor = WithAlpha(th.frame, 0.95f);
+            selectorOutline.effectDistance = new Vector2(2.5f, -2.5f);
+            var selectorShadow = hl.gameObject.AddComponent<Shadow>();
+            selectorShadow.effectColor = WithAlpha(th.frame, 0.80f);
+            selectorShadow.effectDistance = new Vector2(0f, -4f);
+            var selectorPulse = hl.gameObject.AddComponent<UIPulse>();
+            selectorPulse.amplitude = 0.06f;
+            selectorPulse.speed = 3.5f;
+            hl.gameObject.SetActive(false);
             hover.highlight = hl.gameObject;
 
             border = AddRing(rt, "Border", s, spr.cellRing, WithAlpha(th.frame, 0.55f)).GetComponent<Image>();
@@ -8385,6 +8432,8 @@ namespace Parabox.EditorTools
             UIImage(lk, "LockIcon", spr.lockIcon, Lighten(th.gutter, 0.45f), Vector2.zero, new Vector2(28f, 28f));
             lockGO = lk.gameObject;
             lockGO.SetActive(false);
+
+            hl.rectTransform.SetAsLastSibling();
 
             return btn;
         }

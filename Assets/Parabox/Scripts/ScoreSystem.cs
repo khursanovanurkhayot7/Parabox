@@ -9,7 +9,12 @@ namespace Parabox
         const string ScorePrefix = "Parabox.Score.";
         const string ScoreVersionKey = "Parabox.Score.Version";
         // Increment whenever the stored score scale changes so existing totals migrate once.
-        public const int CurrentVersion = 3;
+        public const int CurrentVersion = 5;
+        public const int StartingScore = 100;
+        public const int ScoreIncreasePerLevel = 20;
+        public const int TimeGraceSeconds = 10;
+        public const int TimePenaltyPerSecond = 3;
+        public const int MovePenaltyPerExtraMove = 10;
 
         public struct Breakdown
         {
@@ -18,6 +23,11 @@ namespace Parabox
             public int movePoints;
             public int speedPoints;
             public int noUndoPoints;
+            public int timePenalty;
+            public int movePenalty;
+            public int targetMoves;
+            public int usedMoves;
+            public int elapsedSeconds;
             public int runScore;
         }
 
@@ -32,51 +42,51 @@ namespace Parabox
 
         public static string ScoreKey(int level) => ScorePrefix + level;
 
-        // Level 1 = 100, Level 2 = 120, and every following level is worth twenty more.
-        public static int MaxPoints(int level) => 100 + Mathf.Max(0, level) * 20;
+        // Harder levels carry a larger visible score budget: Level 1 starts at 100 and every
+        // following level adds 20. The premium HUD and the awarded result share this value.
+        public static int MaxPoints(int level)
+            => StartingScore + Mathf.Max(0, level) * ScoreIncreasePerLevel;
 
         public static int TotalMaximum(int levelCount)
         {
             int count = Mathf.Max(0, levelCount);
-            long total = (long)count * 100L + (long)count * (count - 1) * 10L;
+            long total = (long)count * StartingScore
+                + (long)count * (count - 1) / 2L * ScoreIncreasePerLevel;
             return total >= int.MaxValue ? int.MaxValue : (int)total;
         }
 
-        // Every point has a visible reason: 40% completion, 30% move efficiency, 20% speed and
-        // 10% for a clean solve without Undo.
+        // The live HUD and the final award call this same method, so the player never sees one
+        // score during play and a different score on the win/leaderboard flow.
         public static Breakdown Calculate(int level, int par, int moves, int moveLimit,
             float secondsLeft, float timeLimit, int undoCount)
         {
             int maximum = MaxPoints(level);
-            int completionPool = Mathf.RoundToInt(maximum * 0.40f);
-            int movePool = Mathf.RoundToInt(maximum * 0.30f);
-            int speedPool = Mathf.RoundToInt(maximum * 0.20f);
-            int noUndoPool = maximum - completionPool - movePool - speedPool;
+            int targetMoves = par > 0 ? par : Mathf.Max(1, moveLimit);
+            // An undone step was still played. Including one spent move per Undo prevents score
+            // farming while keeping the visible current board move counter unchanged.
+            int usedMoves = Mathf.Max(0, moves) + Mathf.Max(0, undoCount);
+            int extraMoves = Mathf.Max(0, usedMoves - targetMoves);
+            int movePenalty = extraMoves * MovePenaltyPerExtraMove;
 
-            float moveEfficiency;
-            if (par > 0 && moveLimit > par)
-                moveEfficiency = 1f - Mathf.Clamp01((moves - par) / (float)(moveLimit - par));
-            else if (par > 0)
-                moveEfficiency = moves <= par ? 1f : 0f;
-            else
-                moveEfficiency = Mathf.Clamp01((moveLimit - moves) / (float)Mathf.Max(1, moveLimit));
-
-            float speedEfficiency = timeLimit > 0f
-                ? Mathf.Clamp01(secondsLeft / timeLimit)
-                : 0f;
-            int movePoints = Mathf.RoundToInt(movePool * moveEfficiency);
-            int speedPoints = Mathf.RoundToInt(speedPool * speedEfficiency);
-            int noUndoPoints = undoCount <= 0 ? noUndoPool : 0;
-            int score = Mathf.Clamp(completionPool + movePoints + speedPoints + noUndoPoints,
-                0, maximum);
+            float elapsed = timeLimit > 0f
+                ? Mathf.Max(0f, timeLimit - Mathf.Max(0f, secondsLeft)) : 0f;
+            int elapsedSeconds = Mathf.Max(0, Mathf.FloorToInt(elapsed));
+            int chargedSeconds = Mathf.Max(0, elapsedSeconds - TimeGraceSeconds);
+            int timePenalty = chargedSeconds * TimePenaltyPerSecond;
+            int score = Mathf.Clamp(maximum - timePenalty - movePenalty, 0, maximum);
 
             return new Breakdown
             {
                 maxScore = maximum,
-                completionPoints = completionPool,
-                movePoints = movePoints,
-                speedPoints = speedPoints,
-                noUndoPoints = noUndoPoints,
+                completionPoints = maximum,
+                movePoints = -movePenalty,
+                speedPoints = -timePenalty,
+                noUndoPoints = 0,
+                timePenalty = timePenalty,
+                movePenalty = movePenalty,
+                targetMoves = targetMoves,
+                usedMoves = usedMoves,
+                elapsedSeconds = elapsedSeconds,
                 runScore = score
             };
         }
@@ -133,6 +143,15 @@ namespace Parabox
         public static int ConvertToCurrentVersion(int score, int sourceVersion, int level = -1)
         {
             score = Mathf.Max(0, score);
+            if (sourceVersion == 4 && level >= 0)
+            {
+                // Version 4 compressed every level to a 100-point scale. Restore the same earned
+                // percentage on the level-specific scale instead of gifting or deleting progress.
+                return Mathf.Clamp(Mathf.RoundToInt(score / (float)StartingScore
+                    * MaxPoints(level)), 0, MaxPoints(level));
+            }
+            if (sourceVersion == 3 && level >= 0)
+                return Mathf.Clamp(score, 0, MaxPoints(level));
             if (sourceVersion < CurrentVersion)
                 return score > 0 && level >= 0 ? MaxPoints(level) : score;
             return level >= 0 ? Mathf.Min(score, MaxPoints(level)) : score;

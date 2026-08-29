@@ -81,9 +81,9 @@ namespace Parabox
         const int CampaignLevelCount = 50;
         static string BestKey(int level) => "Parabox.Best." + level;
 
-        // An arcade launch is a new player's run. Progress remains available while scenes change
-        // inside that run, but stopping/reopening the game must never inherit the previous player's
-        // unlocked route, best moves or score. Level 1 is the only initially available level.
+        // Keep the local cache across ordinary website reloads. LuxoddGameService replaces this
+        // cache with the authenticated account's save after connection, and clears it immediately
+        // when the cabinet session belongs to a different player.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         static void BeginFreshCampaignSession()
         {
@@ -127,7 +127,7 @@ namespace Parabox
         bool transitioning;
 
         // One hard auto-start countdown is shared by the title and level-select map. Navigation
-        // never restarts it, and expiry always begins a fresh run from Level 1.
+        // never restarts it, and expiry resumes the player's saved campaign position.
         const float MenuAutoStartSeconds = 30f;
         float _autoStartRemaining = MenuAutoStartSeconds;
         [SerializeField, HideInInspector] RectTransform _autoStartRoot;
@@ -279,7 +279,10 @@ namespace Parabox
             }
             if (levelButtons != null)
                 for (int i = 0; i < levelButtons.Length; i++)
+                {
                     EnsureArtworkHitTarget(levelButtons[i]);
+                    WireLevelFocusSelector(levelButtons[i], i);
+                }
 
             playButton.onClick.AddListener(BeginStart);
             if (quitButton != null) quitButton.onClick.AddListener(Quit);
@@ -398,6 +401,35 @@ namespace Parabox
             Graphic[] graphics = button.GetComponentsInChildren<Graphic>(true);
             for (int i = 0; i < graphics.Length; i++)
                 if (graphics[i] != null) graphics[i].raycastTarget = graphics[i] == hitTarget;
+        }
+
+        static void WireLevelFocusSelector(Button button, int levelIndex)
+        {
+            if (button == null) return;
+            Transform selector = button.transform.Find("LevelFocusSelector");
+            if (selector == null)
+            {
+                Debug.LogError("[Parabox] Visible selector is not prebuilt on Level "
+                    + (levelIndex + 1) + ". Run Tools/Parabox/Install Level Selection Selector.");
+                return;
+            }
+
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (hover == null)
+            {
+                Debug.LogError("[Parabox] UIHoverScale is missing on Level " + (levelIndex + 1) + ".");
+                return;
+            }
+            if (hover.highlight != null && hover.highlight != selector.gameObject)
+                hover.highlight.SetActive(false);
+            hover.highlight = selector.gameObject;
+            hover.hover = 1.16f;
+            selector.SetAsLastSibling();
+            selector.gameObject.SetActive(false);
+
+            Image ring = selector.GetComponent<Image>();
+            if (ring != null)
+                ring.color = WithA(Lighten(ApprovedChapterAccent(levelIndex), 0.72f), 1f);
         }
 
         static void EnsureHomeActionButton(Button button, string label, bool isPlay)
@@ -696,8 +728,8 @@ namespace Parabox
             if (levelButtons == null || levelButtons.Length == 0) return;
             RefreshStates();
             RefreshGates();
-            // Cloud progress may unlock later levels, but the title-screen game entry remains a
-            // new run from Level 1. Explicit level-map selections are handled separately.
+            // Cloud progress can arrive after the menu has already rendered. Refresh the map and
+            // align the title entry with the restored level so PLAY continues the same campaign.
             int desiredLevel = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel),
                 0, levelButtons.Length - 1);
             if (useStaticHomeArtwork)
@@ -1116,7 +1148,7 @@ namespace Parabox
             _autoStartTriggered = true;
             transitioning = true;
             _autoStartRoot.gameObject.SetActive(false);
-            StartLevel(NewGameLevel);
+            StartLevel(ResumeLevel());
         }
 
         void PaintAutoStartTimer(int seconds)
@@ -1172,6 +1204,23 @@ namespace Parabox
             for (int i = 0; i < levelButtons.Length; i++)
                 if (!Beaten(i)) return i;
             return levelButtons.Length;
+        }
+
+        int ResumeLevel()
+        {
+            if (levelButtons == null || levelButtons.Length == 0) return NewGameLevel;
+
+            int saved = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, NewGameLevel),
+                0, levelButtons.Length - 1);
+            if (!Beaten(saved)) return saved;
+
+            // If the saved level was completed just before the player left, continue at the next
+            // unfinished puzzle instead of replaying the result they already earned.
+            for (int i = saved + 1; i < levelButtons.Length; i++)
+                if (!Beaten(i)) return i;
+            for (int i = 0; i < saved; i++)
+                if (!Beaten(i)) return i;
+            return saved; // the whole campaign is complete; keep the final saved destination
         }
 
         // ---------------------------------------------------------- navigation
@@ -1939,12 +1988,16 @@ namespace Parabox
                     RectTransform highlight = hover.highlight.transform as RectTransform;
                     if (highlight != null)
                     {
-                        highlight.anchoredPosition = ApprovedMapNodePosition(i);
-                        highlight.sizeDelta = new Vector2(96f, 96f);
+                        bool isChildSelector = highlight.parent == button.transform;
+                        highlight.anchoredPosition = isChildSelector
+                            ? Vector2.zero : ApprovedMapNodePosition(i);
+                        highlight.sizeDelta = isChildSelector
+                            ? new Vector2(116f, 116f) : new Vector2(96f, 96f);
                     }
                     Image hoverImage = hover.highlight.GetComponent<Image>();
                     if (hoverImage != null)
-                        hoverImage.color = WithA(Lighten(ApprovedChapterAccent(i), 0.55f), 0.34f);
+                        hoverImage.color = WithA(Lighten(ApprovedChapterAccent(i), 0.72f),
+                            hover.highlight.transform.parent == button.transform ? 1f : 0.34f);
                 }
             }
         }
@@ -2484,7 +2537,7 @@ namespace Parabox
         void BeginStart()
         {
             if (transitioning) return;
-            // PLAY always begins the campaign at Level 1.
+            // PLAY is the player's continue action: use the last saved unfinished level.
             transitioning = true;
             StartCoroutine(PressPlayThenStart());
         }
@@ -2496,7 +2549,7 @@ namespace Parabox
             // Let the completed bounce render before the synchronous gameplay scene hand-off.
             // LEVEL SELECT stays in this scene, but PLAY would otherwise replace its final frames.
             yield return new WaitForSecondsRealtime(0.12f);
-            StartCoroutine(DiveIntoBoard(NewGameLevel));
+            StartCoroutine(DiveIntoBoard(ResumeLevel()));
         }
 
         void BeginOpenLevelBoard()

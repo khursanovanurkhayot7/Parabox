@@ -48,9 +48,11 @@ namespace Parabox.EditorTools
             int failures = 0;
 
             ValidateOverlay(ref failures, report);
+            ValidateExactStateContinue(ref failures, report);
+            ValidateSessionTransactionContract(ref failures, report);
 
             string result = failures == 0
-                ? "LOSS FLOW VALIDATION PASSED — GAME OVER, hidden local actions and visible five-second arcade return."
+                ? "LOSS FLOW VALIDATION PASSED — CONTINUE preserves state and RESTART begins a clean run."
                 : $"LOSS FLOW VALIDATION FAILED — {failures} error(s).";
             report.AppendLine(result);
             if (failures > 0) throw new InvalidOperationException(report.ToString());
@@ -81,8 +83,8 @@ namespace Parabox.EditorTools
             string copy = formatter != null
                 ? formatter.Invoke(null, new object[] { "OUT OF MOVES", 5 }) as string
                 : string.Empty;
-            Check(copy != null && copy.Contains("RETURNING TO THE ARCADE IN 5"),
-                "loss copy explicitly announces the five-second arcade return",
+            Check(copy != null && copy.Contains("CONTINUE / RESTART IN 5"),
+                "loss copy explicitly announces the five-second session options countdown",
                 ref failures, report);
             Check(typeof(LossLeaderboard).GetMethod("SetPlayerScoreSummary",
                       BindingFlags.Public | BindingFlags.Instance) != null
@@ -91,6 +93,22 @@ namespace Parabox.EditorTools
                 "loss UI exposes level-score and submitted-total summary",
                 ref failures, report);
             UnityEngine.Object.DestroyImmediate(root);
+        }
+
+        static void ValidateSessionTransactionContract(ref int failures, StringBuilder report)
+        {
+            MethodInfo request = typeof(LuxoddGameService).GetMethod("RequestLossTransaction",
+                BindingFlags.Public | BindingFlags.Static);
+            Check(request != null && request.GetParameters().Length == 4,
+                "Luxodd loss transaction receives separate Continue and Restart callbacks",
+                ref failures, report);
+
+            Check(typeof(GameManager).GetMethod("OpenLossSessionOptions", PrivateInstance) != null,
+                "GAME OVER opens the Luxodd session options",
+                ref failures, report);
+            Check(typeof(GameManager).GetMethod("RestartCampaignSession", PrivateInstance) != null,
+                "accepted Restart has a clean Level 1 callback",
+                ref failures, report);
         }
 
         static void ValidateExactStateContinue(ref int failures, StringBuilder report)

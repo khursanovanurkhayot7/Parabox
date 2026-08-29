@@ -39,7 +39,7 @@ namespace Parabox
         public float dimDur = 0.50f;
         public float titleDur = 0.42f;
         public float dimTo = 0.72f;        // not full black — the debris stays readable through it
-        public float transactionDelay = 5f; // visible GAME OVER countdown before returning to Luxodd
+        public float transactionDelay = 5f; // visible GAME OVER countdown before Luxodd session options
 
         Coroutine running;
         Coroutine countdownRunning;
@@ -116,7 +116,7 @@ namespace Parabox
             running = StartCoroutine(Run(onTransactionReady));
         }
 
-        public void PlayGameOver(string reason, Action onReturnToArcade)
+        public void PlayGameOver(string reason, Action onSessionOptionsReady)
         {
             showReturnCountdown = true;
             returnReason = string.IsNullOrWhiteSpace(reason) ? "SESSION ENDED" : reason.Trim().ToUpperInvariant();
@@ -125,7 +125,7 @@ namespace Parabox
             returnDeadlineRealtime = Time.realtimeSinceStartup + Mathf.Max(0f, transactionDelay);
             SetReturnCountdownText(Mathf.CeilToInt(Mathf.Max(1f, transactionDelay)));
             if (running != null) StopCoroutine(running);
-            running = StartCoroutine(Run(onReturnToArcade));
+            running = StartCoroutine(Run(onSessionOptionsReady));
             if (countdownRunning != null) StopCoroutine(countdownRunning);
             countdownRunning = StartCoroutine(UpdateReturnCountdown());
         }
@@ -134,7 +134,7 @@ namespace Parabox
         {
             string clearReason = string.IsNullOrWhiteSpace(reason)
                 ? "SESSION ENDED" : reason.Trim().ToUpperInvariant();
-            return clearReason + "  •  RETURNING TO THE ARCADE IN "
+            return clearReason + "  •  CONTINUE / RESTART IN "
                 + Mathf.Max(1, seconds) + "...";
         }
 
@@ -316,7 +316,7 @@ namespace Parabox
             yield return RevealLeaderboard();
 
             // Keep the end state explicit while the leaderboard remains readable. There are no
-            // local actions: expiry returns ownership to the Luxodd arcade shell automatically.
+            // local actions: expiry opens Luxodd's official Continue / Restart transaction.
             float delay = showReturnCountdown
                 ? Mathf.Max(0f, returnDeadlineRealtime - Time.realtimeSinceStartup)
                 : Mathf.Max(0f, transactionDelay);

@@ -176,6 +176,59 @@ namespace Parabox.EditorTools
             Debug.Log("Parabox prebuilt-UI validation passed. Report: " + reportPath);
         }
 
+        // Focused release gate for the level-complete board. This deliberately ignores unrelated
+        // campaign/sound audits so a result-board layout change can be verified independently.
+        public static void ValidateWinBoardFromCommandLine()
+        {
+            var problems = new List<string>();
+            WithScene(GamePath, scene =>
+            {
+                GameManager game = FindComponent<GameManager>(scene);
+                if (game == null)
+                {
+                    problems.Add("Game.unity has no GameManager component.");
+                    return;
+                }
+
+                RectTransform nextRect = game.nextButton != null
+                    ? game.nextButton.transform as RectTransform : null;
+                if (nextRect == null || !game.nextButton.gameObject.activeSelf
+                    || Mathf.Abs(nextRect.anchoredPosition.x) > 0.01f)
+                    problems.Add("NEXT LEVEL is not visible and centred on the result board.");
+                if (game.menuButton == null || game.menuButton.gameObject.activeSelf
+                    || game.menuButton.interactable)
+                    problems.Add("The result-board LEVEL SELECT button is not fully removed.");
+                if (game.winCountdownRoot == null || game.winCountdownLabel == null
+                    || game.winCountdownBorder == null || game.winCountdownBorder.Length != 4)
+                    problems.Add("The four-sided result-board countdown is not serialized.");
+                else
+                {
+                    if (game.winCountdownRoot.gameObject.activeSelf)
+                        problems.Add("The countdown border must start hidden before a win.");
+                    if (game.winCountdownLabel.text != "NEXT LEVEL IN 5")
+                        problems.Add("The countdown label does not start at 5 seconds.");
+                    if (game.winCountdownLabel.rectTransform.anchoredPosition.y < 350f)
+                        problems.Add("The countdown label is not positioned above the result board.");
+                    if (game.winCountdownLabel.fontSize < 30
+                        || game.winCountdownLabel.rectTransform.sizeDelta.x < 400f)
+                        problems.Add("The countdown label is too small for arcade readability.");
+                    for (int i = 0; i < game.winCountdownBorder.Length; i++)
+                    {
+                        Image segment = game.winCountdownBorder[i];
+                        if (segment != null && segment.type == Image.Type.Filled
+                            && !segment.raycastTarget) continue;
+                        problems.Add("Countdown border segment " + (i + 1)
+                            + " is missing or not configured as a non-interactive fill.");
+                    }
+                }
+            });
+
+            if (problems.Count > 0)
+                throw new InvalidDataException(string.Join("\n", problems));
+            Debug.Log("Parabox win-board audit passed: LEVEL SELECT removed, NEXT LEVEL centred, "
+                + "and the 5-second four-sided auto-advance timer is prebuilt.");
+        }
+
         static void ValidateMenu(List<string> problems)
         {
             WithScene(MenuPath, scene =>
@@ -197,7 +250,10 @@ namespace Parabox.EditorTools
                     problems.Add("MainMenu must contain exactly 50 serialized level buttons.");
                 else
                     for (int i = 0; i < menu.levelButtons.Length; i++)
+                    {
                         ValidateHitTarget(menu.levelButtons[i], "Level " + (i + 1), problems);
+                        ValidateLevelSelector(menu.levelButtons[i], i + 1, problems);
+                    }
                 ValidateCampaignPrefabOrder(menu.levelPrefabs, "MainMenu", problems);
 
                 ValidateButtonSoundComponents(scene, "MainMenu", problems);
@@ -222,6 +278,24 @@ namespace Parabox.EditorTools
                     problems.Add("The score HUD is not serialized in Game.unity.");
                 if (game.winScoreValue == null)
                     problems.Add("The win score's large points readout is not serialized in Game.unity.");
+                RectTransform nextLevelRect = game.nextButton != null
+                    ? game.nextButton.transform as RectTransform : null;
+                if (nextLevelRect == null || !game.nextButton.gameObject.activeSelf
+                    || Mathf.Abs(nextLevelRect.anchoredPosition.x) > 0.01f)
+                    problems.Add("The win board's NEXT LEVEL action is not visible and centred.");
+                if (game.menuButton == null || game.menuButton.gameObject.activeSelf
+                    || game.menuButton.interactable)
+                    problems.Add("The retired win-board LEVEL SELECT action is still visible or active.");
+                if (game.winCountdownRoot == null || game.winCountdownLabel == null
+                    || game.winCountdownBorder == null || game.winCountdownBorder.Length != 4)
+                    problems.Add("The win board's four-sided automatic-next border timer is not prebuilt.");
+                else
+                    for (int i = 0; i < game.winCountdownBorder.Length; i++)
+                        if (game.winCountdownBorder[i] == null)
+                        {
+                            problems.Add("The win board countdown is missing border segment " + (i + 1) + ".");
+                            break;
+                        }
                 Transform winWindow = game.winPanel != null
                     ? game.winPanel.transform.Find("Window") : null;
                 Transform premiumBackdrop = winWindow != null
@@ -250,9 +324,9 @@ namespace Parabox.EditorTools
                     || tutorial.captionText == null
                     || tutorial.mechanicDemo == null
                     || tutorial.againButton == null || tutorial.tryButton == null
-                    || tutorial.skipButton == null)
+                    || tutorial.skipButton == null || tutorial.skipCountdownText == null)
                     problems.Add("The mechanic demonstration, walkthrough card, caption, REPEAT, "
-                        + "TRY IT YOURSELF or centred Skip is not prebuilt.");
+                        + "TRY IT YOURSELF or numbered centred Skip is not prebuilt.");
                 if (tutorial != null && tutorial.mechanicDemo != null
                     && !tutorial.mechanicDemo.IsGameplayStylePrebuilt)
                     problems.Add("The tutorial still contains the old abstract mechanic diagram; "
@@ -268,6 +342,19 @@ namespace Parabox.EditorTools
                     Text label = tutorial.skipButton.GetComponentInChildren<Text>(true);
                     if (label == null || label.text != "SKIP TUTORIAL")
                         problems.Add("The prebuilt walkthrough Skip label is incorrect.");
+                    Transform badge = tutorial.skipButton.transform.Find("ButtonNumberBadge");
+                    Text number = badge != null ? badge.GetComponentInChildren<Text>(true) : null;
+                    if (number == null || number.text != "6")
+                        problems.Add("Purple walkthrough Skip must show Luxodd button number 6.");
+                    if (tutorial.skipCountdownText == null
+                        || tutorial.skipCountdownText.text != "AUTO-CONTINUE IN 10")
+                        problems.Add("Purple walkthrough Skip must have a visible 10-second auto-continue timer.");
+                    RectTransform skipRect = tutorial.skipButton.transform as RectTransform;
+                    Vector2 centre = new Vector2(0.5f, 0.5f);
+                    if (skipRect == null || skipRect.anchorMin != centre
+                        || skipRect.anchorMax != centre
+                        || Mathf.Abs(skipRect.anchoredPosition.x) > 0.01f)
+                        problems.Add("Walkthrough Skip must stay centred below the card.");
                     if (tutorial.skipButton.gameObject.activeSelf)
                         problems.Add("Walkthrough Skip must start hidden on ordinary gameplay.");
                 }
@@ -357,6 +444,26 @@ namespace Parabox.EditorTools
                 problems.Add(label + " does not have a prebuilt CanvasGroup and root Image hit target.");
             else if (image.color.a > 0.01f)
                 problems.Add(label + " root hit target is visible and will draw a rectangular background.");
+        }
+
+        static void ValidateLevelSelector(Button button, int levelNumber, List<string> problems)
+        {
+            if (button == null) return;
+            Transform selector = button.transform.Find("LevelFocusSelector");
+            UIHoverScale hover = button.GetComponent<UIHoverScale>();
+            if (selector == null || selector.GetComponent<Image>() == null
+                || selector.GetComponent<UIPulse>() == null)
+            {
+                problems.Add("Level " + levelNumber
+                    + " does not have the prebuilt visible focus selector.");
+                return;
+            }
+            if (hover == null || hover.highlight != selector.gameObject)
+                problems.Add("Level " + levelNumber
+                    + " focus selector is not wired to joystick/mouse selection.");
+            if (selector.gameObject.activeSelf)
+                problems.Add("Level " + levelNumber
+                    + " focus selector must start hidden until the node is selected.");
         }
 
         static void ValidateVisibleHomeButton(Button button, string label, List<string> problems)

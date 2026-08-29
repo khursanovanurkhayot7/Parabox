@@ -155,9 +155,9 @@ namespace Parabox
         public static Id[] RehearsalsAt(int levelIndex)
         {
             // Level 11 teaches only the room-inside-a-box relationship. The next two boards bring
-            // back one-way commitments; from Level 14 onward a solved cargo job also holds a gate.
-            // Both reuses survive only when the exact authored route still wins.
-            if (levelIndex >= 13 && levelIndex <= 19)
+            // back one-way commitments. Level 14 deliberately pauses those extra rules so its
+            // recursive-room task is easier to read; combined rehearsals resume at Level 15.
+            if (levelIndex >= 14 && levelIndex <= 19)
                 return new[] { Id.OneWay, Id.ButtonGate };
             if (levelIndex >= 11 && levelIndex <= 12)
                 return new[] { Id.OneWay };

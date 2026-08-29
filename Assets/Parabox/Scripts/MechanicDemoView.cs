@@ -54,7 +54,13 @@ namespace Parabox
             && floorCells != null && floorCells.Length == GridWidth * GridHeight
             && wallCells != null && wallCells.Length == GridWidth * GridHeight;
 
-        void Awake() => HideImmediate();
+        void Awake()
+        {
+            // Existing serialized tutorial boards are upgraded at runtime too, so a player never
+            // needs a regenerated scene just to see the closed-side language.
+            EnsureNestedRoomClosedLights();
+            HideImmediate();
+        }
 
         public void HideImmediate()
         {
@@ -662,6 +668,99 @@ namespace Parabox
             }
         }
 
+        void EnsureNestedRoomClosedLights()
+        {
+            EnsureRoomClosedLights(outerRoom);
+            EnsureRoomClosedLights(innerRoom);
+        }
+
+        // The room vignette has one open cyan doorway on its right. Put a small premium red lamp
+        // on the other three sides so the tutorial demonstrates the exact same closed-side rule as
+        // gameplay. These are indicators only; they never participate in puzzle logic.
+        static void EnsureRoomClosedLights(RectTransform room)
+        {
+            if (room == null) return;
+            Image roomImage = room.GetComponent<Image>();
+            Sprite sprite = roomImage != null ? roomImage.sprite : null;
+            float width = Mathf.Max(1f, room.sizeDelta.x);
+            float height = Mathf.Max(1f, room.sizeDelta.y);
+            float unit = Mathf.Clamp(Mathf.Min(width, height) * 0.18f, 8f, 13f);
+
+            CreateRoomLamp(room, "ClosedLampTop", sprite,
+                new Vector2(0f, height * 0.43f), unit);
+            CreateRoomLamp(room, "ClosedLampBottom", sprite,
+                new Vector2(0f, -height * 0.43f), unit);
+            CreateRoomLamp(room, "ClosedLampLeft", sprite,
+                new Vector2(-width * 0.43f, 0f), unit);
+        }
+
+        static void CreateRoomLamp(RectTransform room, string name, Sprite sprite,
+            Vector2 position, float unit)
+        {
+            Transform existing = room.Find(name);
+            RectTransform root;
+            if (existing != null && existing is RectTransform existingRect)
+                root = existingRect;
+            else
+            {
+                var rootObject = new GameObject(name, typeof(RectTransform));
+                rootObject.transform.SetParent(room, false);
+                root = (RectTransform)rootObject.transform;
+            }
+
+            root.anchorMin = root.anchorMax = root.pivot = new Vector2(0.5f, 0.5f);
+            root.anchoredPosition = position;
+            root.sizeDelta = Vector2.one * (unit * 2.45f);
+            root.localScale = Vector3.one;
+            root.SetAsLastSibling();
+
+            UIPulse pulse = root.GetComponent<UIPulse>();
+            if (pulse == null) pulse = root.gameObject.AddComponent<UIPulse>();
+            pulse.amplitude = 0.09f;
+            pulse.speed = 3.15f;
+
+            RoomLampImage(root, "Glow", sprite, Vector2.zero, Vector2.one * (unit * 2.35f),
+                new Color(1f, 0.10f, 0.17f, 0.34f));
+            Image housing = RoomLampImage(root, "Housing", sprite, Vector2.zero,
+                Vector2.one * (unit * 1.42f), new Color(0.28f, 0.045f, 0.07f, 1f));
+            Outline rim = housing.GetComponent<Outline>();
+            if (rim == null) rim = housing.gameObject.AddComponent<Outline>();
+            rim.effectColor = new Color(0.78f, 0.10f, 0.17f, 1f);
+            rim.effectDistance = new Vector2(1f, -1f);
+            rim.useGraphicAlpha = true;
+            RoomLampImage(root, "Core", sprite, Vector2.zero, Vector2.one * (unit * 0.84f),
+                new Color(1f, 0.16f, 0.23f, 1f));
+            RoomLampImage(root, "Highlight", sprite,
+                new Vector2(-unit * 0.15f, unit * 0.18f), Vector2.one * (unit * 0.25f),
+                new Color(1f, 0.88f, 0.90f, 0.96f));
+        }
+
+        static Image RoomLampImage(Transform parent, string name, Sprite sprite, Vector2 position,
+            Vector2 size, Color color)
+        {
+            Transform existing = parent.Find(name);
+            RectTransform rect;
+            if (existing != null && existing is RectTransform existingRect)
+                rect = existingRect;
+            else
+            {
+                var imageObject = new GameObject(name, typeof(RectTransform),
+                    typeof(CanvasRenderer), typeof(Image));
+                imageObject.transform.SetParent(parent, false);
+                rect = (RectTransform)imageObject.transform;
+            }
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = size;
+            Image image = rect.GetComponent<Image>();
+            if (image == null) image = rect.gameObject.AddComponent<Image>();
+            image.sprite = sprite;
+            image.type = sprite != null ? Image.Type.Sliced : Image.Type.Simple;
+            image.color = color;
+            image.raycastTarget = false;
+            return image;
+        }
+
 #if UNITY_EDITOR
         public static MechanicDemoView Prebuild(RectTransform videoRoot, Font font)
         {
@@ -935,6 +1034,7 @@ namespace Parabox
                 new Vector2(size.x * 0.20f, size.y * 0.30f),
                 new Color(0.018f, 0.055f, 0.145f, 1f), null);
             door.SetAsLastSibling();
+            EnsureRoomClosedLights(shell);
             return shell;
         }
 

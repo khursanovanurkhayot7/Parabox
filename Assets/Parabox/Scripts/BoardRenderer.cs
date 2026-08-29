@@ -70,7 +70,7 @@ namespace Parabox
         const float NestedShellSize = OptionOneObjectSize;
         // Keep the live miniature at the proven readable fit. Its size is independent of the
         // shell's outer footprint, so normalising the square objects cannot enlarge or clip it.
-        const float NestedPreviewFit = 0.67f;
+        const float NestedPreviewFit = 0.72f;
         // How much of a meta-box's cell the nested room spans.
         //
         // This must stay clear of the meta-box frame's inner opening — that frame draws at
@@ -1156,22 +1156,44 @@ namespace Parabox
                         var ow = new GameObject("OneWay");
                         ow.transform.SetParent(root, false);
                         ow.transform.localPosition = Cell(room, new Vector2Int(cx, cy));
+                        bool nestedPreview = room.id > 0;
+                        // Recursive rooms may be shown as a miniature inside one box cell. Give
+                        // their teaching arrow a controlled clarity boost without changing its
+                        // logical cell or the outer meta-box footprint.
+                        ow.transform.localScale = Vector3.one * (nestedPreview ? 1.30f : 1f);
 
                         var bed = new GameObject("Bed");
                         bed.transform.SetParent(ow.transform, false);
-                        bed.transform.localScale = Vector3.one * 0.90f;
+                        bed.transform.localScale = Vector3.one * (nestedPreview ? 1.02f : 0.90f);
                         var bsr3 = bed.AddComponent<SpriteRenderer>();
                         bsr3.sprite = a.cellSprite;
-                        bsr3.color = new Color(amber.r, amber.g, amber.b, 0.18f);
+                        bsr3.color = new Color(amber.r, amber.g, amber.b,
+                            nestedPreview ? 0.38f : 0.18f);
                         bsr3.sortingOrder = OrderFloorCell + 1;
 
+                        if (nestedPreview && a.ringSprite != null)
+                        {
+                            var halo = new GameObject("PreviewHalo");
+                            halo.transform.SetParent(ow.transform, false);
+                            halo.transform.localScale = Vector3.one * 1.08f;
+                            var haloRenderer = halo.AddComponent<SpriteRenderer>();
+                            haloRenderer.sprite = a.ringSprite;
+                            haloRenderer.color = new Color(1f, 0.84f, 0.38f, 0.62f);
+                            haloRenderer.sortingOrder = OrderFloorCell + 2;
+                        }
+
                         // A pair of stacked chevrons — unmistakably "this way only".
-                        var c1 = Chevron(ow.transform, a.cellSprite, amber, OrderFloorCell + 2, d, 1f);
-                        c1.transform.localPosition = new Vector3(d.x * 0.13f, d.y * 0.13f, 0f);
+                        Color arrowColor = nestedPreview ? Lighten(amber, 0.18f) : amber;
+                        float arrowScale = nestedPreview ? 1.12f : 1f;
+                        var c1 = Chevron(ow.transform, a.cellSprite, arrowColor,
+                            OrderFloorCell + 3, d, arrowScale);
+                        c1.transform.localPosition = new Vector3(d.x * 0.12f, d.y * 0.12f, 0f);
                         var c2 = Chevron(ow.transform, a.cellSprite,
-                                         new Color(amber.r, amber.g, amber.b, 0.45f),
-                                         OrderFloorCell + 2, d, 1f);
-                        c2.transform.localPosition = new Vector3(-d.x * 0.13f, -d.y * 0.13f, 0f);
+                            new Color(arrowColor.r, arrowColor.g, arrowColor.b,
+                                nestedPreview ? 0.78f : 0.45f),
+                            OrderFloorCell + 3, d, arrowScale);
+                        c2.transform.localPosition = new Vector3(-d.x * 0.12f,
+                            -d.y * 0.12f, 0f);
                     }
             }
 
@@ -2255,13 +2277,48 @@ namespace Parabox
                 string part = sr.gameObject.name;
                 if (UsesOptionOneSkin(a))
                 {
-                    // Goal sprites were authored for the older 0.84 object face. Their outer ring
-                    // and soft glow must not make an empty target look bigger than the cargo.
-                    if (part == "Ring") sr.transform.localScale = Vector3.one * OptionOneObjectSize;
-                    else if (part == "Socket")
-                        sr.transform.localScale = Vector3.one * (OptionOneObjectSize * 0.86f);
-                    else if (part == "Glow")
-                        sr.transform.localScale = Vector3.one * (OptionOneObjectSize * 1.08f);
+                    if (playerSilhouette)
+                    {
+                        if (part == "Ring")
+                            sr.transform.localScale = Vector3.one * OptionOneObjectSize;
+                        else if (part == "Socket")
+                            sr.transform.localScale = Vector3.one * (OptionOneObjectSize * 0.86f);
+                        else if (part == "Glow")
+                            sr.transform.localScale = Vector3.one * (OptionOneObjectSize * 1.08f);
+                    }
+                    else
+                    {
+                        // Keep every visible layer inside the exact same 0.90 footprint as the
+                        // player. Using three different sizes made the coloured socket look tiny
+                        // while its translucent surround looked oversized. Equal bounds make the
+                        // yellow target read as one intentional, cell-sized gameplay element.
+                        if (part == "Ring")
+                            sr.transform.localScale = Vector3.one * OptionOneObjectSize;
+                        else if (part == "Socket")
+                            sr.transform.localScale = Vector3.one * OptionOneObjectSize;
+                        else if (part == "Glow")
+                            sr.transform.localScale = Vector3.one * OptionOneObjectSize;
+
+                        // A translucent yellow socket over the cyan route blended into the dull
+                        // green patch shown in the report. Keep the semantic cargo hue on the rim,
+                        // but make the inset an opaque navy-orange material so it belongs to the
+                        // cabinet palette at every room depth.
+                        Color targetAccent = Darken(color, 0.10f);
+                        if (part == "Glow")
+                            sr.color = new Color(targetAccent.r, targetAccent.g,
+                                targetAccent.b, 0.07f);
+                        else if (part == "Socket")
+                        {
+                            Color inset = Color.Lerp(OptionOneFloor, targetAccent, 0.30f);
+                            sr.color = new Color(inset.r, inset.g, inset.b, 0.96f);
+                        }
+                        else
+                        {
+                            Color rim = Lighten(targetAccent, 0.08f);
+                            sr.color = new Color(rim.r, rim.g, rim.b, 0.94f);
+                        }
+                        continue;
+                    }
                 }
                 float alpha = part == "Glow" ? (playerSilhouette ? 0.12f : 0.10f)
                     : part == "Socket" ? (playerSilhouette ? 0.20f : 0.36f)
@@ -2358,8 +2415,11 @@ namespace Parabox
 
         static Color ReadableNestedPathColor(Color c)
         {
-            Color visible = Color.Lerp(c, OptionOneCyan, 0.20f);
-            visible = Color.Lerp(visible, Color.white, 0.08f);
+            // A 7x7 room can be compressed into a single meta-box cell (Level 14). At that size
+            // the old near-black route became only a few dark pixels. Use a luminous navy-cyan
+            // path inside every recursive room so its actual walkable shape survives the preview.
+            Color visible = Color.Lerp(c, OptionOneCyan, 0.46f);
+            visible = Color.Lerp(visible, Color.white, 0.12f);
             visible.a = 1f;
             return visible;
         }

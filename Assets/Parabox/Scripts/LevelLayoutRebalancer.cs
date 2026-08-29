@@ -17,13 +17,14 @@ namespace Parabox
         public static int DependencyBudgetForLevel(int levelIndex) => 0;
 
         // Chapter II always exposes three readable completion jobs. The opener teaches recursion
-        // alone; from Level 14 onward one completed delivery also holds a Chapter I-style button
-        // so the later gate crossing is a real dependency instead of decoration.
+        // alone. Level 14 is an intentional breathing-space puzzle: it focuses only on moving and
+        // entering the recursive room after tester feedback that its combined rules spiked too
+        // sharply. The button/gate reuse therefore starts at Level 15.
         public static int ChapterTwoTaskTargetForLevel(int levelIndex)
             => levelIndex >= 10 && levelIndex <= 19 ? 3 : 0;
 
         public static int ChapterTwoGateReuseBudgetForLevel(int levelIndex)
-            => levelIndex >= 13 && levelIndex <= 19 ? 1 : 0;
+            => levelIndex >= 14 && levelIndex <= 19 ? 1 : 0;
 
         // Chapter III revisits Chapter I's button/gate dependency on three spaced checkpoints.
         // The gate is retained only when an authored cargo delivery holds its button and the
@@ -68,7 +69,8 @@ namespace Parabox
                 // full of arrows at the start of the chapter.
                 case 10: return 0;
                 case 11: return 1;
-                case 12: case 13: return 2;
+                case 12: return 2;
+                case 13: return 0; // L14: keep the recursive-room puzzle readable and forgiving.
                 case 14: case 15: return 3;
                 case 16: case 17: return 4;
                 case 18: case 19: return 5;

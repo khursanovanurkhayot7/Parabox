@@ -181,8 +181,11 @@ namespace Parabox
             TryStartLossTransaction();
         }
 
-        // One paid Luxodd session owns one run. Unity reloads keep that run; a different token
-        // starts clean. Store only a one-way token fingerprint, never the raw credential.
+        // The token identifies the active cabinet session, not the player's campaign save.
+        // A token change clears the shared local cache immediately so a different cabinet player
+        // cannot see the previous player's data while Luxodd is loading. The authenticated
+        // account's cloud state is restored afterwards, even when that account has a new token.
+        // Store only a one-way token fingerprint, never the raw credential.
         void InitializeSessionIdentity()
         {
             string token = socket != null ? socket.SessionToken : string.Empty;
@@ -366,7 +369,7 @@ namespace Parabox
             }
             var state = new ParaboxCloudState
             {
-                formatVersion = 3,
+                formatVersion = 4,
                 scoreVersion = ScoreSystem.CurrentVersion,
                 currentLevel = Mathf.Clamp(PlayerPrefs.GetInt(LevelKey, 0), 0, LevelCount - 1),
                 tutorialSeen = PlayerPrefs.GetInt(TutorialKey, 0) == 1,
@@ -393,13 +396,11 @@ namespace Parabox
             if (state == null) return;
             if (state.tutorialSeen) PlayerPrefs.SetInt(TutorialKey, 1);
 
-            // Account data can outlive a paid cabinet session. Restore run data only when both
-            // sides identify the same Luxodd session; otherwise an old run must not revive.
-            string localSession = PlayerPrefs.GetString(SessionFingerprintKey, string.Empty);
-            if (string.IsNullOrEmpty(state.sessionFingerprint)
-                || string.IsNullOrEmpty(localSession)
-                || !string.Equals(state.sessionFingerprint, localSession, StringComparison.Ordinal))
-                return;
+            // Luxodd user-data is already scoped to the authenticated player. Session tokens are
+            // deliberately short-lived, so requiring the cloud fingerprint to match the current
+            // token made the same player lose progress after leaving and returning. The fingerprint
+            // remains in the payload only for backwards compatibility and diagnostics; it must not
+            // gate account progress restoration.
 
             ScoreSystem.EnsureCurrentVersion(LevelCount);
             if (replace) ClearLocalProgress(preserveTutorial: true);
@@ -518,11 +519,19 @@ namespace Parabox
         // colour is bound to this implicitly; the visible UI/host owns the transition.
         public static void ReturnToSystem()
         {
-            // The cabinet may keep the WebGL instance alive after returning to its shell. Clear
-            // this player's local route now as well as at application startup, so the next player
-            // always receives Level 1 with Levels 2-50 locked.
-            MainMenuUI.ResetCampaignSessionProgress();
-            if (Instance != null) Instance.EndLocalSession();
+            // A real cabinet may keep this WebGL instance alive for the next player, so clear only
+            // its shared local cache after the authenticated save has already been synced. A normal
+            // website/local build has no Luxodd runtime; keep PlayerPrefs there so reopening the
+            // game resumes the last player's progress instead of silently starting over.
+            if (Instance != null)
+            {
+                MainMenuUI.ResetCampaignSessionProgress();
+                Instance.EndLocalSession();
+            }
+            else
+            {
+                PlayerPrefs.Save();
+            }
             if (Instance != null && Instance.socket != null)
             {
                 Instance.socket.BackToSystem();
@@ -550,7 +559,8 @@ namespace Parabox
 
         // Every loss opens Luxodd's official Continue transaction. The caller schedules this only
         // after the leaderboard reading beat and owns restoration of the still-live puzzle state.
-        public static void RequestLossTransaction(int zeroBasedLevel, int score, Action onContinue)
+        public static void RequestLossTransaction(int zeroBasedLevel, int score,
+            Action onContinue, Action onRestart)
         {
             if (Instance == null || Instance.socket == null)
             {
@@ -573,7 +583,8 @@ namespace Parabox
             if (Instance.pendingLossTransaction == null
                 || Instance.pendingLossTransaction.level != level)
             {
-                Instance.pendingLossTransaction = new LossTransaction(level, Mathf.Max(0, score), onContinue);
+                Instance.pendingLossTransaction = new LossTransaction(
+                    level, Mathf.Max(0, score), onContinue, onRestart);
             }
             Instance.TryStartLossTransaction();
         }
@@ -628,8 +639,10 @@ namespace Parabox
                     break;
 
                 case SessionOptionAction.Restart:
-                    transactionPopupOpen = true;
-                    FinalizeLoss(transaction, () => OpenRestartPopup(transaction));
+                    // Restart is only a request at this stage. Do not submit level_end until the
+                    // dedicated Luxodd Restart transaction is actually accepted; the player may
+                    // still choose Continue and preserve this same attempt.
+                    OpenRestartPopup(transaction);
                     break;
 
                 case SessionOptionAction.End:
@@ -689,7 +702,7 @@ namespace Parabox
         {
             if (!online || socket == null || pendingLossTransaction != transaction)
             {
-                transactionPopupOpen = false;
+                ContinuePendingLossLocally("the host connection closed before Restart");
                 return;
             }
 
@@ -705,9 +718,13 @@ namespace Parabox
 
             if (action == SessionOptionAction.End)
             {
-                pendingLossTransaction = null;
-                EndLocalSession();
-                socket.BackToSystem();
+                transactionPopupOpen = true;
+                FinalizeLoss(transaction, () =>
+                {
+                    pendingLossTransaction = null;
+                    EndLocalSession();
+                    socket.BackToSystem();
+                });
             }
             else if (action == SessionOptionAction.Continue)
             {
@@ -716,10 +733,29 @@ namespace Parabox
             }
             else if (action == SessionOptionAction.Restart)
             {
-                // Successful Restart is owned by the Luxodd host and normally has no callback.
-                pendingLossTransaction = null;
+                transactionPopupOpen = true;
+                FinalizeLoss(transaction, () =>
+                {
+                    pendingLossTransaction = null;
+                    transactionPopupOpen = false;
+                    transaction.onRestart?.Invoke();
+                });
             }
-            // Cancel deliberately keeps the finalized loss available for reopening.
+            else if (action == SessionOptionAction.Cancel)
+            {
+                StartCoroutine(RetryRestartTransaction(transaction));
+            }
+        }
+
+        IEnumerator RetryRestartTransaction(LossTransaction transaction)
+        {
+            float delay = 3.5f;
+            while (delay > 0f)
+            {
+                delay -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+            if (pendingLossTransaction == transaction) OpenRestartPopup(transaction);
         }
 
         void QueueOrSendLevelEvent(PendingLevelEvent item)
@@ -889,14 +925,16 @@ namespace Parabox
             public readonly int level;
             public readonly int score;
             public readonly Action onContinue;
+            public readonly Action onRestart;
             public bool finalizing;
             public bool finalized;
 
-            public LossTransaction(int level, int score, Action onContinue)
+            public LossTransaction(int level, int score, Action onContinue, Action onRestart)
             {
                 this.level = level;
                 this.score = score;
                 this.onContinue = onContinue;
+                this.onRestart = onRestart;
             }
         }
 
