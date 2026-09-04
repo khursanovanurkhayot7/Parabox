@@ -558,7 +558,7 @@ namespace Parabox
         }
 
         // Every loss opens Luxodd's official Continue transaction. The caller schedules this only
-        // after the leaderboard reading beat and owns restoration of the still-live puzzle state.
+        // after the leaderboard reading beat and reloads the same level on accepted Continue.
         public static void RequestLossTransaction(int zeroBasedLevel, int score,
             Action onContinue, Action onRestart)
         {
@@ -571,7 +571,7 @@ namespace Parabox
 
             // Do not queue this forever. By the time GameManager calls here the leaderboard has
             // already been visible for 3.5 seconds; an offline host cannot display or complete its
-            // transaction, so the only safe path is to restore the still-live attempt locally.
+            // transaction, so use the same fresh-level retry callback locally.
             if (!Instance.online)
             {
                 Debug.LogWarning("[Luxodd] Host is offline at Continue time; using the local Continue fallback.");
@@ -641,7 +641,7 @@ namespace Parabox
                 case SessionOptionAction.Restart:
                     // Restart is only a request at this stage. Do not submit level_end until the
                     // dedicated Luxodd Restart transaction is actually accepted; the player may
-                    // still choose Continue and preserve this same attempt.
+                    // still choose Continue and retry this level without resetting the campaign.
                     OpenRestartPopup(transaction);
                     break;
 

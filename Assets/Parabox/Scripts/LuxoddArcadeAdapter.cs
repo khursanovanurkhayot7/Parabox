@@ -21,6 +21,7 @@ namespace Parabox
         public bool ConfirmDown { get; private set; }  // Black
         public bool UndoDown { get; private set; }     // Red
         public bool BackDown { get; private set; }     // Red while a menu/selection screen owns input
+        public bool TryItDown { get; private set; }    // Green (Level-1 second-chance lesson)
         public bool RestartDown { get; private set; }  // Yellow
         public bool SkipDown { get; private set; }     // Purple (skip the active walkthrough)
         public bool SystemDown { get; private set; }   // Orange (Luxodd overlay owns the response)
@@ -100,11 +101,12 @@ namespace Parabox
             ConfirmDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Black);
             UndoDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Red);
             BackDown = UndoDown;
+            TryItDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Green);
             RestartDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Yellow);
             SkipDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Purple);
             SystemDown = ArcadeControls.GetButtonDown(ArcadeButtonColor.Orange);
-            // Green, Blue and White are deliberately not polled: they have no authored Parabox
-            // action and must not trigger a hidden shortcut. Orange remains owned by Luxodd.
+            // Blue and White are deliberately not polled: they have no authored Parabox action
+            // and must not trigger a hidden shortcut. Orange remains owned by Luxodd.
         }
 
         // Resolve diagonals with hysteresis. Once an axis owns the gesture, the other axis must be

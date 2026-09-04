@@ -10,7 +10,7 @@ gameplay actions.
 |---|---:|---|---|
 | Black | `JoystickButton0` | Confirm / activate selected button | A / Cross |
 | Red | `JoystickButton1` | Undo | X / Square |
-| Green | `JoystickButton2` | No game action | Y / Triangle |
+| Green | `JoystickButton2` | Try It on the Level-1 second-chance lesson | X / Square (SDK Green binding) |
 | Yellow | `JoystickButton3` | Restart level | Start / Options |
 | Blue | `JoystickButton4` | No game action | Left shoulder |
 | Purple | `JoystickButton5` | Skip the active walkthrough | Right shoulder |
@@ -39,10 +39,15 @@ while held because it cannot alter the puzzle or consume the move allowance.
   frame. Full solve demonstrations run only when that exact chapter opener introduces a new rule;
   familiar-mechanic chapter recaps are not presented as late tutorials.
 - Gameplay: stick/D-pad moves; Red/X undoes; Yellow/Start restarts. Green, Blue and White do
-  nothing unless a future authored action is assigned to them.
+  nothing during normal puzzle play.
+- Level-1 second chance: after the teacher finishes speaking, the green `TRY IT` button appears.
+  Press the physical Green button, click/tap it, or press Enter/Space to retry. Inputs before the
+  button appears are ignored; Black and Yellow do not activate this lesson's retry.
 - Level complete: Black/A continues.
 - Loss: the game intentionally blocks local controller actions while the Luxodd transaction owns
-  the screen. Luxodd Continue restores the exact failed board state with full time and moves.
+  the screen. Luxodd Continue restarts the current level from its original layout with full time,
+  full moves and an empty undo history. It keeps campaign progress/scores and skips the tutorial
+  on this retry. The separate Luxodd Restart option still starts a new campaign at Level 1.
 - Campaign finale: stick/D-pad selects `PLAY AGAIN` or `LEVEL SELECT`; Black/A activates.
 
 ## Input ownership

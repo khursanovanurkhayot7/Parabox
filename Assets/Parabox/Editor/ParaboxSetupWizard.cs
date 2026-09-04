@@ -7750,8 +7750,10 @@ namespace Parabox.EditorTools
                 if (candidate.name == "Label") { skipLabel = candidate; break; }
             if (skipLabel != null)
             {
-                skipLabel.rectTransform.anchoredPosition = new Vector2(30f, 0f);
-                skipLabel.rectTransform.sizeDelta = new Vector2(220f, 72f);
+                skipLabel.rectTransform.anchorMin = Vector2.zero;
+                skipLabel.rectTransform.anchorMax = Vector2.one;
+                skipLabel.rectTransform.anchoredPosition = Vector2.zero;
+                skipLabel.rectTransform.sizeDelta = Vector2.zero;
             }
             Image numberBadge = UIImage(skipRT, "ButtonNumberBadge", spr.disc, Hex("5A2297"),
                 new Vector2(-116f, 0f), new Vector2(48f, 48f));

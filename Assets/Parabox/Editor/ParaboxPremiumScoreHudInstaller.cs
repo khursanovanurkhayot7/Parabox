@@ -8,7 +8,8 @@ using UnityEngine.UI;
 
 namespace Parabox.EditorTools
 {
-    // Creates only the approved Option 2 score presentation. It deliberately does not replace,
+    // Creates the approved Progress Rings score presentation (legacy Option 2 menu entry).
+    // It deliberately does not replace,
     // move or rewire any existing gameplay HUD, timer, board, buttons or scoring behaviour.
     public static class ParaboxPremiumScoreHudInstaller
     {
@@ -63,9 +64,9 @@ namespace Parabox.EditorTools
             RectTransform root = CreateRoot(parent);
             CreateScoreCore(root, font, disc, ring, glow);
             CreateInfoChip(root, "TimeChip", new Vector2(342f, -67f), font,
-                Cyan, "TIME  -0", "-3 / SEC AFTER 10");
+                Cyan, "TIME", "0 / 10s");
             CreateInfoChip(root, "MovesChip", new Vector2(342f, -153f), font,
-                Violet, "MOVES  -0", "TARGET  13");
+                Violet, "MOVES", "0 / 13");
             root.SetAsLastSibling();
 
             game.premiumScoreValue = RequireText(root, "ScoreValue");
@@ -73,14 +74,16 @@ namespace Parabox.EditorTools
             game.premiumTimeDetail = RequireText(root, "TimeChip/Detail");
             game.premiumMovesValue = RequireText(root, "MovesChip/Main");
             game.premiumMovesDetail = RequireText(root, "MovesChip/Detail");
+            PremiumScoreRings.Apply(root, game.premiumScoreValue, game.premiumTimeValue,
+                game.premiumTimeDetail, game.premiumMovesValue, game.premiumMovesDetail);
             EditorUtility.SetDirty(game);
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
 
-            Debug.Log("Premium score HUD Option 2 installed in the gameplay upper-left corner.");
-            EditorUtility.DisplayDialog("Premium Score HUD — Option 2",
+            Debug.Log("Premium Progress Rings score HUD installed in the gameplay upper-left corner.");
+            EditorUtility.DisplayDialog("Premium Score HUD — Progress Rings",
                 "Installed successfully in Game.unity.\n\n"
                 + "Only the new upper-left score presentation was created.\n"
                 + "Existing gameplay, board, timer, buttons and score logic were not changed.\n\n"

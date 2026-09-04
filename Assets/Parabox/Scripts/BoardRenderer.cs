@@ -135,13 +135,14 @@ namespace Parabox
         {
             ApplyChapterSkin(a);
             var worldRoot = new GameObject("LevelView").transform;
+            var goalTargets = new List<GoalFeedbackFx.Target>();
 
             foreach (var room in model.rooms.Values)
             {
                 var root = new GameObject("Room_" + room.id).transform;
                 root.SetParent(worldRoot, false);
                 roomRoots[room.id] = root;
-                PaintRoom(root, room, a, tiles, model);
+                PaintRoom(root, room, a, tiles, model, goalTargets);
             }
 
             var nestedRooms = new HashSet<int>();
@@ -198,12 +199,14 @@ namespace Parabox
                             var playerShadow = go.transform.Find("Shadow");
                             if (playerShadow != null)
                             {
-                                playerShadow.localPosition = new Vector3(0.025f, -0.045f, 0f);
-                                playerShadow.localScale = Vector3.one * 0.82f;
+                                playerShadow.localPosition = new Vector3(0.020f, -0.038f, 0f);
+                                playerShadow.localScale = Vector3.one * 0.84f;
                                 var shadowRenderer = playerShadow.GetComponent<SpriteRenderer>();
                                 if (shadowRenderer != null)
-                                    shadowRenderer.color = new Color(0f, 0f, 0f, ghost ? 0.10f : 0.20f);
+                                    shadowRenderer.color = new Color(0f, 0f, 0f, ghost ? 0.07f : 0.13f);
                             }
+
+                            AddSoftBevel(go, body, diverC, a);
                         }
                         // Echo/mirror actors keep a quiet halo so their identity is readable. The
                         // real player uses only the small pooled fragment trail configured below;
@@ -258,12 +261,15 @@ namespace Parabox
                     var crateShadow = go.transform.Find("Shadow");
                     if (crateShadow != null)
                     {
-                        crateShadow.localPosition = new Vector3(0.025f, -0.045f, 0f);
-                        crateShadow.localScale = Vector3.one * 0.82f;
+                        crateShadow.localPosition = new Vector3(0.020f, -0.038f, 0f);
+                        crateShadow.localScale = Vector3.one * 0.84f;
                         var shadowRenderer = crateShadow.GetComponent<SpriteRenderer>();
                         if (shadowRenderer != null)
-                            shadowRenderer.color = new Color(0f, 0f, 0f, 0.20f);
+                            shadowRenderer.color = new Color(0f, 0f, 0f, 0.13f);
                     }
+
+                    if (UsesOptionOneSkin(a))
+                        AddSoftBevel(go, fill, crateC, a);
 
                     // Plain cargo uses a quiet inset hatch. Chapter V colour cargo instead receives
                     // a semantic mark (coral sprig, sky wind or green leaf); its target receives the
@@ -451,6 +457,18 @@ namespace Parabox
                         AddNestedShellDoorways(go, a, innerRoom, s, interiorC,
                             e, model.rooms[e.roomId]);
 
+                    // Option 1: preserve the live miniature and doorway while giving only the
+                    // remaining square shell a restrained lower-right depth edge. Doorway shells
+                    // deliberately disable their continuous frame, so they also skip this layer.
+                    if (!e.playerContainer && UsesOptionOneSkin(a))
+                    {
+                        var visibleFrame = go.transform.Find("Frame");
+                        var visibleFrameRenderer = visibleFrame != null
+                            ? visibleFrame.GetComponent<SpriteRenderer>() : null;
+                        if (visibleFrameRenderer != null && visibleFrameRenderer.enabled)
+                            AddSoftFrameBevel(visibleFrame, visibleFrameRenderer, shellAccent);
+                    }
+
                     // The meta-box frame already communicates the boundary. At preview scale, a
                     // full row of near-black perimeter wall cells merges into four heavy blocks
                     // around the tiny room. Hide only those perimeter-wall visuals; collision is
@@ -481,6 +499,9 @@ namespace Parabox
                         PromoteNestedContents(nestedRoot);
             }
 
+            if (goalTargets.Count > 0)
+                worldRoot.gameObject.AddComponent<GoalFeedbackFx>()
+                    .Configure(model, views, goalTargets, a.cellSprite);
             return worldRoot;
         }
 
@@ -592,6 +613,54 @@ namespace Parabox
             return go;
         }
 
+        // A low-profile mechanic plate: enough lower-right depth to read as physical hardware,
+        // with hairline edge lighting instead of a thick frame. Symbols are drawn above it by the
+        // caller, so the same plate can support one-way arrows and the magnet without ambiguity.
+        static void AddSlimMechanicPlate(Transform parent, BoardAssets a, string name,
+                                         Color accent, int order, float size = 0.84f)
+        {
+            if (parent == null || a == null || a.cellSprite == null) return;
+
+            Color faceColor = Color.Lerp(OptionOneFloor, accent, 0.13f);
+            var depth = new GameObject(name + "Depth");
+            depth.transform.SetParent(parent, false);
+            depth.transform.localPosition = new Vector3(0.020f, -0.032f, 0f);
+            depth.transform.localScale = Vector3.one * size;
+            var depthRenderer = depth.AddComponent<SpriteRenderer>();
+            depthRenderer.sprite = a.cellSprite;
+            Color depthColor = Darken(accent, 0.64f);
+            depthRenderer.color = new Color(depthColor.r, depthColor.g, depthColor.b, 0.70f);
+            depthRenderer.sortingOrder = order;
+
+            var face = new GameObject(name + "Face");
+            face.transform.SetParent(parent, false);
+            face.transform.localPosition = new Vector3(-0.006f, 0.008f, 0f);
+            face.transform.localScale = Vector3.one * (size - 0.018f);
+            var faceRenderer = face.AddComponent<SpriteRenderer>();
+            faceRenderer.sprite = a.cellSprite;
+            faceRenderer.color = new Color(faceColor.r, faceColor.g, faceColor.b, 0.94f);
+            faceRenderer.sortingOrder = order + 1;
+
+            float edge = size * 0.455f;
+            Color highlight = Lighten(accent, 0.28f);
+            highlight.a = 0.58f;
+            GameObject top = Bar(parent, a.cellSprite, highlight, order + 2,
+                new Vector2(-0.010f, edge), size * 0.64f, 0.018f, 0f);
+            top.name = name + "TopLight";
+            GameObject left = Bar(parent, a.cellSprite, highlight, order + 2,
+                new Vector2(-edge, 0.006f), size * 0.58f, 0.016f, 90f);
+            left.name = name + "LeftLight";
+
+            Color shade = Darken(accent, 0.52f);
+            shade.a = 0.54f;
+            GameObject bottom = Bar(parent, a.cellSprite, shade, order + 2,
+                new Vector2(0.012f, -edge), size * 0.64f, 0.020f, 0f);
+            bottom.name = name + "BottomShade";
+            GameObject right = Bar(parent, a.cellSprite, shade, order + 2,
+                new Vector2(edge, -0.006f), size * 0.58f, 0.018f, 90f);
+            right.name = name + "RightShade";
+        }
+
         static float DirAngle(Vector2Int d)
         {
             if (d == Vector2Int.up) return 90f;
@@ -618,18 +687,25 @@ namespace Parabox
         // its thin green outer ring matches the green gate it opens. This removes the old visual
         // contradiction where an orange crate appeared to belong on a completely green target.
         static void PaintSwitches(Transform root, PRoom room, BoardAssets a,
-                                  bool[,] cells, Color tint, bool heavy)
+                                  bool[,] cells, Color tint, bool heavy, LevelModel model)
         {
             if (cells == null || a.cellSprite == null) return;
             for (int cx = 0; cx < room.width; cx++)
                 for (int cy = 0; cy < room.height; cy++)
                 {
                     if (!cells[cx, cy]) continue;
+                    var cell = new Vector2Int(cx, cy);
+                    // A gate button may intentionally share a cargo target. Its premium goal
+                    // carries both identities, so do not draw another ring and hatch underneath.
+                    if (PremiumCargoSocket.ArtAvailable && PremiumCargoSocket.HasCargoGoal(room, cell))
+                        continue;
                     var sw = new GameObject(heavy ? "Plate" : "Button");
                     sw.transform.SetParent(root, false);
                     sw.transform.localPosition = Cell(room, new Vector2Int(cx, cy));
 
                     Color socketTint = heavy ? tint : OptionOneBox;
+                    if (PremiumCargoSocket.TryBuild(sw, a, model, room, cell, socketTint))
+                        continue;
 
                     var bed = new GameObject("Recess");
                     bed.transform.SetParent(sw.transform, false);
@@ -859,15 +935,26 @@ namespace Parabox
                     pad.transform.SetParent(root, false);
                     pad.transform.localPosition = Cell(room, new Vector2Int(cx, cy));
 
-                    var bed = new GameObject("Bed");
-                    bed.transform.SetParent(pad.transform, false);
-                    bed.transform.localScale = Vector3.one * 0.90f;
-                    var bsr = bed.AddComponent<SpriteRenderer>();
-                    bsr.sprite = a.cellSprite;
-                    bsr.color = new Color(tint.r, tint.g, tint.b, 0.26f);
-                    bsr.sortingOrder = OrderFloorCell + 1;
-
-                    int order = OrderFloorCell + 2;
+                    int order;
+                    if (motif == PadMotif.Poles)
+                    {
+                        // The magnet is real low-profile hardware, not another translucent floor
+                        // stain. Its U silhouette remains the unique gameplay meaning.
+                        AddSlimMechanicPlate(pad.transform, a, "MagnetPlate", tint,
+                            OrderFloorCell + 2, 0.82f);
+                        order = OrderFloorCell + 5;
+                    }
+                    else
+                    {
+                        var bed = new GameObject("Bed");
+                        bed.transform.SetParent(pad.transform, false);
+                        bed.transform.localScale = Vector3.one * 0.90f;
+                        var bsr = bed.AddComponent<SpriteRenderer>();
+                        bsr.sprite = a.cellSprite;
+                        bsr.color = new Color(tint.r, tint.g, tint.b, 0.26f);
+                        bsr.sortingOrder = OrderFloorCell + 1;
+                        order = OrderFloorCell + 2;
+                    }
                     switch (motif)
                     {
                         case PadMotif.ChevronUp:      // cargo rises here
@@ -923,22 +1010,48 @@ namespace Parabox
                             {
                                 var gl = new GameObject("Field");
                                 gl.transform.SetParent(pad.transform, false);
-                                gl.transform.localScale = Vector3.one * 1.25f;
+                                gl.transform.localScale = Vector3.one * 0.92f;
                                 var glr = gl.AddComponent<SpriteRenderer>();
                                 glr.sprite = a.glowSprite;
-                                glr.color = new Color(tint.r, tint.g, tint.b, 0.34f);
+                                glr.color = new Color(tint.r, tint.g, tint.b, 0.14f);
                                 glr.sortingOrder = OrderFloorCell + 1;
                             }
-                            Bar(pad.transform, a.cellSprite, tint, order, new Vector2(0f, 0.14f), 0.46f, 0.16f, 0f);
-                            Bar(pad.transform, a.cellSprite, Lighten(tint, 0.55f), order,
-                                new Vector2(0f, -0.14f), 0.46f, 0.16f, 0f);
+
+                            Color magnetShadow = Darken(tint, 0.58f);
+                            magnetShadow.a = 0.82f;
+                            Vector2 magnetDepth = new Vector2(0.018f, -0.022f);
+                            Bar(pad.transform, a.cellSprite, magnetShadow, order,
+                                new Vector2(-0.18f, 0.02f) + magnetDepth, 0.40f, 0.115f, 90f);
+                            Bar(pad.transform, a.cellSprite, magnetShadow, order,
+                                new Vector2(0.18f, 0.02f) + magnetDepth, 0.40f, 0.115f, 90f);
+                            Bar(pad.transform, a.cellSprite, magnetShadow, order,
+                                new Vector2(0f, -0.18f) + magnetDepth, 0.46f, 0.115f, 0f);
+
+                            Bar(pad.transform, a.cellSprite, tint, order + 1,
+                                new Vector2(-0.18f, 0.02f), 0.40f, 0.105f, 90f);
+                            Bar(pad.transform, a.cellSprite, tint, order + 1,
+                                new Vector2(0.18f, 0.02f), 0.40f, 0.105f, 90f);
+                            Bar(pad.transform, a.cellSprite, tint, order + 1,
+                                new Vector2(0f, -0.18f), 0.46f, 0.105f, 0f);
+
+                            Color poleLight = new Color(0.45f, 0.92f, 1f, 1f);
+                            Bar(pad.transform, a.cellSprite, poleLight, order + 2,
+                                new Vector2(-0.18f, 0.235f), 0.15f, 0.10f, 0f);
+                            Bar(pad.transform, a.cellSprite, poleLight, order + 2,
+                                new Vector2(0.18f, 0.235f), 0.15f, 0.10f, 0f);
+                            Color magnetShine = Lighten(tint, 0.36f);
+                            magnetShine.a = 0.58f;
+                            Bar(pad.transform, a.cellSprite, magnetShine, order + 2,
+                                new Vector2(-0.205f, 0.015f), 0.27f, 0.018f, 90f);
+                            Bar(pad.transform, a.cellSprite, magnetShine, order + 2,
+                                new Vector2(0.155f, 0.015f), 0.27f, 0.018f, 90f);
                             break;
                     }
                 }
         }
 
         static void PaintRoom(Transform root, PRoom room, BoardAssets a, BoardTiles tiles,
-                              LevelModel model)
+                              LevelModel model, List<GoalFeedbackFx.Target> goalTargets)
         {
             Color floorC = RoomColor(a.roomColors, room.id);
             bool main = room.id == 0;
@@ -1157,43 +1270,38 @@ namespace Parabox
                         ow.transform.SetParent(root, false);
                         ow.transform.localPosition = Cell(room, new Vector2Int(cx, cy));
                         bool nestedPreview = room.id > 0;
-                        // Recursive rooms may be shown as a miniature inside one box cell. Give
-                        // their teaching arrow a controlled clarity boost without changing its
-                        // logical cell or the outer meta-box footprint.
-                        ow.transform.localScale = Vector3.one * (nestedPreview ? 1.30f : 1f);
-
-                        var bed = new GameObject("Bed");
-                        bed.transform.SetParent(ow.transform, false);
-                        bed.transform.localScale = Vector3.one * (nestedPreview ? 1.02f : 0.90f);
-                        var bsr3 = bed.AddComponent<SpriteRenderer>();
-                        bsr3.sprite = a.cellSprite;
-                        bsr3.color = new Color(amber.r, amber.g, amber.b,
-                            nestedPreview ? 0.38f : 0.18f);
-                        bsr3.sortingOrder = OrderFloorCell + 1;
-
-                        if (nestedPreview && a.ringSprite != null)
-                        {
-                            var halo = new GameObject("PreviewHalo");
-                            halo.transform.SetParent(ow.transform, false);
-                            halo.transform.localScale = Vector3.one * 1.08f;
-                            var haloRenderer = halo.AddComponent<SpriteRenderer>();
-                            haloRenderer.sprite = a.ringSprite;
-                            haloRenderer.color = new Color(1f, 0.84f, 0.38f, 0.62f);
-                            haloRenderer.sortingOrder = OrderFloorCell + 2;
-                        }
+                        // Keep the shallow plate inside one cell, including recursive previews.
+                        ow.transform.localScale = Vector3.one * (nestedPreview ? 1.12f : 1f);
+                        AddSlimMechanicPlate(ow.transform, a, "OneWayPlate", amber,
+                            OrderFloorCell + 1, nestedPreview ? 0.80f : 0.84f);
 
                         // A pair of stacked chevrons — unmistakably "this way only".
-                        Color arrowColor = nestedPreview ? Lighten(amber, 0.18f) : amber;
-                        float arrowScale = nestedPreview ? 1.12f : 1f;
+                        Color arrowColor = nestedPreview ? Lighten(amber, 0.16f) : amber;
+                        Color arrowShadow = Darken(amber, 0.58f);
+                        arrowShadow.a = 0.78f;
+                        float arrowScale = nestedPreview ? 0.88f : 0.82f;
+                        Vector3 first = new Vector3(d.x * 0.11f, d.y * 0.11f, 0f);
+                        Vector3 second = new Vector3(-d.x * 0.11f, -d.y * 0.11f, 0f);
+
+                        var shadow1 = Chevron(ow.transform, a.cellSprite, arrowShadow,
+                            OrderFloorCell + 4, d, arrowScale);
+                        shadow1.name = "ChevronDepthA";
+                        shadow1.transform.localPosition = first + new Vector3(0.018f, -0.022f, 0f);
+                        var shadow2 = Chevron(ow.transform, a.cellSprite, arrowShadow,
+                            OrderFloorCell + 4, d, arrowScale);
+                        shadow2.name = "ChevronDepthB";
+                        shadow2.transform.localPosition = second + new Vector3(0.018f, -0.022f, 0f);
+
                         var c1 = Chevron(ow.transform, a.cellSprite, arrowColor,
-                            OrderFloorCell + 3, d, arrowScale);
-                        c1.transform.localPosition = new Vector3(d.x * 0.12f, d.y * 0.12f, 0f);
-                        var c2 = Chevron(ow.transform, a.cellSprite,
-                            new Color(arrowColor.r, arrowColor.g, arrowColor.b,
-                                nestedPreview ? 0.78f : 0.45f),
-                            OrderFloorCell + 3, d, arrowScale);
-                        c2.transform.localPosition = new Vector3(-d.x * 0.12f,
-                            -d.y * 0.12f, 0f);
+                            OrderFloorCell + 5, d, arrowScale);
+                        c1.name = "ChevronFaceA";
+                        c1.transform.localPosition = first;
+                        Color secondColor = Lighten(amber, 0.06f);
+                        secondColor.a = nestedPreview ? 0.92f : 0.82f;
+                        var c2 = Chevron(ow.transform, a.cellSprite, secondColor,
+                            OrderFloorCell + 5, d, arrowScale);
+                        c2.name = "ChevronFaceB";
+                        c2.transform.localPosition = second;
                     }
             }
 
@@ -1264,8 +1372,8 @@ namespace Parabox
             // green shells open green gates, amber plates open amber gates.
             Color shellC = new Color(0.42f, 0.95f, 0.62f, 1f);
             Color plateC = new Color(1f, 0.74f, 0.30f, 1f);
-            PaintSwitches(root, room, a, room.button, shellC, false);
-            PaintSwitches(root, room, a, room.plate, plateC, true);
+            PaintSwitches(root, room, a, room.button, shellC, false, model);
+            PaintSwitches(root, room, a, room.plate, plateC, true, model);
             PaintGates(root, room, a, room.gate, shellC, tiles == null ? null : tiles.gates);
             PaintGates(root, room, a, room.heavyGate, plateC, tiles == null ? null : tiles.heavyGates);
 
@@ -1509,8 +1617,8 @@ namespace Parabox
                     }
             }
 
-            // Breakable rock: a chunky block with a fracture through it, so it reads as "hit this"
-            // rather than "wall". Registered, because a crate turns it into open floor.
+            // Breakable rock: a compact faceted block with a fracture through it, so it reads as
+            // "hit this" rather than "wall". Registered because a crate shatters it into floor.
             if (room.rock != null && a.cellSprite != null)
             {
                 Color stone = new Color(0.46f, 0.40f, 0.39f, 1f);
@@ -1523,41 +1631,66 @@ namespace Parabox
                         rk.transform.SetParent(root, false);
                         rk.transform.localPosition = Cell(room, cell);
 
+                        var depth = new GameObject("RockDepth");
+                        depth.transform.SetParent(rk.transform, false);
+                        depth.transform.localPosition = new Vector3(0.026f, -0.040f, 0f);
+                        depth.transform.localScale = Vector3.one * 0.80f;
+                        var depthSr = depth.AddComponent<SpriteRenderer>();
+                        depthSr.sprite = a.cellSprite;
+                        depthSr.color = Darken(stone, 0.52f);
+                        depthSr.sortingOrder = OrderWall;
+
                         var body = new GameObject("Body");
                         body.transform.SetParent(rk.transform, false);
-                        body.transform.localScale = Vector3.one * TileSize;
+                        body.transform.localPosition = new Vector3(-0.008f, 0.012f, 0f);
+                        body.transform.localRotation = Quaternion.Euler(0f, 0f, -2f);
+                        body.transform.localScale = Vector3.one * 0.78f;
                         var rsr = body.AddComponent<SpriteRenderer>();
                         rsr.sprite = a.cellSprite;
                         rsr.color = stone;
-                        rsr.sortingOrder = OrderWall;
+                        rsr.sortingOrder = OrderWall + 1;
 
                         if (a.ringSprite != null)
                         {
                             var bevel = new GameObject("StoneBevel");
                             bevel.transform.SetParent(rk.transform, false);
-                            bevel.transform.localScale = Vector3.one * 0.86f;
+                            bevel.transform.localPosition = new Vector3(-0.008f, 0.012f, 0f);
+                            bevel.transform.localRotation = Quaternion.Euler(0f, 0f, -2f);
+                            bevel.transform.localScale = Vector3.one * 0.70f;
                             var bevelSr = bevel.AddComponent<SpriteRenderer>();
                             bevelSr.sprite = a.ringSprite;
                             bevelSr.color = Lighten(stone, 0.18f);
-                            bevelSr.sortingOrder = OrderWall + 1;
+                            bevelSr.sortingOrder = OrderWall + 2;
                         }
 
-                        var top = new GameObject("Lit");        // a lit top face = mass
+                        var top = new GameObject("Lit");
                         top.transform.SetParent(rk.transform, false);
-                        top.transform.localPosition = new Vector3(0f, 0.34f, 0f);
-                        top.transform.localScale = new Vector3(0.70f, 0.085f, 1f);
+                        top.transform.localPosition = new Vector3(-0.04f, 0.326f, 0f);
+                        top.transform.localRotation = Quaternion.Euler(0f, 0f, -2f);
+                        top.transform.localScale = new Vector3(0.48f, 0.038f, 1f);
                         var tsr = top.AddComponent<SpriteRenderer>();
                         tsr.sprite = a.cellSprite;
-                        tsr.color = Lighten(stone, 0.30f);
-                        tsr.sortingOrder = OrderWall + 1;
+                        Color rockLight = Lighten(stone, 0.34f);
+                        rockLight.a = 0.72f;
+                        tsr.color = rockLight;
+                        tsr.sortingOrder = OrderWall + 3;
+
+                        Color facetLight = Lighten(stone, 0.13f);
+                        facetLight.a = 0.30f;
+                        Bar(rk.transform, a.cellSprite, facetLight, OrderWall + 3,
+                            new Vector2(-0.20f, 0.10f), 0.28f, 0.15f, -10f);
+                        Color facetShade = Darken(stone, 0.16f);
+                        facetShade.a = 0.34f;
+                        Bar(rk.transform, a.cellSprite, facetShade, OrderWall + 3,
+                            new Vector2(0.19f, -0.13f), 0.30f, 0.14f, 12f);
 
                         Color seam = new Color(0.12f, 0.09f, 0.08f, 0.85f);
-                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 3,
-                            new Vector2(-0.03f, 0.11f), 0.48f, 0.065f, 72f);
-                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 3,
-                            new Vector2(0.10f, -0.14f), 0.30f, 0.060f, 30f);
-                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 3,
-                            new Vector2(-0.14f, -0.04f), 0.24f, 0.055f, -32f);
+                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 5,
+                            new Vector2(-0.03f, 0.11f), 0.46f, 0.046f, 72f);
+                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 5,
+                            new Vector2(0.10f, -0.14f), 0.27f, 0.042f, 30f);
+                        Bar(rk.transform, a.cellSprite, seam, OrderWall + 5,
+                            new Vector2(-0.14f, -0.04f), 0.22f, 0.040f, -32f);
 
                         if (tiles != null) tiles.rocks[(room.id, cell)] = rk;
                     }
@@ -1706,7 +1839,9 @@ namespace Parabox
                 var go = Object.Instantiate(a.boxGoalPrefab, root);
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
-                StyleGoal(go, a.boxColor, false, a);
+                StyleGoal(go, a.boxColor, false, a, model, room, g);
+                goalTargets.Add(new GoalFeedbackFx.Target(go, room.id, g,
+                    GoalFeedbackFx.Kind.Cargo, a.boxColor));
             }
             foreach (var g in room.playerGoals)
             {
@@ -1714,6 +1849,8 @@ namespace Parabox
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
                 StyleGoal(go, a.playerColor, true, a);
+                goalTargets.Add(new GoalFeedbackFx.Target(go, room.id, g,
+                    GoalFeedbackFx.Kind.Player, a.playerColor));
             }
             // The echo's goal: the diver marker in the echo's own pale blue, so the pair reads as
             // "this one is for the other you".
@@ -1725,6 +1862,8 @@ namespace Parabox
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
                 StyleGoal(go, mirrorC, true, a);
+                goalTargets.Add(new GoalFeedbackFx.Target(go, room.id, g,
+                    GoalFeedbackFx.Kind.Mirror, mirrorC));
             }
             foreach (var g in room.echoGoals)
             {
@@ -1732,6 +1871,8 @@ namespace Parabox
                 go.transform.localPosition = Cell(room, g);
                 SetOrder(go, OrderGoal);
                 StyleGoal(go, echoC, true, a);
+                goalTargets.Add(new GoalFeedbackFx.Target(go, room.id, g,
+                    GoalFeedbackFx.Kind.Echo, echoC));
             }
             // A coloured goal wears exactly the hue of the one crate that satisfies it.
             foreach (var (cell, colour) in room.colourGoals)
@@ -1740,8 +1881,11 @@ namespace Parabox
                 go.transform.localPosition = Cell(room, cell);
                 SetOrder(go, OrderGoal);
                 Color gc = CrateColour(a.boxColor, colour);
-                StyleGoal(go, gc, false, a);
-                AddColourIdentity(go.transform, a, colour, gc, OrderGoal + 3, true);
+                StyleGoal(go, gc, false, a, model, room, cell, colour);
+                if (go.GetComponent<PremiumCargoSocket>() == null)
+                    AddColourIdentity(go.transform, a, colour, gc, OrderGoal + 3, true);
+                goalTargets.Add(new GoalFeedbackFx.Target(go, room.id, cell,
+                    GoalFeedbackFx.Kind.Colour, gc, colour));
             }
         }
 
@@ -2026,9 +2170,9 @@ namespace Parabox
                 // Tutorials use one restrained structural edge. Keep it in the board's blue/cyan
                 // family so the same near-black seam can never reappear on a lesson board.
                 Color tutorialEdge = Color.Lerp(a.frameColor, OptionOneBevel, 0.45f);
-                tutorialEdge.a = 0.82f;
+                tutorialEdge.a = 0.76f;
                 CreateContourLine(contour.transform, "TutorialBoundary", points, material,
-                    tutorialEdge, 0.12f,
+                    tutorialEdge, 0.085f,
                     OrderWall + 1, loop);
                 return;
             }
@@ -2038,12 +2182,12 @@ namespace Parabox
             // horizontal/vertical seams seen in multiple levels. The remaining glow, bevel and
             // cyan edge preserve a readable premium boundary without a black line artifact.
             CreateContourLine(contour.transform, "CyanGlow", points, material,
-                new Color(a.frameColor.r, a.frameColor.g, a.frameColor.b, 0.30f),
-                0.26f, OrderWall, loop);
+                new Color(a.frameColor.r, a.frameColor.g, a.frameColor.b, 0.22f),
+                0.18f, OrderWall, loop);
             CreateContourLine(contour.transform, "CobaltBevel", points, material,
-                OptionOneBevel, 0.135f, OrderWall + 2, loop);
+                OptionOneBevel, 0.105f, OrderWall + 2, loop);
             CreateContourLine(contour.transform, "CyanEdge", points, material,
-                a.frameColor, 0.060f, OrderWall + 3, loop);
+                a.frameColor, 0.045f, OrderWall + 3, loop);
         }
 
         static Material BoundaryLineMaterial(BoardAssets a)
@@ -2196,16 +2340,17 @@ namespace Parabox
             wallRoot.SetParent(root, false);
             wallRoot.localPosition = p;
 
-            // cast shadow only where the mass actually meets open floor
+            // Cast a short, soft shadow only where the mass actually meets open floor. Option 1
+            // is intentionally shallow: walls stay square architecture instead of tall blocks.
             if (!below && a.glowSprite != null)
             {
                 var sh = new GameObject("WallShadow");
                 sh.transform.SetParent(wallRoot, false);
-                sh.transform.localPosition = new Vector3(0f, -0.34f, 0f);
-                sh.transform.localScale = new Vector3(1.5f, 0.85f, 1f);
+                sh.transform.localPosition = new Vector3(0f, -0.405f, 0f);
+                sh.transform.localScale = new Vector3(1.15f, 0.52f, 1f);
                 var ssr = sh.AddComponent<SpriteRenderer>();
                 ssr.sprite = a.glowSprite;
-                ssr.color = new Color(0f, 0f, 0f, 0.5f);
+                ssr.color = new Color(0f, 0f, 0f, 0.28f);
                 ssr.sortingOrder = OrderWall - 1;
             }
 
@@ -2225,30 +2370,31 @@ namespace Parabox
                 foreach (var sr in w.GetComponentsInChildren<SpriteRenderer>(true)) sr.color = wallFace;
             }
 
-            // the lit top face of the slab — gives the mass real thickness against the floor
+            // A thin lit lip supplies depth without turning the square wall footprint into a
+            // rectangle. It is deliberately less than half the height of the previous cap.
             if (!above && a.cellSprite != null)
             {
                 var cap = new GameObject("WallCap");
                 cap.transform.SetParent(wallRoot, false);
-                cap.transform.localPosition = new Vector3(0f, 0.38f, 0f);
-                cap.transform.localScale = new Vector3(1f, 0.24f, 1f);
+                cap.transform.localPosition = new Vector3(0f, 0.435f, 0f);
+                cap.transform.localScale = new Vector3(0.92f, 0.085f, 1f);
                 var csr = cap.AddComponent<SpriteRenderer>();
                 csr.sprite = a.cellSprite;
-                csr.color = Lighten(wallFace, boundary ? 0.42f : 0.34f);
+                csr.color = Lighten(wallFace, boundary ? 0.34f : 0.28f);
                 csr.sortingOrder = OrderWall + 1;
             }
 
             if (!left && a.cellSprite != null)
-                Bar(wallRoot, a.cellSprite, Lighten(wallFace, 0.42f), OrderWall + 1,
-                    new Vector2(-0.445f, 0f), 0.82f, 0.065f, 90f);
+                Bar(wallRoot, a.cellSprite, Lighten(wallFace, 0.32f), OrderWall + 1,
+                    new Vector2(-0.462f, 0f), 0.86f, 0.030f, 90f);
 
             if (!right && a.cellSprite != null)
-                Bar(wallRoot, a.cellSprite, Darken(wallFace, 0.34f), OrderWall + 1,
-                    new Vector2(0.445f, -0.015f), 0.82f, 0.075f, 90f);
+                Bar(wallRoot, a.cellSprite, Darken(wallFace, 0.28f), OrderWall + 1,
+                    new Vector2(0.462f, -0.008f), 0.86f, 0.034f, 90f);
 
             if (!below && a.cellSprite != null)
-                Bar(wallRoot, a.cellSprite, Darken(wallFace, 0.42f), OrderWall + 1,
-                    new Vector2(0f, -0.445f), 0.82f, 0.075f, 0f);
+                Bar(wallRoot, a.cellSprite, Darken(wallFace, 0.34f), OrderWall + 1,
+                    new Vector2(0f, -0.462f), 0.86f, 0.034f, 0f);
         }
 
         static GameObject CreateSlicedPanel(Transform parent, GameObject prefab, string name,
@@ -2270,8 +2416,11 @@ namespace Parabox
         // into the navy floor until it looked grey-purple. Keeping the socket translucent while
         // giving the rim and silhouette enough colour solves that mismatch on every campaign and
         // tutorial board without making a goal look like a second movable actor.
-        static void StyleGoal(GameObject go, Color color, bool playerSilhouette, BoardAssets a)
+        static void StyleGoal(GameObject go, Color color, bool playerSilhouette, BoardAssets a,
+            LevelModel model = null, PRoom room = null, Vector2Int cell = default, int colour = 0)
         {
+            if (!playerSilhouette && room != null
+                && PremiumCargoSocket.TryBuild(go, a, model, room, cell, color, colour)) return;
             foreach (var sr in go.GetComponentsInChildren<SpriteRenderer>(true))
             {
                 string part = sr.gameObject.name;
@@ -2327,6 +2476,8 @@ namespace Parabox
             }
 
             if (!playerSilhouette || a.cellSprite == null) return;
+
+            AddSoftGoalBevel(go, color);
 
             var silhouette = new GameObject("GoalSilhouette");
             silhouette.transform.SetParent(go.transform, false);
@@ -2771,8 +2922,8 @@ namespace Parabox
             mask.backSortingOrder = -100;
         }
 
-        // One continuous flat 2D skin across all 50 levels. Progression comes from puzzle design,
-        // never from replacing the approved board style with a different chapter palette.
+        // One continuous shallow-3D skin across all 50 levels. Progression comes from puzzle
+        // design, never from replacing the approved board style with a different chapter palette.
         static void ApplyChapterSkin(BoardAssets a)
         {
             if (!UsesOptionOneSkin(a)) return;
@@ -2825,6 +2976,109 @@ namespace Parabox
             rsr.sprite = a.ringSprite;
             rsr.color = Lighten(fillColor, 0.45f);
             rsr.sortingOrder = tsr.sortingOrder + 1;
+        }
+
+        // The selected Option 1 treatment: a square face with only a hairline bevel and a tiny
+        // lower-right depth reveal. All layers live under the entity root, so existing movement,
+        // squash, goal seating and recursive reparent animation continue to affect one coherent
+        // piece. This is presentation only; the logical one-cell footprint never changes.
+        static void AddSoftBevel(GameObject piece, Transform face, Color color, BoardAssets a)
+        {
+            if (piece == null || face == null || a == null || a.cellSprite == null
+                || piece.transform.Find("SoftBevelDepth") != null) return;
+
+            var source = face.GetComponent<SpriteRenderer>();
+            if (source == null || source.sprite == null) return;
+
+            var depth = new GameObject("SoftBevelDepth");
+            depth.transform.SetParent(piece.transform, false);
+            depth.transform.localPosition = new Vector3(0.022f, -0.030f, 0f);
+            depth.transform.localScale = Vector3.one * OptionOneObjectSize;
+            var depthRenderer = depth.AddComponent<SpriteRenderer>();
+            depthRenderer.sprite = source.sprite;
+            depthRenderer.sharedMaterial = source.sharedMaterial;
+            depthRenderer.sortingLayerID = source.sortingLayerID;
+            depthRenderer.sortingOrder = source.sortingOrder - 1;
+            Color depthColor = Darken(color, 0.50f);
+            depthRenderer.color = new Color(depthColor.r, depthColor.g, depthColor.b, 0.82f);
+
+            Color highlight = Lighten(color, 0.34f);
+            highlight.a = 0.64f;
+            GameObject top = Bar(piece.transform, a.cellSprite, highlight,
+                source.sortingOrder + 1, new Vector2(-0.018f, 0.414f), 0.68f, 0.018f, 0f);
+            top.name = "SoftBevelTop";
+            GameObject left = Bar(piece.transform, a.cellSprite, highlight,
+                source.sortingOrder + 1, new Vector2(-0.414f, 0.010f), 0.64f, 0.016f, 90f);
+            left.name = "SoftBevelLeft";
+
+            Color shade = Darken(color, 0.42f);
+            shade.a = 0.58f;
+            GameObject bottom = Bar(piece.transform, a.cellSprite, shade,
+                source.sortingOrder + 1, new Vector2(0.018f, -0.414f), 0.68f, 0.020f, 0f);
+            bottom.name = "SoftBevelBottom";
+            GameObject right = Bar(piece.transform, a.cellSprite, shade,
+                source.sortingOrder + 1, new Vector2(0.414f, -0.010f), 0.64f, 0.020f, 90f);
+            right.name = "SoftBevelRight";
+        }
+
+        static void AddSoftFrameBevel(Transform frame, SpriteRenderer source, Color color)
+        {
+            if (frame == null || source == null || source.sprite == null
+                || frame.Find("SoftFrameDepth") != null) return;
+
+            var depth = new GameObject("SoftFrameDepth");
+            depth.transform.SetParent(frame, false);
+            depth.transform.localPosition = new Vector3(0.020f, -0.026f, 0f);
+            var depthRenderer = depth.AddComponent<SpriteRenderer>();
+            depthRenderer.sprite = source.sprite;
+            depthRenderer.sharedMaterial = source.sharedMaterial;
+            depthRenderer.sortingLayerID = source.sortingLayerID;
+            depthRenderer.sortingOrder = source.sortingOrder - 1;
+            Color shade = Darken(color, 0.52f);
+            depthRenderer.color = new Color(shade.r, shade.g, shade.b, 0.78f);
+
+            var light = new GameObject("SoftFrameHighlight");
+            light.transform.SetParent(frame, false);
+            light.transform.localPosition = new Vector3(-0.006f, 0.008f, 0f);
+            var lightRenderer = light.AddComponent<SpriteRenderer>();
+            lightRenderer.sprite = source.sprite;
+            lightRenderer.sharedMaterial = source.sharedMaterial;
+            lightRenderer.sortingLayerID = source.sortingLayerID;
+            lightRenderer.sortingOrder = source.sortingOrder + 1;
+            Color shine = Lighten(color, 0.28f);
+            lightRenderer.color = new Color(shine.r, shine.g, shine.b, 0.20f);
+        }
+
+        static void AddSoftGoalBevel(GameObject goal, Color color)
+        {
+            if (goal == null || goal.transform.Find("SoftGoalDepth") != null) return;
+            Transform ring = goal.transform.Find("Ring");
+            var source = ring != null ? ring.GetComponent<SpriteRenderer>() : null;
+            if (source == null || source.sprite == null) return;
+
+            var depth = new GameObject("SoftGoalDepth");
+            depth.transform.SetParent(goal.transform, false);
+            depth.transform.localPosition = new Vector3(0.014f, -0.020f, 0f);
+            depth.transform.localScale = ring.localScale;
+            var depthRenderer = depth.AddComponent<SpriteRenderer>();
+            depthRenderer.sprite = source.sprite;
+            depthRenderer.sharedMaterial = source.sharedMaterial;
+            depthRenderer.sortingLayerID = source.sortingLayerID;
+            depthRenderer.sortingOrder = source.sortingOrder - 1;
+            Color shade = Darken(color, 0.52f);
+            depthRenderer.color = new Color(shade.r, shade.g, shade.b, 0.64f);
+
+            var light = new GameObject("SoftGoalHighlight");
+            light.transform.SetParent(goal.transform, false);
+            light.transform.localPosition = new Vector3(-0.004f, 0.006f, 0f);
+            light.transform.localScale = ring.localScale;
+            var lightRenderer = light.AddComponent<SpriteRenderer>();
+            lightRenderer.sprite = source.sprite;
+            lightRenderer.sharedMaterial = source.sharedMaterial;
+            lightRenderer.sortingLayerID = source.sortingLayerID;
+            lightRenderer.sortingOrder = source.sortingOrder + 1;
+            Color shine = Lighten(color, 0.30f);
+            lightRenderer.color = new Color(shine.r, shine.g, shine.b, 0.18f);
         }
 
         static void AddEyeOutline(GameObject piece, Transform eye, string name, Color playerColor,

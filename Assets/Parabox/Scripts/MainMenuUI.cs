@@ -150,6 +150,8 @@ namespace Parabox
         Material _approvedMapProgressMaterial;
         Material _approvedLockedBlurMaterial;
         bool _approvedNativeMap;
+        PremiumMapDeck _premiumMapDeck;
+        readonly PremiumLevelNode[] _premiumLevelNodes = new PremiumLevelNode[CampaignLevelCount];
         [SerializeField, HideInInspector]
         GameObject[] _approvedCompletedBadges = new GameObject[CampaignLevelCount];
         readonly float[] _approvedMapCompleted = new float[CampaignLevelCount];
@@ -435,6 +437,10 @@ namespace Parabox
         static void EnsureHomeActionButton(Button button, string label, bool isPlay)
         {
             if (button == null) return;
+            // The approved enamel art skins the original Button; labels, hit targets and actions
+            // stay native. Older scenes keep their fallback style if a resource is unavailable.
+            if (PremiumMenuButton.TryApply(button, FindHomeButtonLabel(button), label, isPlay))
+                return;
 
             button.gameObject.SetActive(true);
             button.interactable = true;
@@ -452,7 +458,7 @@ namespace Parabox
             RectTransform buttonRect = button.transform as RectTransform;
             if (buttonRect != null)
             {
-                buttonRect.anchoredPosition = new Vector2(isPlay ? -225f : 225f, -365f);
+                buttonRect.anchoredPosition = new Vector2(isPlay ? -225f : 225f, -355f);
                 buttonRect.sizeDelta = new Vector2(370f, 112f);
             }
 
@@ -1282,6 +1288,29 @@ namespace Parabox
 
         void CloseLevelBoard()
         {
+            if (transitioning || screen != 1) return;
+            PremiumBackButton back = levelBoardBackButton != null
+                ? levelBoardBackButton.GetComponent<PremiumBackButton>() : null;
+            if (back != null && back.enabled && levelBoardBackButton.IsActive()
+                && levelBoardBackButton.IsInteractable())
+            {
+                transitioning = true;
+                StartCoroutine(CloseLevelBoardAfterPress(back));
+                return;
+            }
+            FinishCloseLevelBoard();
+        }
+
+        System.Collections.IEnumerator CloseLevelBoardAfterPress(PremiumBackButton back)
+        {
+            // Mouse, keyboard and arcade Back share one visible press before the map hides.
+            yield return back.AnimateActivation();
+            if (screen == 1) FinishCloseLevelBoard();
+            transitioning = false;
+        }
+
+        void FinishCloseLevelBoard()
+        {
             Sfx.Ding();
             screen = 0;
             // NOT StopAllCoroutines() here: that would also kill DiveIntoBoard and RiseOutOfBoard,
@@ -1617,10 +1646,20 @@ namespace Parabox
         {
             if (transitioning) return;
             if (!Unlocked(index)) { Sfx.Blocked(); return; }
-            // Every level, including Level 50, uses the same immediate game-scene handoff.
-            // The old Level-50-only map zoom exposed the title background while it moved the
-            // oversized map and made the button appear not to enter gameplay.
             transitioning = true;   // guard against UI Submit and key polling both firing this frame
+            PremiumLevelNode face = index >= 0 && index < _premiumLevelNodes.Length
+                ? _premiumLevelNodes[index] : null;
+            // All 50 real buttons use one brief physical press before the existing handoff.
+            // Selection, saved progress and the auto-start path are unchanged.
+            if (face != null && face.isActiveAndEnabled)
+                StartCoroutine(PressLevelThenStart(face, index));
+            else StartLevel(index);
+        }
+
+        System.Collections.IEnumerator PressLevelThenStart(PremiumLevelNode face, int index)
+        {
+            yield return face.AnimateActivation();
+            yield return null;
             StartLevel(index);
         }
 
@@ -2000,6 +2039,23 @@ namespace Parabox
                             hover.highlight.transform.parent == button.transform ? 1f : 0.34f);
                 }
             }
+            ApplyPremiumMapSurfaces(approvedMap);
+        }
+
+        void ApplyPremiumMapSurfaces(Transform approvedMap)
+        {
+            var positions = new Vector2[CampaignLevelCount];
+            Font font = null;
+            for (int i = 0; i < positions.Length; i++)
+            {
+                positions[i] = ApprovedMapNodePosition(i);
+                Text number = levelNumbers != null && i < levelNumbers.Length ? levelNumbers[i] : null;
+                Image border = levelBorders != null && i < levelBorders.Length ? levelBorders[i] : null;
+                if (number != null && font == null) font = number.font;
+                if (i < levelButtons.Length)
+                    _premiumLevelNodes[i] = PremiumLevelNode.Apply(levelButtons[i], number, border, i / PerCategory);
+            }
+            _premiumMapDeck = PremiumMapDeck.Apply(approvedMap, positions, font);
         }
 
         static void RemoveApprovedNodeLegacyEffects(Button button)
@@ -2033,6 +2089,11 @@ namespace Parabox
             if (mapCam == null || mapCam.Find("ApprovedFiveChapterMap") == null || levelButtons == null)
                 return;
 
+            // Rebind presentation after an Editor/domain reload without rebuilding selection,
+            // replacing Buttons, or requiring the scene to be rebaked.
+            if (_premiumMapDeck == null || _premiumLevelNodes[0] == null)
+                ApplyPremiumMapSurfaces(mapCam.Find("ApprovedFiveChapterMap"));
+
             int current = CurrentLevel();
             int count = Mathf.Min(CampaignLevelCount, levelButtons.Length);
             for (int i = 0; i < count; i++)
@@ -2049,6 +2110,8 @@ namespace Parabox
                 // Every completed node keeps the connection toward the next stop lit. This makes
                 // the travelled route readable immediately when the map opens.
                 _approvedMapPathLit[i] = beaten && i + 1 < count ? 1f : 0f;
+                if (_premiumLevelNodes[i] != null) _premiumLevelNodes[i].SetCompleted(beaten);
+                if (_premiumMapDeck != null) _premiumMapDeck.SetCompleted(i, beaten);
             }
 
             if (_approvedMapProgressMaterial != null)
@@ -2536,40 +2599,52 @@ namespace Parabox
 
         void BeginStart()
         {
-            if (transitioning) return;
-            // PLAY is the player's continue action: use the last saved unfinished level.
-            transitioning = true;
-            StartCoroutine(PressPlayThenStart());
-        }
-
-        System.Collections.IEnumerator PressPlayThenStart()
-        {
-            // PLAY deliberately uses the exact same shared press animation as LEVEL SELECT.
-            yield return AnimateHomeButtonPress(playButton);
-            // Let the completed bounce render before the synchronous gameplay scene hand-off.
-            // LEVEL SELECT stays in this scene, but PLAY would otherwise replace its final frames.
-            yield return new WaitForSecondsRealtime(0.12f);
-            StartCoroutine(DiveIntoBoard(ResumeLevel()));
+            BeginHomeAction(playButton, true);
         }
 
         void BeginOpenLevelBoard()
         {
-            if (transitioning) return;
-            transitioning = true;
-            StartCoroutine(PressLevelSelectThenOpen());
+            BeginHomeAction(levelsButton, false);
         }
 
-        System.Collections.IEnumerator PressLevelSelectThenOpen()
+        void BeginHomeAction(Button button, bool startGame)
         {
-            // Both home actions use this same animation path and timing.
-            yield return AnimateHomeButtonPress(levelsButton);
-            transitioning = false;
-            OpenLevelBoard();
+            if (transitioning || screen != 0 || button == null
+                || !button.IsActive() || !button.IsInteractable()) return;
+            transitioning = true;
+
+            // Start both clicks from the same authored pose, including preselected PLAY and
+            // a mouse release after a long hold. Also restore transient presentation state
+            // after an Editor script reload before asking it to animate.
+            EnsureHomeActionButton(button, startGame ? "PLAY" : "LEVEL SELECT", startGame);
+            StartCoroutine(PressHomeActionThenContinue(button, startGame));
+        }
+
+        System.Collections.IEnumerator PressHomeActionThenContinue(Button button, bool startGame)
+        {
+            // One owner and one timeline for mouse, keyboard and arcade activation. Neither
+            // destination may hide the menu or load a scene until the rebound has rendered.
+            yield return AnimateHomeButtonPress(button);
+            yield return null;
+            yield return new WaitForSecondsRealtime(0.12f);
+            if (startGame)
+                yield return DiveIntoBoard(ResumeLevel());
+            else
+            {
+                transitioning = false;
+                OpenLevelBoard();
+            }
         }
 
         System.Collections.IEnumerator AnimateHomeButtonPress(Button button)
         {
             if (button == null) yield break;
+            PremiumMenuButton premium = button.GetComponent<PremiumMenuButton>();
+            if (premium != null && premium.enabled)
+            {
+                yield return premium.AnimateActivation();
+                yield break;
+            }
 
             RectTransform rect = button.transform as RectTransform;
             UIHoverScale hover = button.GetComponent<UIHoverScale>();

@@ -9,7 +9,7 @@ using UnityEngine.UI;
 namespace Parabox.EditorTools
 {
     // One-click scene authoring only. The installer never enters Play Mode: it creates or repairs
-    // the serialized purple tutorial action and gives it the Luxodd cabinet number 6 while
+    // the serialized purple tutorial action without a visible cabinet number while
     // preserving its approved centred position below the tutorial card.
     public static class ParaboxPurpleSkipInstaller
     {
@@ -50,7 +50,7 @@ namespace Parabox.EditorTools
             Debug.Log("Purple tutorial Skip installed: cabinet button 6, centred position and 10-second auto-continue.");
             EditorUtility.DisplayDialog("Purple Skip Button 6",
                 "Installed successfully.\n\n"
-                + "The purple SKIP action now shows number 6 and keeps its centred position below the tutorial card.\n\n"
+                + "The purple SKIP action hides its number and keeps its centred position below the tutorial card.\n\n"
                 + "The final tutorial choice now counts down from 10 and continues automatically.\n\n"
                 + "No Play Mode test was started.", "OK");
         }
@@ -133,10 +133,11 @@ namespace Parabox.EditorTools
             label.fontStyle = FontStyle.Bold;
             label.color = Color.white;
             label.alignment = TextAnchor.MiddleCenter;
-            label.rectTransform.anchorMin = label.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            label.rectTransform.anchorMin = Vector2.zero;
+            label.rectTransform.anchorMax = Vector2.one;
             label.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            label.rectTransform.anchoredPosition = new Vector2(30f, 0f);
-            label.rectTransform.sizeDelta = new Vector2(220f, 72f);
+            label.rectTransform.anchoredPosition = Vector2.zero;
+            label.rectTransform.sizeDelta = Vector2.zero;
 
             Transform existingBadge = skip.transform.Find("ButtonNumberBadge");
             GameObject badgeObject;
@@ -178,7 +179,8 @@ namespace Parabox.EditorTools
             number.name = "ButtonNumber";
             number.font = label.font != null
                 ? label.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            number.text = "6";
+            number.text = string.Empty;
+            number.gameObject.SetActive(false);
             number.fontSize = 26;
             number.fontStyle = FontStyle.Bold;
             number.alignment = TextAnchor.MiddleCenter;

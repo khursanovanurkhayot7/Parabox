@@ -1663,8 +1663,8 @@ namespace Parabox.EditorTools
                 label.alignment = TextAnchor.MiddleCenter;
                 label.rectTransform.anchorMin = Vector2.zero;
                 label.rectTransform.anchorMax = Vector2.one;
-                label.rectTransform.offsetMin = new Vector2(70f, 0f);
-                label.rectTransform.offsetMax = new Vector2(-12f, 0f);
+                label.rectTransform.offsetMin = Vector2.zero;
+                label.rectTransform.offsetMax = Vector2.zero;
             }
 
             DestroyNamed(skip.transform, "ButtonNumberBadge");

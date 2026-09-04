@@ -28,6 +28,28 @@ namespace Parabox
 
         Vector3 curPos, targetLocalPos, vel;
         bool hasTarget, moving, lastHoriz = true;
+        bool goalSeated;
+        float goalSeat;
+        float goalSeatScale = 1f;
+        Vector2 goalSeatOffset = Vector2.zero;
+
+        // Wait until the piece visually reaches the socket before confirming it. This avoids a
+        // remote completion light while a pushed crate is still travelling across the previous cell.
+        public bool ReadyForGoalSeat => hasTarget && !sinking
+            && (curPos - targetLocalPos).sqrMagnitude <= 0.0144f;
+
+        public void SetGoalSeated(bool seated, bool instant = false, float seatedScale = 1f,
+            Vector2? alignedOffset = null)
+        {
+            goalSeated = seated;
+            // Keep the previous depth while leaving, so the return to full size never snaps.
+            if (seated)
+            {
+                goalSeatScale = Mathf.Clamp(seatedScale, 0.50f, 1f);
+                goalSeatOffset = alignedOffset ?? Vector2.zero;
+            }
+            if (instant) goalSeat = seated ? 1f : 0f;
+        }
 
         Vector3 settle = Vector3.one;   // reparent grow/shrink -> decays to one
         Vector2 squash = Vector2.one;   // push-off impulse     -> decays to one
@@ -478,9 +500,17 @@ namespace Parabox
                 }   // fully sunk — hide
             }
 
-            transform.localPosition = curPos + bump + anticipationOffset + landingOffset;
-            transform.localScale = new Vector3(settle.x * squash.x * ax * lx * sinkScale,
-                                               settle.y * squash.y * ay * ly * sinkScale, 1f);
+            // Seat into a fulfilled socket, without moving the logical entity or restricting input.
+            // This is separate from trench sinking: the piece stays visible and can leave freely.
+            goalSeat = Mathf.MoveTowards(goalSeat, goalSeated ? 1f : 0f,
+                dt / (goalSeated ? 0.25f : 0.12f));
+            float seat = Mathf.SmoothStep(0f, 1f, goalSeat);
+            float seatScale = Mathf.Lerp(1f, goalSeatScale, seat)
+                - Mathf.Sin(goalSeat * Mathf.PI) * 0.012f;
+            Vector3 seatOffset = new Vector3(goalSeatOffset.x * seat, goalSeatOffset.y * seat, 0f);
+            transform.localPosition = curPos + bump + anticipationOffset + landingOffset + seatOffset;
+            transform.localScale = new Vector3(settle.x * squash.x * ax * lx * sinkScale * seatScale,
+                                               settle.y * squash.y * ay * ly * sinkScale * seatScale, 1f);
             transform.localRotation = Quaternion.Euler(0f, 0f, roll);
 
             // The existing premium halo briefly brightens during push-off and landing. This reuses

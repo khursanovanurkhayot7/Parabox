@@ -169,6 +169,7 @@ namespace Parabox
                 face.raycastTarget = true;
                 button.targetGraphic = face;
             }
+            PremiumBackButton.Apply(button, FindLabel(button));
         }
 
         static Text FindLabel(Button button)

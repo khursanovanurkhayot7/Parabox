@@ -89,6 +89,7 @@ namespace Parabox
         public Text premiumTimeDetail;
         public Text premiumMovesValue;
         public Text premiumMovesDetail;
+        PremiumScoreRings premiumScoreRings;
         int lastScoreGain;
         int endOfRunTotalScore = -1;
         int undoCount;
@@ -179,6 +180,8 @@ namespace Parabox
         static float restartTimerRemaining;
         static float restartTimerCapturedAt;
         static bool restartTimerWasArmed;
+        // A purchased Continue reloads the board, but remains in the same Luxodd level/session.
+        static int continuedLevelReload = -1;
         // Level 1 grants one teaching retry per app/session. Static state survives the scene reload
         // used by that retry, while SubsystemRegistration resets it for a genuinely new launch.
         static bool firstLevelSecondChanceUsed;
@@ -229,12 +232,11 @@ namespace Parabox
         // Every puzzle receives three recovery moves beyond its reviewed solution target. Level 14
         // receives seven after tester feedback identified a sudden difficulty spike; its displayed
         // target remains the truthful authored route while the player gets more room to recover.
-        // Level 2 is reviewed as a 16-move solve (19 visible); Level 10 is reviewed from the cabinet
-        // pass as a 41-move solve, so its visible allowance is exactly 44.
+        // Level 2 is reviewed as a 16-move solve (19 visible). Level 10 uses its authored
+        // 19-move target plus the usual three recovery moves (22 visible), not the old 44-move budget.
         public static int MoveParForLevel(int levelIdx, int levelPar)
         {
             if (levelIdx == 1) return Mathf.Max(16, levelPar);
-            if (levelIdx == 9) return Mathf.Max(41, levelPar);
             return levelPar;
         }
 
@@ -273,6 +275,7 @@ namespace Parabox
             restartTimerRemaining = 0f;
             restartTimerCapturedAt = 0f;
             restartTimerWasArmed = false;
+            continuedLevelReload = -1;
             restartTutorialSuppressionPending = false;
             restartTutorialSuppressionLevel = -1;
             TutorialsSeenThisPlaySession.Clear();
@@ -282,6 +285,11 @@ namespace Parabox
         static void ResetFirstLevelSecondChance()
         {
             firstLevelSecondChanceUsed = false;
+        }
+
+        void Awake()
+        {
+            EnsurePremiumScoreRings();
         }
 
         void Start()
@@ -311,6 +319,8 @@ namespace Parabox
             levelIndex = Mathf.Clamp(editorPreviewLevel >= 0
                 ? editorPreviewLevel
                 : PlayerPrefs.GetInt(LevelKey, 0), 0, levelPrefabs.Length - 1);
+            bool continuingCurrentLevel = continuedLevelReload == levelIndex;
+            continuedLevelReload = -1;
             suppressTutorialForThisLoad = restartTutorialSuppressionPending
                 && restartTutorialSuppressionLevel == levelIndex;
             // Consume the one-shot request immediately so it cannot suppress a later normal entry.
@@ -411,7 +421,7 @@ namespace Parabox
             if (GameplayCountdownEnabled && !editorPreviewMode) AnimateTimer();
             MaybeTutorial();
             if (!Tutoring) ArmGameplayCountdown();
-            LuxoddGameService.ReportLevelBegin(levelIndex);
+            if (!continuingCurrentLevel) LuxoddGameService.ReportLevelBegin(levelIndex);
         }
 
         #if UNITY_EDITOR
@@ -931,7 +941,7 @@ namespace Parabox
         }
 
         // Cabinet mapping: stick=move, Black=confirm, Red=undo, Yellow=restart and Purple=skip
-        // walkthrough. Green, Blue and White intentionally do nothing; Orange remains Luxodd's.
+        // walkthrough. Green owns the one-time Level-1 TRY IT action; Blue and White do nothing.
         bool HandleArcadeInput()
         {
             var arcade = LuxoddArcadeAdapter.Instance;
@@ -953,11 +963,16 @@ namespace Parabox
 
             if (Lost)
             {
-                if (firstLifeLessonOpen && (arcade.ConfirmDown || arcade.RestartDown))
+                if (firstLifeLessonOpen && arcade.TryItDown
+                    && firstLifeLessonFx != null && firstLifeLessonFx.ReadyForTryIt)
                 {
                     Sfx.Click();
-                    AcceptFirstLevelSecondChance();
+                    firstLifeLessonFx.Confirm();
+                    return true;
                 }
+                // The keyboard path below has the same readiness gate. Let it handle
+                // Enter/Space during this lesson; ordinary loss input remains swallowed.
+                if (firstLifeLessonOpen) return false;
                 // The leaderboard is informational and Luxodd owns the upcoming transaction.
                 // The Level-1 lesson is the only pre-transaction exception; all other loss input
                 // remains swallowed until the host returns a choice.
@@ -1107,8 +1122,12 @@ namespace Parabox
             if (Lost)
             {
                 if (firstLifeLessonOpen && (kb.enterKey.wasPressedThisFrame
-                    || kb.spaceKey.wasPressedThisFrame || kb.rKey.wasPressedThisFrame))
-                    AcceptFirstLevelSecondChance();
+                    || kb.spaceKey.wasPressedThisFrame)
+                    && firstLifeLessonFx != null && firstLifeLessonFx.ReadyForTryIt)
+                {
+                    Sfx.Click();
+                    firstLifeLessonFx.Confirm();
+                }
                 // No local escape, retry, or level-select action is available after death.
                 return;
             }
@@ -1331,7 +1350,8 @@ namespace Parabox
                 foreach (var g in room.boxGoals)
                 {
                     var e = model.EntityAt(room.id, g);
-                    if (e != null && !e.isPlayer) target[(room.id, g.x, g.y)] = false;
+                    if (GoalFeedbackFx.IsSatisfiedBy(e, GoalFeedbackFx.Kind.Cargo))
+                        target[(room.id, g.x, g.y)] = false;
                 }
                 foreach (var g in room.playerGoals)
                 {
@@ -1662,12 +1682,20 @@ namespace Parabox
         {
             if (child == null || immediateBox == null) return false;
             Transform owner = RecursiveBoxOwner(child);
-            return owner == immediateBox && (child.name == "Frame" || child.name == "Backing"
+            if (owner != immediateBox) return false;
+
+            // The named signal root is only a Transform. Its actual renderers are children named
+            // ClosedSignal_Lamp, Glow, Housing, etc. Testing only the renderer's own name hid all
+            // of them when entering a box. Keep the complete signal group on this room's shell,
+            // but not lights belonging to a parent/sibling box outside the focused interior.
+            for (Transform part = child; part != null && part != immediateBox; part = part.parent)
+                if (part.name.StartsWith("NestedClosedSignal_")) return true;
+
+            return child.name == "Frame" || child.name == "Backing"
                 || child.name == "NestedShellHighlightTop"
                 || child.name == "NestedShellHighlightLeft"
-                || child.name.StartsWith("NestedClosedSignal_")
                 || child.name.StartsWith("NestedDoorwayFloor_")
-                || child.name.StartsWith("NestedDoorwayMask_"));
+                || child.name.StartsWith("NestedDoorwayMask_");
         }
 
         // The special player-container owns a purpose-built portal skin. Its inherited meta-box
@@ -2196,6 +2224,13 @@ namespace Parabox
                 MoveParForLevel(levelIndex, par), model.MoveCount, moveLimit,
                 timeLeft, timeLimit, undoCount);
 
+            EnsurePremiumScoreRings();
+            if (premiumScoreRings != null)
+            {
+                premiumScoreRings.SetBreakdown(live);
+                return;
+            }
+
             if (premiumScoreValue != null)
             {
                 premiumScoreValue.text = live.runScore.ToString();
@@ -2203,7 +2238,7 @@ namespace Parabox
             }
             if (premiumTimeValue != null)
             {
-                premiumTimeValue.text = $"TIME  -{live.timePenalty}";
+                premiumTimeValue.text = live.timePenalty > 0 ? $"TIME  −{live.timePenalty}" : "TIME";
                 premiumTimeValue.color = live.timePenalty > 0 ? TimerWarn : Color.white;
             }
             if (premiumTimeDetail != null)
@@ -2211,7 +2246,7 @@ namespace Parabox
                     + ScoreSystem.TimeGraceSeconds;
             if (premiumMovesValue != null)
             {
-                premiumMovesValue.text = $"MOVES  -{live.movePenalty}";
+                premiumMovesValue.text = live.movePenalty > 0 ? $"MOVES  −{live.movePenalty}" : "MOVES";
                 premiumMovesValue.color = live.movePenalty > 0 ? TimerWarn : Color.white;
             }
             if (premiumMovesDetail != null)
@@ -2223,6 +2258,7 @@ namespace Parabox
         void ConfigureScoreHudPresentation()
         {
             ConfigurePremiumScoreChipSpacing();
+            EnsurePremiumScoreRings();
 
             if (movesLabel != null)
             {
@@ -2289,6 +2325,17 @@ namespace Parabox
             }
             if (levelPointsLabel != null) levelPointsLabel.transform.SetAsLastSibling();
             scoreRoot.SetAsLastSibling();
+        }
+
+        void EnsurePremiumScoreRings()
+        {
+            if (premiumScoreRings != null && premiumScoreRings.IsBound) return;
+            if (premiumScoreValue == null) return;
+            Transform root = premiumScoreValue.transform;
+            while (root != null && root.name != "PremiumScoreHudOption2") root = root.parent;
+            if (root == null) return;
+            premiumScoreRings = PremiumScoreRings.Apply(root as RectTransform, premiumScoreValue,
+                premiumTimeValue, premiumTimeDetail, premiumMovesValue, premiumMovesDetail);
         }
 
         void ConfigurePremiumScoreChipSpacing()
@@ -3380,12 +3427,14 @@ namespace Parabox
         float tutorialAutoContinueDeadline = -1f;
         float tutorialAutoContinueDuration;
         const float TutorialProgressTimeout = 20f;
-        const float TutorialChoiceGrace = 4f;
+        // Leave enough time for children, older players and slower readers to understand the
+        // completed example before the cabinet continues automatically.
+        const float TutorialChoiceGrace = 12f;
         const float TutorialStageOffset = 4096f;
-        const float TutorialPlaybackRate = 0.8f;
+        const float TutorialPlaybackRate = 0.45f;
 
         // The tutorial is a live solver replay, not an encoded movie. Expanding every beat by the
-        // inverse rate gives the requested 0.8x presentation while gameplay and UI input remain at 1x.
+        // inverse rate gives a calm, readable presentation while gameplay and UI input remain at 1x.
         static float TutorialDuration(float seconds)
             => seconds / TutorialPlaybackRate;
 
@@ -3475,8 +3524,8 @@ namespace Parabox
         void StartTutorialDecisionCountdown()
         {
             if (!TutorialChoicesReady()) return;
-            // Give the player a complete four-second choice window only after REPEAT, SKIP and
-            // TRY/NEXT are all visible and usable. This replaces the longer replay countdown.
+            // Give the player a complete twelve-second choice window only after REPEAT, SKIP and
+            // TRY/NEXT are all visible and usable. This is intentionally generous for slower readers.
             StartTutorialSessionCountdown(TutorialChoiceGrace);
         }
 
@@ -3679,7 +3728,31 @@ namespace Parabox
                 yield break;
             }
 
-            tutorialFx.SetTitle(MechanicCatalog.TutorialTitle(levelIndex, mechanic));
+            // Chapter 2's fixed room-doors skip the essential push-versus-enter rule. Show the
+            // start of the existing, independent docking mini-board first, ending as soon as the
+            // player enters. Neither tutorial prefab nor the campaign board is changed.
+            if (NeedsParaBoxEntryPrimer(levelIndex, mechanic)
+                && TryLoadParaBoxEntryPrimer(out GameObject entryPrefab, out string entryRoute))
+            {
+                yield return ReplayTutorialPuzzle(entryPrefab, mechanic, entryRoute, true);
+                if (!cinematic || tutorialExiting) yield break;
+            }
+
+            ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
+            string route = info != null ? info.solution : string.Empty;
+            yield return ReplayTutorialPuzzle(prefab, mechanic, route, false);
+        }
+
+        System.Collections.IEnumerator ReplayTutorialPuzzle(GameObject prefab,
+            MechanicCatalog.Id mechanic, string route, bool entryPrimer)
+        {
+            if (string.IsNullOrEmpty(route))
+            {
+                Debug.LogError($"[Parabox] Tutorial {prefab.name} has no solver-validated route.");
+                yield break;
+            }
+            tutorialFx.SetTitle(entryPrimer ? "HOW TO ENTER A PARA BOX"
+                : MechanicCatalog.TutorialTitle(levelIndex, mechanic));
 
             CleanupTutorialPuzzle();
             tutorialModel = LevelParser.Parse(prefab);
@@ -3705,28 +3778,23 @@ namespace Parabox
             tutorialBgCamera.targetTexture = _rt;
             tutorialBgCamera.enabled = true;
             tutorialFx.SetVideo(_rt);
-            tutorialFx.SetNestedDoorLegendVisible(levelIndex >= 10);
-            bool chapterFiveWalkthrough = levelIndex == 40
+            // The entry primer shows only one numbered instruction at a time.
+            tutorialFx.SetNestedDoorLegendVisible(levelIndex >= 10 && !entryPrimer);
+            bool chapterFiveWalkthrough = !entryPrimer && levelIndex == 40
                 && mechanic == MechanicCatalog.Id.ColourCargo;
             string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex, mechanic);
-            if (chapterFiveWalkthrough)
+            if (entryPrimer)
+                ShowParaBoxEntryStep(1, TutorialDirection(route[0]));
+            else if (chapterFiveWalkthrough)
                 ShowChapterFiveTutorialStep(1);
             else
                 tutorialFx.ShowCaptionPersistent(!string.IsNullOrEmpty(bundleLesson)
                     ? bundleLesson
                     : $"{MechanicCatalog.DisplayName(mechanic).ToUpperInvariant()}  •  {MechanicCatalog.Lesson(mechanic)}");
 
-            ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
-            string route = info != null ? info.solution : string.Empty;
-            if (string.IsNullOrEmpty(route))
-            {
-                Debug.LogError($"[Parabox] Tutorial {prefab.name} has no solver-validated route.");
-                yield break;
-            }
-
             SyncTutorialViews(true);
             SetTutorialCameraRoom(tutorialModel.player.roomId, true);
-            yield return WaitU(TutorialDuration(0.7f));
+            yield return WaitU(TutorialDuration(entryPrimer ? 1.6f : 0.7f));
 
             var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
             int finaleLessonStep = chapterFiveWalkthrough ? 1 : 0;
@@ -3764,6 +3832,10 @@ namespace Parabox
                 if (tutorialPlayerBlinker != null)
                     tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
 
+                int entryStep = entryPrimer
+                    ? ParaBoxEntryStepAfterMove(tutorialModel, direction, roomBefore) : 0;
+                if (entryPrimer) ShowParaBoxEntryStep(entryStep, direction);
+
                 if (chapterFiveWalkthrough)
                 {
                     int nextStep = finaleLessonStep;
@@ -3781,24 +3853,99 @@ namespace Parabox
                 if (roomBefore != tutorialModel.player.roomId)
                     yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId,
                         TutorialDuration(0.42f));
-                else
+                else if (!entryPrimer)
                     yield return WaitU(TutorialDuration(0.34f));
+
+                // Deliberately hold at wall contact, BEFORE the next identical input enters.
+                // The player can read the caption and see that the box has stopped moving.
+                if (entryPrimer && entryStep < 3)
+                    yield return WaitU(TutorialDuration(ParaBoxEntryMoveHold(entryStep)));
             }
 
-            if (!tutorialModel.IsWon())
+            if (!entryPrimer && !tutorialModel.IsWon())
             {
                 Debug.LogError($"[Parabox] Tutorial {prefab.name} finished its route without winning.");
                 yield break;
             }
             MarkTutorialProgress();
-            yield return WaitU(TutorialDuration(0.9f));
+            yield return WaitU(TutorialDuration(entryPrimer ? 2f : 0.9f));
         }
 
-        float EstimateTutorialReplaySeconds(GameObject prefab, string route)
+        static bool NeedsParaBoxEntryPrimer(int levelIdx, MechanicCatalog.Id mechanic)
+            => levelIdx == 10 && mechanic == MechanicCatalog.Id.NestedBoard;
+
+        static bool TryLoadParaBoxEntryPrimer(out GameObject prefab, out string route)
+        {
+            prefab = Resources.Load<GameObject>("Parabox/Tutorials/Chapter_4");
+            ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
+            route = info != null
+                ? FindParaBoxEntryRoute(LevelParser.Parse(prefab), info.solution) : string.Empty;
+            return !string.IsNullOrEmpty(route);
+        }
+
+        // Derive the short prefix from the real rules, not from a hard-coded frame or move count.
+        // It must show this same movable box being pushed, stopped by a wall, and then entered.
+        static string FindParaBoxEntryRoute(LevelModel demo, string route)
+        {
+            if (demo == null || demo.player == null || string.IsNullOrEmpty(route))
+                return string.Empty;
+            PEntity pushedBox = null;
+            for (int i = 0; i < route.Length; i++)
+            {
+                int roomBefore = demo.player.roomId;
+                Vector2Int direction = TutorialDirection(route[i]);
+                PEntity box = demo.EntityAt(roomBefore, demo.player.pos + direction);
+                Vector2Int boxBefore = box != null ? box.pos : Vector2Int.zero;
+                bool againstWall = ParaBoxAgainstWall(demo, box, direction);
+                if (direction == Vector2Int.zero || !demo.TryMovePlayer(direction))
+                    return string.Empty;
+                if (box != null && box.interiorRoomId >= 0 && !box.anchored
+                    && box.roomId == roomBefore && box.pos != boxBefore)
+                    pushedBox = box;
+                if (demo.player.roomId != roomBefore)
+                    return box != null && box == pushedBox && againstWall
+                        && demo.player.roomId == box.interiorRoomId
+                        ? route.Substring(0, i + 1) : string.Empty;
+            }
+            return string.Empty;
+        }
+
+        static bool ParaBoxAgainstWall(LevelModel demo, PEntity box, Vector2Int direction)
+        {
+            if (demo == null || box == null || box.interiorRoomId < 0 || box.anchored
+                || direction == Vector2Int.zero
+                || !demo.rooms.TryGetValue(box.roomId, out PRoom room)) return false;
+            Vector2Int stop = box.pos + direction;
+            return room.InBounds(stop) && room.IsWall(stop);
+        }
+
+        static int ParaBoxEntryStepAfterMove(LevelModel demo, Vector2Int direction, int roomBefore)
+        {
+            if (demo.player.roomId != roomBefore) return 3;
+            PEntity box = demo.EntityAt(demo.player.roomId, demo.player.pos + direction);
+            return ParaBoxAgainstWall(demo, box, direction) ? 2 : 1;
+        }
+
+        static float ParaBoxEntryMoveHold(int step) => step == 2 ? 1.8f : 0.6f;
+
+        void ShowParaBoxEntryStep(int step, Vector2Int direction)
+        {
+            if (tutorialFx == null) return;
+            string arrow = direction == Vector2Int.left ? "LEFT"
+                : direction == Vector2Int.up ? "UP"
+                : direction == Vector2Int.down ? "DOWN" : "RIGHT";
+            tutorialFx.ShowCaptionPersistent(step == 1
+                ? $"1 / 3  •  PUSH BOX {arrow} TO THE WALL"
+                : step == 2
+                    ? $"2 / 3  •  PRESS {arrow} AGAIN TO ENTER"
+                    : "3 / 3  •  INSIDE! CYAN GAP = DOORWAY");
+        }
+
+        float EstimateTutorialReplaySeconds(GameObject prefab, string route, bool entryPrimer = false)
         {
             // Includes the opening hold, every solver move, the solved-board hold and the final
             // button entrance. Parsing a separate model keeps the visible tutorial untouched.
-            float authoredSeconds = 0.7f + 0.9f;
+            float authoredSeconds = entryPrimer ? 1.6f + 2f : 0.7f + 0.9f;
             LevelModel estimate = prefab != null ? LevelParser.Parse(prefab) : null;
             if (estimate == null || estimate.player == null)
                 return TutorialDuration(authoredSeconds + Mathf.Max(0, route.Length) * 0.42f) + 0.5f;
@@ -3808,9 +3955,17 @@ namespace Parabox
                 int roomBefore = estimate.player.roomId;
                 Vector2Int direction = TutorialDirection(command);
                 bool moved = direction != Vector2Int.zero && estimate.TryMovePlayer(direction);
-                authoredSeconds += moved && estimate.player.roomId != roomBefore ? 0.42f : 0.34f;
+                if (entryPrimer)
+                {
+                    int step = ParaBoxEntryStepAfterMove(estimate, direction, roomBefore);
+                    authoredSeconds += moved && step == 3 ? 0.42f : ParaBoxEntryMoveHold(step);
+                }
+                else
+                    authoredSeconds += moved && estimate.player.roomId != roomBefore ? 0.42f : 0.34f;
             }
-            return TutorialDuration(authoredSeconds) + 0.5f;
+            // Only the complete lesson has an end-choice animation; the primer flows straight
+            // into the existing Chapter 2 board without adding a second countdown or button row.
+            return TutorialDuration(authoredSeconds) + (entryPrimer ? 0f : 0.5f);
         }
 
         void StartTutorialCountdownFor(MechanicCatalog.Id mechanic)
@@ -3827,6 +3982,9 @@ namespace Parabox
             float fullPresentation = TutorialDuration(0.6f)
                 + EstimateTutorialReplaySeconds(prefab, route)
                 + TutorialChoiceGrace;
+            if (NeedsParaBoxEntryPrimer(levelIndex, mechanic)
+                && TryLoadParaBoxEntryPrimer(out GameObject entryPrefab, out string entryRoute))
+                fullPresentation += EstimateTutorialReplaySeconds(entryPrefab, entryRoute, true);
             StartTutorialSessionCountdown(fullPresentation);
         }
 
@@ -4721,31 +4879,30 @@ namespace Parabox
             countdownArmed = wasArmed;
         }
 
-        // Luxodd Continue keeps this attempt alive. The model, positions, move count and undo
-        // history are intentionally untouched; only the terminal flags and failure overlay are
-        // cleared so Continue cannot behave like Restart.
+        // Continue buys a fresh attempt at THIS level, not a recovery at the death position.
+        // Reloading uses Start's normal parser/view setup, resetting every room, crate, key,
+        // terrain change and undo entry. Campaign scores/progress and the SDK session survive.
         void ContinueCurrentSession()
         {
-            // Refill complete resources from the death position. The model and its undo stack are
-            // deliberately not parsed, reloaded, or rewound, so every body, crate, terrain state,
-            // collected key and room transition remains exactly where the player left it.
-            timeLimit = TimeLimitForLevel(levelIndex, par);
-            timeLeft = timeLimit;
-            countdownArmed = false;
-            moveLimit = model.MoveCount + MoveLimitForLevel(levelIndex, par);
-            timedUp = false;
-            outOfMoves = false;
-            lossTransactionRequested = false;
-            levelEndReported = false;
-            tickBump = 0f;
-            lastSecond = -1;
+            PrepareCurrentLevelContinue();
+            ReloadCurrentLevel();
+        }
 
-            if (timeUpPanel != null) timeUpPanel.SetActive(false);
-            if (loseFx != null) loseFx.DismissImmediate();
-            UpdateHud();
-            AnimateTimer();
-            ArmGameplayCountdown();
-            Sfx.Mechanic();
+        void PrepareCurrentLevelContinue()
+        {
+            // Unlike the in-game Restart shortcut, a transaction retry gets the full authored
+            // timer. Discard only the old clock transfer, not session tutorial/score progress.
+            restartTimerPending = false;
+            restartTimerLevel = -1;
+            restartTimerRemaining = 0f;
+            restartTimerCapturedAt = 0f;
+            restartTimerWasArmed = false;
+            continuedLevelReload = levelIndex;
+            restartTutorialSuppressionPending = true;
+            restartTutorialSuppressionLevel = levelIndex;
+            PlayerPrefs.SetInt(LevelKey, levelIndex);
+            if (editorPreviewMode) PlayerPrefs.SetInt(EditorPreviewLevelKey, levelIndex);
+            PlayerPrefs.Save();
         }
 
         void ReloadCurrentLevel()

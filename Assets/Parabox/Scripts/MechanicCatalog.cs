@@ -381,15 +381,15 @@ namespace Parabox
             switch (levelIndex)
             {
                 case 0 when tutorial == Id.Navigation:
-                    return "Push the crate onto its target, then move the player to the bright target.";
+                    return "Fill ALL targets: park cargo on the brown sockets, then reach your player target.";
                 case 10 when tutorial == Id.NestedBoard:
-                    return "Enter the smaller rooms, then carry their cargo back across both room boundaries.";
+                    return "ENTER THE CYAN GAP  •  BRING THE CARGO BACK OUT";
                 case 20 when tutorial == Id.NestedBoard:
-                    return "Pin the smaller room, enter it, then carry its coral cargo back across both room boundaries.";
+                    return "Push the inner box against a wall, then move into its cyan gap to bring the cargo out.";
                 case 24 when tutorial == Id.Portal:
                     return "Enter one cyan portal and continue from its paired exit to reach the sealed target.";
                 case 30 when tutorial == Id.NestedBoard:
-                    return "Push the room onto its glowing dock. When pinned, enter it and leave through the useful side.";
+                    return "Push the box onto its dock against the wall. Press toward its cyan gap again to enter.";
                 case 4 when tutorial == Id.FoundationMechanics:
                     return "Push the orange crate onto the orange-marked switch. Its green outer ring matches the green gate it opens.";
                 case 40 when tutorial == Id.ColourCargo:
@@ -495,7 +495,7 @@ namespace Parabox
                 case Id.BreakableRock: return "BREAK ROCK by pushing cargo into it";
                 case Id.ButtonGate: return "PARK the orange crate on the orange-marked switch; its green ring shows the green gate it opens";
                 case Id.HeavyPlateGate: return "HEAVY PLATES open only while cargo holds them";
-                case Id.NestedBoard: return "ENTER the smaller board; actions inside affect the outer puzzle";
+                case Id.NestedBoard: return "Stop a movable box against a wall, then move into its cyan gap. Fixed boxes stay still.";
                 case Id.Ice: return "ICE keeps movement sliding until a solid cell stops it";
                 case Id.ToggleLatch: return "TOGGLES permanently change their matching latches";
                 case Id.Pulse: return "PULSE barriers alternate after every move";

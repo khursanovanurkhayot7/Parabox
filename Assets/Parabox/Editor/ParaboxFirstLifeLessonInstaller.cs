@@ -14,11 +14,16 @@ namespace Parabox.EditorTools
     {
         const string GameScenePath = "Assets/Parabox/Scenes/Game.unity";
         const string VoiceClipPath = "Assets/Parabox/Resources/Sfx/SecondChanceTeacher.wav";
+        const string TeacherSpritePath = "Assets/Parabox/Resources/UI/PremiumTeacher3D.png";
+        const string GestureShaderPath = "Assets/Parabox/Resources/Shaders/PremiumTeacherGesture.shader";
+        const string GestureMaterialPath = "Assets/Parabox/Resources/UI/PremiumTeacherGesture.mat";
         const string RootName = "FirstLifeLesson";
         static readonly Color NavyTop = Hex("12334D");
         static readonly Color NavyBottom = Hex("040B17");
         static readonly Color Cyan = Hex("42E7FF");
         static readonly Color Purple = Hex("9B58FF");
+        static readonly Color GreenTop = Hex("55DC4C");
+        static readonly Color GreenBottom = Hex("168536");
         static readonly Color White = Hex("F4FCFF");
 
         [MenuItem("Tools/Parabox/Install Level 1 Second Chance Lesson", priority = 2)]
@@ -52,6 +57,12 @@ namespace Parabox.EditorTools
                     : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             Sprite fill = AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Parabox/Sprites/Fill.png");
             Sprite glow = AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Parabox/Sprites/Glow.png");
+            Sprite teacherSprite = AssetDatabase.LoadAssetAtPath<Sprite>(TeacherSpritePath);
+            if (teacherSprite == null)
+                throw new InvalidOperationException(
+                    "The premium 3D teacher is missing at " + TeacherSpritePath + ". Wait for Unity "
+                    + "to finish importing, then run this command again.");
+            Material gestureMaterial = EnsureGestureMaterial();
             AudioClip voiceClip = AssetDatabase.LoadAssetAtPath<AudioClip>(VoiceClipPath);
             if (voiceClip == null)
                 throw new InvalidOperationException(
@@ -62,50 +73,49 @@ namespace Parabox.EditorTools
             CanvasGroup group = root.GetComponent<CanvasGroup>();
             FirstLifeLessonFx lesson = root.GetComponent<FirstLifeLessonFx>();
 
-            CreateImage(root, "LessonGlow", Vector2.zero, new Vector2(1080f, 700f), glow,
-                new Color(Purple.r, Purple.g, Purple.b, 0.24f), false);
-
-            RectTransform card = CreateCard(root, fill);
-            CreateImage(card, "TopAccent", new Vector2(0f, 244f), new Vector2(830f, 5f),
-                null, Cyan, false);
-            CreateText(card, "LessonLabel", font, "SECOND CHANCE", 18, FontStyle.Bold,
-                new Color(Cyan.r, Cyan.g, Cyan.b, 0.82f), new Vector2(0f, 216f),
-                new Vector2(360f, 32f));
-
-            RectTransform player = CreatePlayerPortrait(card, game.playerPrefab, fill, glow,
+            RectTransform player = CreatePlayerPortrait(root, game.playerPrefab, fill, glow,
+                teacherSprite, gestureMaterial,
                 out CanvasGroup playerGroup, out RectTransform mouth,
-                out RectTransform teachingArm, out RectTransform pointer);
-            RectTransform speechBubble = CreateSpeechBubble(card, fill,
-                out CanvasGroup speechGroup);
-            CreateText(speechBubble, "Speaker", font, "PARABOX", 16, FontStyle.Bold, Cyan,
-                new Vector2(-165f, 88f), new Vector2(120f, 28f));
+                out RectTransform teachingArm, out RectTransform pointer,
+                out Graphic teachingGraphic);
             const string message =
-                "ONE MORE CHANCE!\nI ONLY GET ONE LIFE.\nUSE UNDO OR RESTART!";
-            Text speech = CreateText(speechBubble, "TypedMessage", font, message, 26,
-                FontStyle.Bold, White, new Vector2(12f, -12f), new Vector2(390f, 154f));
-            speech.alignment = TextAnchor.MiddleLeft;
-            speech.lineSpacing = 1.08f;
-
-            Button retry = CreateButton(card, font, fill);
-            CreateText(card, "InputHint", font, "BLACK / ENTER  •  TRY AGAIN", 16,
-                FontStyle.Bold, new Color(Cyan.r, Cyan.g, Cyan.b, 0.88f),
-                new Vector2(134f, -218f), new Vector2(460f, 28f));
+                "HEY! ONE MORE CHANCE!\nI ONLY GET ONE LIFE.\nUSE UNDO OR RESTART!";
+            Text subtitles = CreateSubtitles(root, font, fill, out CanvasGroup subtitleGroup);
+            Button retry = CreateButton(root, font, fill, glow);
 
             lesson.group = group;
-            lesson.card = card;
+            lesson.card = null;
             lesson.tryAgainButton = retry;
             lesson.player = player;
             lesson.playerGroup = playerGroup;
-            lesson.speechBubble = speechBubble;
-            lesson.speechGroup = speechGroup;
-            lesson.speechText = speech;
+            lesson.entryRipple = null;
+            lesson.entryRippleGroup = null;
+            lesson.subtitleText = subtitles;
+            lesson.subtitleGroup = subtitleGroup;
+            // Cue changes sit in the measured pauses of the existing 7.808-second voice clip.
+            lesson.subtitleCues = new[]
+            {
+                new FirstLifeLessonFx.SubtitleCue
+                    { startSeconds = 0f, text = "<color=#65EAFF>Hey!</color>" },
+                new FirstLifeLessonFx.SubtitleCue
+                    { startSeconds = 1.02f, text = "One more <color=#65EAFF>chance!</color>" },
+                new FirstLifeLessonFx.SubtitleCue
+                    { startSeconds = 2.94f, text = "I only get <color=#65EAFF>one life.</color>" },
+                new FirstLifeLessonFx.SubtitleCue
+                    { startSeconds = 5.42f, text = "Use <color=#65EAFF>UNDO</color> or <color=#65EAFF>RESTART!</color>" }
+            };
+            lesson.speechBubble = null;
+            lesson.speechGroup = null;
+            lesson.speechText = null;
             lesson.mouth = mouth;
             lesson.teachingArm = teachingArm;
             lesson.pointer = pointer;
+            lesson.teachingGraphic = teachingGraphic;
             lesson.voiceSource = root.GetComponent<AudioSource>();
             lesson.voiceClip = voiceClip;
             lesson.spokenMessage = message;
             lesson.charactersPerSecond = 17f;
+            FirstLifeLessonBoard.Prepare(lesson);
             game.firstLifeLessonFx = lesson;
 
             root.SetAsLastSibling();
@@ -119,7 +129,9 @@ namespace Parabox.EditorTools
             Debug.Log("Level-1 second-chance lesson installed without entering Play Mode.");
             EditorUtility.DisplayDialog("Level 1 Second Chance",
                 "Installed successfully.\n\n"
-                + "The premium teacher enters, speaks with synced mouth animation, and types a short UNDO / RESTART lesson.\n"
+                + "The teacher fades in with the same relaxed pose, beside the 3D lesson board.\n"
+                + "His phrases appear one by one at the upper screen centre; the green TRY IT stays below the board.\n"
+                + "Press the GREEN arcade button or click TRY IT.\n"
                 + "The first Level-1 loss then grants one fresh retry.\n"
                 + "A later loss uses the normal Game Over flow.\n\n"
                 + "No Play Mode test was started.", "OK");
@@ -142,7 +154,7 @@ namespace Parabox.EditorTools
             rect.localScale = Vector3.one;
 
             Image dim = go.GetComponent<Image>();
-            dim.color = new Color(0.005f, 0.015f, 0.045f, 0.90f);
+            dim.color = new Color(0.005f, 0.015f, 0.045f, 0.72f);
             dim.raycastTarget = true;
             CanvasGroup group = go.GetComponent<CanvasGroup>();
             group.alpha = 0f;
@@ -185,21 +197,82 @@ namespace Parabox.EditorTools
             return rect;
         }
 
+        static Text CreateSubtitles(RectTransform parent, Font font, Sprite fill,
+            out CanvasGroup group)
+        {
+            // Keep narration above the teacher, with breathing room between the panel's
+            // lower edge and the portrait. Reserve the former subtitle area for the action.
+            Image strip = CreateImage(parent, "VoiceSubtitles", new Vector2(0f, 326f),
+                new Vector2(740f, 88f), fill, Color.white, false);
+            strip.type = fill != null ? Image.Type.Sliced : Image.Type.Simple;
+            strip.preserveAspect = false;
+            group = strip.gameObject.AddComponent<CanvasGroup>();
+            group.alpha = 0f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+
+            PremiumSubtitlePanel.Apply(strip.gameObject);
+
+            Text text = CreateText(strip.rectTransform, "SubtitleLine", font, string.Empty, 36,
+                FontStyle.Normal, White, new Vector2(0f, 2f), new Vector2(668f, 62f));
+            text.supportRichText = true;
+            text.resizeTextForBestFit = true;
+            text.resizeTextMinSize = 32;
+            text.resizeTextMaxSize = 36;
+            Shadow textShadow = text.gameObject.AddComponent<Shadow>();
+            textShadow.effectColor = new Color(0f, 0.01f, 0.03f, 0.50f);
+            textShadow.effectDistance = new Vector2(0f, -1f);
+            CrispUiTypography.Polish(text);
+            return text;
+        }
+
         static RectTransform CreatePlayerPortrait(RectTransform card, GameObject playerPrefab,
-            Sprite fill, Sprite glow, out CanvasGroup group, out RectTransform mouth,
-            out RectTransform teachingArm, out RectTransform pointer)
+            Sprite fill, Sprite glow, Sprite teacherSprite, Material gestureMaterial,
+            out CanvasGroup group,
+            out RectTransform mouth,
+            out RectTransform teachingArm, out RectTransform pointer,
+            out Graphic teachingGraphic)
         {
             var go = new GameObject("TalkingPlayer", typeof(RectTransform), typeof(CanvasGroup));
             go.layer = card.gameObject.layer;
             go.transform.SetParent(card, false);
             RectTransform root = (RectTransform)go.transform;
             root.anchorMin = root.anchorMax = root.pivot = new Vector2(0.5f, 0.5f);
-            root.anchoredPosition = new Vector2(-286f, 45f);
-            root.sizeDelta = new Vector2(280f, 310f);
+            // Preserve the approved body's screen-centred position. The transparent canvas
+            // retains its original dimensions after removing the pointer.
+            root.anchoredPosition = new Vector2(0f, 10f);
+            root.sizeDelta = new Vector2(520f, 530f);
             group = go.GetComponent<CanvasGroup>();
             group.alpha = 1f;
             group.interactable = false;
             group.blocksRaycasts = false;
+            teachingGraphic = null;
+
+            // The generated teacher is one clean, transparent 3D sprite. Keeping it as one
+            // image preserves its lighting, proportions and premium finish. Only the mouth is
+            // separate so FirstLifeLessonFx can continue syncing it to the typed narration.
+            if (teacherSprite != null)
+            {
+                Image portrait = CreateImage(root, "PremiumTeacher3D", new Vector2(102f, 0f),
+                    new Vector2(480f, 500f), teacherSprite, Color.white, false);
+                portrait.preserveAspect = true;
+                portrait.material = gestureMaterial;
+                teachingGraphic = portrait;
+
+                Image premiumMouthImage = CreateImage(root, "TalkingMouth", new Vector2(1f, 67f),
+                    new Vector2(53f, 16f), fill, Hex("170D2B"), false);
+                premiumMouthImage.preserveAspect = false;
+                Outline premiumMouthOutline = premiumMouthImage.gameObject.AddComponent<Outline>();
+                premiumMouthOutline.effectColor = new Color(Cyan.r, Cyan.g, Cyan.b, 0.34f);
+                premiumMouthOutline.effectDistance = new Vector2(1f, -1f);
+                mouth = premiumMouthImage.rectTransform;
+
+                // The arm is isolated in the UI shader, allowing it to gesture independently
+                // while preserving the exact approved single-sprite character artwork.
+                teachingArm = null;
+                pointer = null;
+                return root;
+            }
 
             // A two-layer aura separates the teacher from the card without bringing back the
             // large rotated rectangle that used to sit behind the portrait.
@@ -467,14 +540,14 @@ namespace Parabox.EditorTools
         static RectTransform CreateSpeechBubble(RectTransform card, Sprite fill,
             out CanvasGroup group)
         {
-            var go = new GameObject("SpeechBubble", typeof(RectTransform),
+            var go = new GameObject("LessonBoard", typeof(RectTransform),
                 typeof(CanvasRenderer), typeof(Image), typeof(CanvasGroup), typeof(Outline),
                 typeof(Shadow), typeof(UIGradient));
             go.layer = card.gameObject.layer;
             go.transform.SetParent(card, false);
             RectTransform rect = (RectTransform)go.transform;
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(142f, 56f);
+            rect.anchoredPosition = new Vector2(134f, 56f);
             rect.sizeDelta = new Vector2(478f, 244f);
 
             Image face = go.GetComponent<Image>();
@@ -483,25 +556,121 @@ namespace Parabox.EditorTools
             face.color = Color.white;
             face.raycastTarget = false;
             UIGradient gradient = go.GetComponent<UIGradient>();
-            gradient.top = Hex("30235B");
-            gradient.bottom = Hex("120F2F");
+            gradient.top = Hex("173B5A");
+            gradient.bottom = Hex("050A16");
             Outline outline = go.GetComponent<Outline>();
             outline.effectColor = new Color(Cyan.r, Cyan.g, Cyan.b, 0.88f);
             outline.effectDistance = new Vector2(2f, -2f);
             Shadow shadow = go.GetComponent<Shadow>();
-            shadow.effectColor = new Color(0f, 0f, 0f, 0.72f);
-            shadow.effectDistance = new Vector2(0f, -8f);
+            // Keep the board silhouette clean. The frame bevels provide the 3D depth without
+            // placing a large black rectangle behind the artwork.
+            shadow.effectColor = Color.clear;
+            shadow.effectDistance = Vector2.zero;
             group = go.GetComponent<CanvasGroup>();
             group.alpha = 1f;
             group.interactable = false;
             group.blocksRaycasts = false;
 
-            Image tail = CreateImage(rect, "SpeechTail", new Vector2(-230f, -46f),
-                new Vector2(38f, 38f), fill, Hex("1B1740"), false);
-            tail.preserveAspect = false;
-            tail.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);
-            tail.transform.SetAsFirstSibling();
+            // Layered depth and bevels make the board read as a solid premium object instead
+            // of a flat speech panel. Every layer remains non-interactive UI artwork.
+            Image boardFrame = CreateImage(rect, "BoardFrontFrame", Vector2.zero,
+                new Vector2(478f, 244f), fill, Color.white, false);
+            boardFrame.preserveAspect = false;
+            UIGradient frameGradient = boardFrame.gameObject.AddComponent<UIGradient>();
+            frameGradient.top = Hex("55F0FF");
+            frameGradient.bottom = Hex("7139D6");
+            Outline frameOutline = boardFrame.gameObject.AddComponent<Outline>();
+            frameOutline.effectColor = new Color(0.56f, 0.92f, 1f, 0.96f);
+            frameOutline.effectDistance = new Vector2(2f, -2f);
+
+            Image innerDepth = CreateImage(rect, "BoardInnerDepth", new Vector2(0f, -5f),
+                new Vector2(456f, 220f), fill, Hex("02040D"), false);
+            innerDepth.preserveAspect = false;
+            Image boardInset = CreateImage(rect, "BoardInset", new Vector2(0f, 0f),
+                new Vector2(446f, 208f), fill, Color.white, false);
+            boardInset.preserveAspect = false;
+            UIGradient insetGradient = boardInset.gameObject.AddComponent<UIGradient>();
+            insetGradient.top = Hex("163755");
+            insetGradient.bottom = Hex("050B17");
+            Outline insetOutline = boardInset.gameObject.AddComponent<Outline>();
+            insetOutline.effectColor = new Color(0.22f, 0.80f, 1f, 0.62f);
+            insetOutline.effectDistance = new Vector2(2f, -2f);
+
+            Image topBevel = CreateImage(rect, "BoardTopBevel", new Vector2(0f, 105f),
+                new Vector2(422f, 6f), fill, new Color(0.84f, 0.99f, 1f, 0.78f), false);
+            topBevel.preserveAspect = false;
+            Image leftBevel = CreateImage(rect, "BoardLeftBevel", new Vector2(-218f, 0f),
+                new Vector2(6f, 194f), fill, new Color(Cyan.r, Cyan.g, Cyan.b, 0.56f), false);
+            leftBevel.preserveAspect = false;
+            Image rightShade = CreateImage(rect, "BoardRightShade", new Vector2(218f, -3f),
+                new Vector2(7f, 194f), fill, new Color(0.06f, 0.02f, 0.16f, 0.72f), false);
+            rightShade.preserveAspect = false;
+            Image surfaceSheen = CreateImage(rect, "BoardSurfaceSheen", new Vector2(-74f, 74f),
+                new Vector2(258f, 4f), fill, new Color(1f, 1f, 1f, 0.14f), false);
+            surfaceSheen.preserveAspect = false;
+
+            Image speakerPlate = CreateImage(rect, "SpeakerPlate", new Vector2(-165f, 88f),
+                new Vector2(132f, 32f), fill, Color.white, false);
+            speakerPlate.preserveAspect = false;
+            UIGradient plateGradient = speakerPlate.gameObject.AddComponent<UIGradient>();
+            plateGradient.top = Hex("284F72");
+            plateGradient.bottom = Hex("10213A");
+            Outline plateOutline = speakerPlate.gameObject.AddComponent<Outline>();
+            plateOutline.effectColor = new Color(Cyan.r, Cyan.g, Cyan.b, 0.68f);
+            plateOutline.effectDistance = new Vector2(1f, -1f);
+
+            Image topRail = CreateImage(rect, "BoardTopRail", new Vector2(0f, 116f),
+                new Vector2(414f, 4f), fill,
+                new Color(0.86f, 0.99f, 1f, 0.98f), false);
+            topRail.preserveAspect = false;
+            Image bottomLedge = CreateImage(rect, "BoardBottomLedge", new Vector2(0f, -126f),
+                new Vector2(322f, 13f), fill, Color.white, false);
+            bottomLedge.preserveAspect = false;
+            UIGradient ledgeGradient = bottomLedge.gameObject.AddComponent<UIGradient>();
+            ledgeGradient.top = Hex("FFF09A");
+            ledgeGradient.bottom = Hex("B96C16");
+            Shadow ledgeShadow = bottomLedge.gameObject.AddComponent<Shadow>();
+            ledgeShadow.effectColor = new Color(0f, 0f, 0f, 0.66f);
+            ledgeShadow.effectDistance = new Vector2(0f, -4f);
+
+            CreateBoardBolt(rect, fill, new Vector2(-221f, 103f));
+            CreateBoardBolt(rect, fill, new Vector2(221f, 103f));
+            CreateBoardBolt(rect, fill, new Vector2(-221f, -103f));
+            CreateBoardBolt(rect, fill, new Vector2(221f, -103f));
+
+            Image pointerTargetGlow = CreateImage(rect, "PointerTargetGlow",
+                new Vector2(-236f, 15f), new Vector2(38f, 38f), fill,
+                new Color(1f, 0.69f, 0.20f, 0.28f), false);
+            pointerTargetGlow.preserveAspect = false;
+            UIPulse targetPulse = pointerTargetGlow.gameObject.AddComponent<UIPulse>();
+            targetPulse.amplitude = 0.12f;
+            targetPulse.speed = 2.4f;
+            Image pointerTarget = CreateImage(rect, "PointerTarget",
+                new Vector2(-236f, 15f), new Vector2(15f, 15f), fill,
+                Hex("FFD866"), false);
+            pointerTarget.preserveAspect = false;
+            Outline targetOutline = pointerTarget.gameObject.AddComponent<Outline>();
+            targetOutline.effectColor = new Color(Cyan.r, Cyan.g, Cyan.b, 0.90f);
+            targetOutline.effectDistance = new Vector2(2f, -2f);
             return rect;
+        }
+
+        static void CreateBoardBolt(RectTransform board, Sprite fill, Vector2 position)
+        {
+            Image boltShadow = CreateImage(board, "BoltShadow", position + new Vector2(2f, -3f),
+                new Vector2(13f, 13f), fill, new Color(0f, 0f, 0f, 0.72f), false);
+            boltShadow.preserveAspect = false;
+            Image boltGlow = CreateImage(board, "BoltGlow", position,
+                new Vector2(23f, 23f), fill,
+                new Color(Cyan.r, Cyan.g, Cyan.b, 0.30f), false);
+            boltGlow.preserveAspect = false;
+            Image bolt = CreateImage(board, "Bolt", position,
+                new Vector2(11f, 11f), fill, Hex("31DFFF"), false);
+            bolt.preserveAspect = false;
+            Image boltHighlight = CreateImage(board, "BoltHighlight",
+                position + new Vector2(-2f, 2f), new Vector2(4f, 4f), fill,
+                new Color(1f, 1f, 1f, 0.88f), false);
+            boltHighlight.preserveAspect = false;
         }
 
         static SpriteRenderer PlayerPart(GameObject playerPrefab, string name)
@@ -510,28 +679,80 @@ namespace Parabox.EditorTools
             return child != null ? child.GetComponent<SpriteRenderer>() : null;
         }
 
-        static Button CreateButton(RectTransform card, Font font, Sprite fill)
+        static Button CreateButton(RectTransform card, Font font, Sprite fill, Sprite glow)
         {
-            var go = new GameObject("TryLevelOneAgain", typeof(RectTransform),
+            var go = new GameObject("TryItGreenArcadeButton", typeof(RectTransform),
                 typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(UIButtonSfx));
             go.layer = card.gameObject.layer;
             go.transform.SetParent(card, false);
             RectTransform rect = (RectTransform)go.transform;
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(134f, -162f);
-            rect.sizeDelta = new Vector2(420f, 78f);
+            // The old subtitle slot is now the single, clearly separated primary action.
+            rect.anchoredPosition = new Vector2(0f, -296f);
+            rect.sizeDelta = new Vector2(390f, 84f);
 
-            Image face = go.GetComponent<Image>();
-            face.sprite = fill;
-            face.type = fill != null ? Image.Type.Sliced : Image.Type.Simple;
-            face.color = Color.white;
-            face.raycastTarget = true;
+            // The transparent root owns the hit area; the layered children create a physical,
+            // illuminated green cabinet button without changing any surrounding lesson art.
+            Image hitArea = go.GetComponent<Image>();
+            hitArea.sprite = null;
+            hitArea.color = new Color(1f, 1f, 1f, 0.002f);
+            hitArea.raycastTarget = true;
+
+            Image aura = CreateImage(rect, "GreenButtonAura", new Vector2(0f, -2f),
+                new Vector2(410f, 108f), glow,
+                new Color(GreenTop.r, GreenTop.g, GreenTop.b, 0.24f), false);
+            aura.preserveAspect = false;
+            UIPulse auraPulse = aura.gameObject.AddComponent<UIPulse>();
+            auraPulse.amplitude = 0.035f;
+            auraPulse.speed = 2.1f;
+
+            Image lip = CreateImage(rect, "Lip", new Vector2(0f, -3f),
+                new Vector2(372f, 74f), fill, Hex("06351C"), false);
+            lip.preserveAspect = false;
+            Outline lipOutline = lip.gameObject.AddComponent<Outline>();
+            lipOutline.effectColor = new Color(0.04f, 0.12f, 0.08f, 0.96f);
+            lipOutline.effectDistance = new Vector2(1f, -1f);
+
+            Image face = CreateImage(rect, "Face", Vector2.zero,
+                new Vector2(368f, 70f), fill, Color.white, false);
+            face.preserveAspect = false;
+            UIGradient faceGradient = face.gameObject.AddComponent<UIGradient>();
+            faceGradient.top = GreenTop;
+            faceGradient.bottom = GreenBottom;
+            Outline faceOutline = face.gameObject.AddComponent<Outline>();
+            faceOutline.effectColor = new Color(0.72f, 1f, 0.70f, 0.98f);
+            faceOutline.effectDistance = new Vector2(2f, -2f);
+
+            Image gloss = CreateImage(rect, "Gloss", new Vector2(-10f, 17f),
+                new Vector2(330f, 25f), fill, new Color(1f, 1f, 1f, 0.19f), false);
+            gloss.preserveAspect = false;
+            Image edgeLight = CreateImage(rect, "EdgeLight", new Vector2(0f, 28f),
+                new Vector2(326f, 4f), fill, new Color(0.90f, 1f, 0.90f, 0.76f), false);
+            edgeLight.preserveAspect = false;
+
             Button button = go.GetComponent<Button>();
             button.targetGraphic = face;
+            button.transition = Selectable.Transition.ColorTint;
+            ColorBlock colours = button.colors;
+            colours.normalColor = Color.white;
+            colours.highlightedColor = new Color(1.10f, 1.10f, 1.10f, 1f);
+            colours.selectedColor = colours.highlightedColor;
+            colours.pressedColor = new Color(0.70f, 0.84f, 0.70f, 1f);
+            colours.disabledColor = new Color(0.38f, 0.46f, 0.38f, 0.72f);
+            colours.fadeDuration = 0.07f;
+            button.colors = colours;
+            Navigation navigation = button.navigation;
+            navigation.mode = Navigation.Mode.None;
+            button.navigation = navigation;
 
-            CreateText(rect, "Label", font, "TRY AGAIN", 24, FontStyle.Bold, White,
-                Vector2.zero, rect.sizeDelta - new Vector2(24f, 12f));
-            ArcadeActionButtonStyle.Apply(button, "TRY AGAIN", 24);
+            Text label = CreateText(rect, "Label", font, "TRY IT", 28, FontStyle.Bold, White,
+                new Vector2(0f, 2f), new Vector2(300f, 48f));
+            Shadow labelShadow = label.gameObject.AddComponent<Shadow>();
+            labelShadow.effectColor = new Color(0f, 0.10f, 0.03f, 0.76f);
+            labelShadow.effectDistance = new Vector2(0f, -3f);
+            UIHoverScale hover = go.AddComponent<UIHoverScale>();
+            hover.hover = 1.045f;
+            hover.press = 0.95f;
             return button;
         }
 
@@ -580,6 +801,41 @@ namespace Parabox.EditorTools
             outline.effectColor = new Color(0f, 0.02f, 0.05f, 0.92f);
             outline.effectDistance = new Vector2(1.5f, -1.5f);
             return text;
+        }
+
+        static Material EnsureGestureMaterial()
+        {
+            Shader shader = AssetDatabase.LoadAssetAtPath<Shader>(GestureShaderPath);
+            if (shader == null)
+                throw new InvalidOperationException(
+                    "The premium teacher gesture shader is missing at " + GestureShaderPath
+                    + ". Wait for Unity to finish importing, then run this command again.");
+
+            Material material = AssetDatabase.LoadAssetAtPath<Material>(GestureMaterialPath);
+            if (material == null)
+            {
+                material = new Material(shader) { name = "PremiumTeacherGesture" };
+                AssetDatabase.CreateAsset(material, GestureMaterialPath);
+            }
+            else if (material.shader != shader)
+            {
+                material.shader = shader;
+            }
+
+            material.SetFloat("_GestureAngle", 0f);
+            material.SetFloat("_LeftStep", 0f);
+            material.SetFloat("_RightStep", 0f);
+            material.SetVector("_LeftPlant", Vector4.zero);
+            material.SetVector("_RightPlant", Vector4.zero);
+            material.SetFloat("_FreeArmAngle", 0f);
+            material.SetFloat("_BodySway", 0f);
+            material.SetFloat("_Breath", 0f);
+            material.SetFloat("_EntranceLight", 0f);
+            material.SetFloat("_HandOpen", 0.22f);
+            material.SetVector("_ArmPivot", new Vector4(0.46f, 0.66f, 0f, 0f));
+            material.SetVector("_ArmBounds", new Vector4(0.455f, 0.56f, 1f, 0.75f));
+            EditorUtility.SetDirty(material);
+            return material;
         }
 
         static T FindInScene<T>(Scene scene) where T : Component

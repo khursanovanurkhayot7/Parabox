@@ -12,7 +12,7 @@ namespace Parabox
     // puzzle or its solver route. GameManager owns the timeline; this owns the
     // FRAME: the dim scrim, the elevated card
     // (soft shadow + polished frame + the video), one short line, the two-option panel, and a
-    // dedicated numbered Skip action centred below the card for the complete tutorial, including the
+    // dedicated purple Skip action centred below the card for the complete tutorial, including the
     // final Repeat/Try choice and first-appearance mechanic lessons. First-appearance
     // mechanic lessons use this same video card; the older text briefing remains serialized only
     // for scene compatibility and is kept hidden.
@@ -300,8 +300,8 @@ namespace Parabox
             rect.pivot = new Vector2(0.5f, 0.5f);
             // VideoPanel is 1100 x 620. This keeps the complete legend above its bottom edge
             // instead of hanging outside the cyan frame.
-            rect.anchoredPosition = new Vector2(0f, -276f);
-            rect.sizeDelta = new Vector2(930f, 40f);
+            rect.anchoredPosition = new Vector2(0f, -272f);
+            rect.sizeDelta = new Vector2(780f, 40f);
 
             // Upgrade the old root-level text object in place so existing scenes do not need to be
             // regenerated. The root becomes a clean container and the new children provide depth.
@@ -334,7 +334,7 @@ namespace Parabox
             cardShadow.useGraphicAlpha = true;
             background.transform.SetAsFirstSibling();
 
-            RectTransform lampRoot = EnsureLegendRect(rect, "RedLamp", new Vector2(-420f, 0f),
+            RectTransform lampRoot = EnsureLegendRect(rect, "RedLamp", new Vector2(-344f, 0f),
                 new Vector2(34f, 34f));
             UIPulse lampPulse = GetOrAdd<UIPulse>(lampRoot.gameObject);
             lampPulse.amplitude = 0.085f;
@@ -361,13 +361,13 @@ namespace Parabox
             }
             RectTransform textRect = (RectTransform)textTransform;
             textRect.anchorMin = textRect.anchorMax = textRect.pivot = new Vector2(0.5f, 0.5f);
-            textRect.anchoredPosition = new Vector2(24f, 0f);
-            textRect.sizeDelta = new Vector2(820f, 34f);
+            textRect.anchoredPosition = new Vector2(22f, 0f);
+            textRect.sizeDelta = new Vector2(680f, 34f);
             nestedDoorLegendText = GetOrAdd<Text>(textTransform.gameObject);
 
             nestedDoorLegendText.text =
-                "<color=#FF6570>RED LIGHT</color> = CLOSED SIDE"
-                + "   •   <color=#42E7FF>CYAN GAP</color> = OPEN WAY";
+                "<color=#FF6570>RED</color> = CLOSED"
+                + "   •   <color=#42E7FF>CYAN GAP</color> = OPEN";
             nestedDoorLegendText.font = captionText != null
                 ? captionText.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             nestedDoorLegendText.fontSize = 20;
@@ -408,23 +408,55 @@ namespace Parabox
 
         void PolishTutorialCopyLayout()
         {
-            // Keep the normal caption/rule above the legend. Both lines now fit inside the card,
-            // with a small visual gap instead of colliding with the bottom frame.
+            // Keep the current instruction in a compact top-centre card, fully inside the frame.
             if (captionGroup != null && captionGroup.transform is RectTransform captionRect)
             {
                 captionRect.anchorMin = captionRect.anchorMax = captionRect.pivot =
                     new Vector2(0.5f, 0.5f);
-                captionRect.anchoredPosition = new Vector2(0f, -230f);
-                captionRect.sizeDelta = new Vector2(900f, 38f);
+                captionRect.anchoredPosition = new Vector2(0f, 242f);
+                captionRect.sizeDelta = new Vector2(760f, 54f);
+                StyleCaptionCard(captionRect);
             }
-            StyleComfortableCopy(captionText, new Vector2(860f, 36f), 20);
+            StyleComfortableCopy(captionText, new Vector2(710f, 44f), 22);
 
             if (mechanicDemo != null && mechanicDemo.ruleText != null)
             {
                 RectTransform ruleRect = mechanicDemo.ruleText.rectTransform;
-                ruleRect.anchoredPosition = new Vector2(0f, -230f);
-                StyleComfortableCopy(mechanicDemo.ruleText, new Vector2(860f, 36f), 20);
+                ruleRect.anchoredPosition = new Vector2(0f, 242f);
+                StyleComfortableCopy(mechanicDemo.ruleText, new Vector2(710f, 44f), 22);
             }
+        }
+
+        void StyleCaptionCard(RectTransform rect)
+        {
+            Sprite cardSprite = null;
+            Transform card = panelRT != null ? panelRT.Find("Card") : null;
+            if (card != null && card.TryGetComponent<Image>(out Image cardImage))
+                cardSprite = cardImage.sprite;
+
+            GetOrAdd<CanvasRenderer>(rect.gameObject).cullTransparentMesh = false;
+            Image background = GetOrAdd<Image>(rect.gameObject);
+            background.sprite = cardSprite;
+            background.type = cardSprite != null ? Image.Type.Sliced : Image.Type.Simple;
+            background.color = Color.white;
+            background.raycastTarget = false;
+
+            UIGradient gradient = GetOrAdd<UIGradient>(rect.gameObject);
+            gradient.top = new Color(0.060f, 0.18f, 0.28f, 0.98f);
+            gradient.bottom = new Color(0.010f, 0.035f, 0.080f, 0.98f);
+
+            Outline frame = GetOrAdd<Outline>(rect.gameObject);
+            frame.effectColor = new Color(0.26f, 0.90f, 1f, 0.88f);
+            frame.effectDistance = new Vector2(1.6f, -1.6f);
+            frame.useGraphicAlpha = true;
+
+            Shadow depth = null;
+            foreach (Shadow candidate in rect.GetComponents<Shadow>())
+                if (!(candidate is Outline)) { depth = candidate; break; }
+            if (depth == null) depth = rect.gameObject.AddComponent<Shadow>();
+            depth.effectColor = new Color(0f, 0f, 0.02f, 0.72f);
+            depth.effectDistance = new Vector2(0f, -5f);
+            depth.useGraphicAlpha = true;
         }
 
         static void StyleComfortableCopy(Text text, Vector2 size, int maxFontSize)
@@ -879,9 +911,15 @@ namespace Parabox
             if (skipButton.targetGraphic != null)
                 skipButton.targetGraphic.raycastTarget = true;
             Transform numberBadge = skipButton.transform.Find("ButtonNumberBadge");
+            if (numberBadge != null)
+                numberBadge.gameObject.SetActive(false);
             Text numberText = numberBadge != null
                 ? numberBadge.GetComponentInChildren<Text>(true) : null;
-            if (numberText != null) numberText.text = "6";
+            if (numberText != null)
+            {
+                numberText.text = string.Empty;
+                numberText.gameObject.SetActive(false);
+            }
             Text label = null;
             Text fallback = null;
             foreach (Text candidate in skipButton.GetComponentsInChildren<Text>(true))
@@ -897,14 +935,16 @@ namespace Parabox
             if (label == null) label = fallback;
             if (label != null)
             {
-                // Older scenes do not have the prebuilt number badge yet. Keep the physical
-                // Luxodd button number visible until the one-click editor installer is run.
-                label.text = numberBadge != null ? "SKIP TUTORIAL" : "6  SKIP TUTORIAL";
+                // Hide the cabinet number in both current and older scenes. The physical
+                // Luxodd button-6 binding remains unchanged; this is presentation only.
+                label.text = "SKIP TUTORIAL";
                 RectTransform labelRect = label.rectTransform;
                 labelRect.anchorMin = Vector2.zero;
                 labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = numberBadge != null ? new Vector2(70f, 0f) : Vector2.zero;
-                labelRect.offsetMax = new Vector2(-12f, 0f);
+                // Button 6 is intentionally hidden, so reserve no space for its old badge.
+                // Equal zero offsets place the label at the true visual centre of the face.
+                labelRect.offsetMin = Vector2.zero;
+                labelRect.offsetMax = Vector2.zero;
                 label.alignment = TextAnchor.MiddleCenter;
             }
             Navigation nav = skipButton.navigation;

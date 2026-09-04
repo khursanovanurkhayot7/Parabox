@@ -38,7 +38,7 @@ namespace Parabox.EditorTools
 
         static readonly string[] Labels =
         {
-            "Confirm", "Undo", "", "Restart", "", "Skip Tutorial",
+            "Confirm", "Undo", "Try It", "Restart", "", "Skip Tutorial",
             "Luxodd Help", ""
         };
 
