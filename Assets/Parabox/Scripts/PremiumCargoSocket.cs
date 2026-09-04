@@ -112,8 +112,15 @@ namespace Parabox
         void Refresh(float dt, bool instant)
         {
             if (art == null || model == null) return;
-            bool held = IsPressedBy(model.EntityAt(roomId, cell), button, heavy);
+            PEntity occupant = model.EntityAt(roomId, cell);
+            bool held = IsPressedBy(occupant, button, heavy);
             float target = button || heavy ? (held ? 1f : 0f) : goalFill;
+            // A recursive box is also a room. Keep its three entrance lamps dim while the player
+            // is outside, then illuminate them only after the player crosses into that box (or a
+            // room nested inside it). Ordinary cargo goals and pressure plates retain their
+            // existing occupied/pressed behaviour.
+            if (!button && !heavy && occupant != null && occupant.interiorRoomId >= 0)
+                target = PlayerIsInside(occupant) ? goalFill : 0f;
             press = instant ? target : Mathf.MoveTowards(press, target, dt / 0.14f);
             art.GetPropertyBlock(properties);
             properties.SetFloat(LampId, press);
@@ -136,6 +143,20 @@ namespace Parabox
             properties.SetFloat(FillId, 0f);
             lamp.SetPropertyBlock(properties);
             lamp.gameObject.SetActive(press > 0.001f || goalFill > 0.001f);
+        }
+
+        bool PlayerIsInside(PEntity container)
+        {
+            if (container == null || model.player == null) return false;
+            int currentRoom = model.player.roomId;
+            int guard = model.rooms.Count + 1;
+            while (guard-- > 0 && model.rooms.TryGetValue(currentRoom, out PRoom room))
+            {
+                if (room.containerBox == container) return true;
+                if (room.containerBox == null) return false;
+                currentRoom = room.containerBox.roomId;
+            }
+            return false;
         }
 
         static Transform BuildEmblem(Transform root, Sprite sprite, int colour, bool heavy)
