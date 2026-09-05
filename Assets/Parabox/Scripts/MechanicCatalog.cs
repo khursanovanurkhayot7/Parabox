@@ -358,7 +358,7 @@ namespace Parabox
                 case 0 when tutorial == Id.Navigation:
                     return "MOVE  •  PUSH  •  TWO TARGETS";
                 case 10 when tutorial == Id.NestedBoard:
-                    return "ROOM INSIDE A BOX  •  ENTER + EXIT  •  CARGO RELAY";
+                    return "DOCK PARA BOX  •  ENTER  •  DELIVER CARGO";
                 case 20 when tutorial == Id.NestedBoard:
                     return "CARGO RELAY  •  MOVE + PIN ROOM  •  DEEP TRANSFER";
                 case 24 when tutorial == Id.Portal:
@@ -383,7 +383,7 @@ namespace Parabox
                 case 0 when tutorial == Id.Navigation:
                     return "Fill ALL targets: park cargo on the brown sockets, then reach your player target.";
                 case 10 when tutorial == Id.NestedBoard:
-                    return "ENTER THE CYAN GAP  •  BRING THE CARGO BACK OUT";
+                    return "Dock the Para Box, enter it, bring its cargo outside, then finish both targets.";
                 case 20 when tutorial == Id.NestedBoard:
                     return "Push the inner box against a wall, then move into its cyan gap to bring the cargo out.";
                 case 24 when tutorial == Id.Portal:

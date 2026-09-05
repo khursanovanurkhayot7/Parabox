@@ -67,6 +67,8 @@ namespace Parabox
 
         Vector3 _panelHome = Vector3.one;
         Coroutine _panelCo;
+        Coroutine _captionCo;
+        const float CaptionFadeInDuration = 1.0f;
 
         void Awake()
         {
@@ -298,9 +300,9 @@ namespace Parabox
 
             rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
-            // VideoPanel is 1100 x 620. This keeps the complete legend above its bottom edge
-            // instead of hanging outside the cyan frame.
-            rect.anchoredPosition = new Vector2(0f, -272f);
+            // VideoPanel is 1100 x 620. Keep a full visual gutter between the board's lower
+            // cyan edge and even the legend's drop shadow so the two cards never look attached.
+            rect.anchoredPosition = new Vector2(0f, -280f);
             rect.sizeDelta = new Vector2(780f, 40f);
 
             // Upgrade the old root-level text object in place so existing scenes do not need to be
@@ -413,7 +415,10 @@ namespace Parabox
             {
                 captionRect.anchorMin = captionRect.anchorMax = captionRect.pivot =
                     new Vector2(0.5f, 0.5f);
-                captionRect.anchoredPosition = new Vector2(0f, 242f);
+                // Leave a deliberate gap above the board frame. The card's drop shadow extends
+                // below its rectangle, so the previous position still appeared glued to the cyan
+                // top edge even though the bounds barely cleared it.
+                captionRect.anchoredPosition = new Vector2(0f, 260f);
                 captionRect.sizeDelta = new Vector2(760f, 54f);
                 StyleCaptionCard(captionRect);
             }
@@ -422,7 +427,7 @@ namespace Parabox
             if (mechanicDemo != null && mechanicDemo.ruleText != null)
             {
                 RectTransform ruleRect = mechanicDemo.ruleText.rectTransform;
-                ruleRect.anchoredPosition = new Vector2(0f, 242f);
+                ruleRect.anchoredPosition = new Vector2(0f, 260f);
                 StyleComfortableCopy(mechanicDemo.ruleText, new Vector2(710f, 44f), 22);
             }
         }
@@ -589,17 +594,19 @@ namespace Parabox
                 labelTransform = labelObject.transform;
             }
             RectTransform labelRect = (RectTransform)labelTransform;
-            labelRect.anchorMin = labelRect.anchorMax = labelRect.pivot = new Vector2(0.5f, 0.5f);
+            labelRect.anchorMin = labelRect.anchorMax = new Vector2(1f, 0.5f);
+            labelRect.pivot = new Vector2(1f, 0.5f);
             // The tutorial title owns the centre above the frame; the countdown gets a clear
-            // top-right position, just like the label above the completed-level board.
-            labelRect.anchoredPosition = new Vector2(370f, half.y + 48f);
-            labelRect.sizeDelta = new Vector2(320f, 44f);
+            // top-right position. Anchor its right edge to the frame instead of using a fixed
+            // centre offset, so every aspect ratio keeps the label close to the outer edge.
+            labelRect.anchoredPosition = new Vector2(-22f, half.y + 48f);
+            labelRect.sizeDelta = new Vector2(270f, 44f);
             tutorialCountdownLabel = GetOrAdd<Text>(labelTransform.gameObject);
             tutorialCountdownLabel.font = captionText != null
                 ? captionText.font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             tutorialCountdownLabel.fontSize = 25;
             tutorialCountdownLabel.fontStyle = FontStyle.Bold;
-            tutorialCountdownLabel.alignment = TextAnchor.MiddleCenter;
+            tutorialCountdownLabel.alignment = TextAnchor.MiddleRight;
             tutorialCountdownLabel.color = new Color(0.77f, 0.96f, 1f, 1f);
             tutorialCountdownLabel.raycastTarget = false;
             tutorialCountdownLabel.supportRichText = false;
@@ -757,7 +764,7 @@ namespace Parabox
         // The exit: card and scrim fade away together, revealing the ready-to-play board behind.
         public Coroutine FadeOutAll()
         {
-            if (captionGroup != null) captionGroup.alpha = 0f;
+            HideCaptionImmediately();
             SetNestedDoorLegendVisible(false);
             SetTutorialCountdown(false, 0f, 1f);
             // Reveal the live camera immediately. The card can still dissolve gracefully, but a
@@ -783,7 +790,7 @@ namespace Parabox
                 scrimGroup.blocksRaycasts = false;
             }
             SetPanel(0f, 1f);
-            if (captionGroup != null) captionGroup.alpha = 0f;
+            HideCaptionImmediately();
             SetNestedDoorLegendVisible(false);
             SetTutorialCountdown(false, 0f, 1f);
             HideMechanicDemoImmediately();
@@ -817,8 +824,10 @@ namespace Parabox
 
         public IEnumerator Caption(string text)
         {
+            StopCaptionFade();
             if (captionText != null) captionText.text = text;
-            yield return Fade(captionGroup, 0f, 1f, 0.35f);
+            PrepareCaptionFadeIn();
+            yield return Fade(captionGroup, 0f, 1f, CaptionFadeInDuration);
             yield return Wait(readTime);
             yield return Fade(captionGroup, 1f, 0f, 0.3f);
         }
@@ -996,16 +1005,38 @@ namespace Parabox
 
         public void HideCaptionImmediately()
         {
+            StopCaptionFade();
             if (captionGroup != null) captionGroup.alpha = 0f;
         }
 
         public void ShowCaptionPersistent(string text)
         {
+            StopCaptionFade();
             if (captionText != null) captionText.text = text;
             if (captionGroup == null) return;
-            captionGroup.alpha = 1f;
+            PrepareCaptionFadeIn();
+            _captionCo = StartCoroutine(FadePersistentCaptionIn());
+        }
+
+        void PrepareCaptionFadeIn()
+        {
+            if (captionGroup == null) return;
+            captionGroup.alpha = 0f;
             captionGroup.interactable = false;
             captionGroup.blocksRaycasts = false;
+        }
+
+        IEnumerator FadePersistentCaptionIn()
+        {
+            yield return Fade(captionGroup, 0f, 1f, CaptionFadeInDuration);
+            _captionCo = null;
+        }
+
+        void StopCaptionFade()
+        {
+            if (_captionCo == null) return;
+            StopCoroutine(_captionCo);
+            _captionCo = null;
         }
 
         // Unlike the cinematic caption, this panel is not a child of the hidden video card. It is

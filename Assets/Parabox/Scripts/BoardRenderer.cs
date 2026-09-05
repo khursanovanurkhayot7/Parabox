@@ -21,6 +21,10 @@ namespace Parabox
         // as stacked stray lines. Tutorial boards request one quiet structural edge instead; normal
         // gameplay and the main-menu board keep their existing premium contour treatment.
         public bool simplifyBoundaryContours;
+        // Level 11's combined room-box lesson explains its doorway state with the dedicated red
+        // closed-side hardware and captions. Hiding the socket overlay there prevents a green goal
+        // lamp from contradicting that guidance while leaving every gameplay socket unchanged.
+        public bool hideSocketStatusLights;
         public Sprite floorTex;
         public Color floorTexTint;
     }

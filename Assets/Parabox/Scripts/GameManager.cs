@@ -3432,6 +3432,8 @@ namespace Parabox
         const float TutorialChoiceGrace = 12f;
         const float TutorialStageOffset = 4096f;
         const float TutorialPlaybackRate = 0.45f;
+        const float ChapterTwoStepHold = 0.42f;
+        const int ChapterTwoStepCount = 7;
 
         // The tutorial is a live solver replay, not an encoded movie. Expanding every beat by the
         // inverse rate gives a calm, readable presentation while gameplay and UI input remain at 1x.
@@ -3728,37 +3730,28 @@ namespace Parabox
                 yield break;
             }
 
-            // Chapter 2's fixed room-doors skip the essential push-versus-enter rule. Show the
-            // start of the existing, independent docking mini-board first, ending as soon as the
-            // player enters. Neither tutorial prefab nor the campaign board is changed.
-            if (NeedsParaBoxEntryPrimer(levelIndex, mechanic)
-                && TryLoadParaBoxEntryPrimer(out GameObject entryPrefab, out string entryRoute))
-            {
-                yield return ReplayTutorialPuzzle(entryPrefab, mechanic, entryRoute, true);
-                if (!cinematic || tutorialExiting) yield break;
-            }
-
             ParaboxLevel info = prefab.GetComponent<ParaboxLevel>();
             string route = info != null ? info.solution : string.Empty;
-            yield return ReplayTutorialPuzzle(prefab, mechanic, route, false);
+            yield return ReplayTutorialPuzzle(prefab, mechanic, route);
         }
 
         System.Collections.IEnumerator ReplayTutorialPuzzle(GameObject prefab,
-            MechanicCatalog.Id mechanic, string route, bool entryPrimer)
+            MechanicCatalog.Id mechanic, string route)
         {
             if (string.IsNullOrEmpty(route))
             {
                 Debug.LogError($"[Parabox] Tutorial {prefab.name} has no solver-validated route.");
                 yield break;
             }
-            tutorialFx.SetTitle(entryPrimer ? "HOW TO ENTER A PARA BOX"
-                : MechanicCatalog.TutorialTitle(levelIndex, mechanic));
+            tutorialFx.SetTitle(MechanicCatalog.TutorialTitle(levelIndex, mechanic));
 
             CleanupTutorialPuzzle();
             tutorialModel = LevelParser.Parse(prefab);
             tutorialTiles = new BoardTiles();
             BoardAssets tutorialAssets = BuildAssets();
             tutorialAssets.simplifyBoundaryContours = true;
+            tutorialAssets.hideSocketStatusLights = levelIndex == 10
+                && mechanic == MechanicCatalog.Id.NestedBoard;
             tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
                 tutorialRoomRoots, tutorialViews, tutorialTiles);
             tutorialBoardRoot.name = "TutorialMiniPuzzle";
@@ -3778,13 +3771,30 @@ namespace Parabox
             tutorialBgCamera.targetTexture = _rt;
             tutorialBgCamera.enabled = true;
             tutorialFx.SetVideo(_rt);
-            // The entry primer shows only one numbered instruction at a time.
-            tutorialFx.SetNestedDoorLegendVisible(levelIndex >= 10 && !entryPrimer);
-            bool chapterFiveWalkthrough = !entryPrimer && levelIndex == 40
+            tutorialFx.SetNestedDoorLegendVisible(levelIndex >= 10);
+            bool chapterTwoWalkthrough = levelIndex == 10
+                && mechanic == MechanicCatalog.Id.NestedBoard;
+            bool chapterFiveWalkthrough = levelIndex == 40
                 && mechanic == MechanicCatalog.Id.ColourCargo;
+            PEntity chapterTwoBox = null;
+            PEntity chapterTwoCargo = null;
+            if (chapterTwoWalkthrough)
+                foreach (PEntity entity in tutorialModel.entities)
+                {
+                    if (entity == null) continue;
+                    if (chapterTwoBox == null && entity.interiorRoomId >= 0)
+                        chapterTwoBox = entity;
+                    else if (chapterTwoCargo == null && entity.IsCrate
+                             && entity.interiorRoomId < 0 && entity.colour > 0)
+                        chapterTwoCargo = entity;
+                    if (chapterTwoBox != null && chapterTwoCargo != null)
+                    {
+                        break;
+                    }
+                }
             string bundleLesson = MechanicCatalog.TutorialBundleLesson(levelIndex, mechanic);
-            if (entryPrimer)
-                ShowParaBoxEntryStep(1, TutorialDirection(route[0]));
+            if (chapterTwoWalkthrough)
+                ShowChapterTwoTutorialStep(1);
             else if (chapterFiveWalkthrough)
                 ShowChapterFiveTutorialStep(1);
             else
@@ -3794,9 +3804,12 @@ namespace Parabox
 
             SyncTutorialViews(true);
             SetTutorialCameraRoom(tutorialModel.player.roomId, true);
-            yield return WaitU(TutorialDuration(entryPrimer ? 1.6f : 0.7f));
+            yield return WaitU(TutorialDuration(0.7f));
 
             var before = new Dictionary<PEntity, (int room, Vector2Int pos)>();
+            int chapterTwoLessonStep = chapterTwoWalkthrough ? 1 : 0;
+            int chapterTwoBoxMoves = 0;
+            int chapterTwoCargoBoundaryCrossings = 0;
             int finaleLessonStep = chapterFiveWalkthrough ? 1 : 0;
             int finaleCargoBoundaryCrossings = 0;
             foreach (char command in route)
@@ -3832,9 +3845,41 @@ namespace Parabox
                 if (tutorialPlayerBlinker != null)
                     tutorialPlayerBlinker.BlinkOnSuccessfulMove(tutorialModel.MoveCount);
 
-                int entryStep = entryPrimer
-                    ? ParaBoxEntryStepAfterMove(tutorialModel, direction, roomBefore) : 0;
-                if (entryPrimer) ShowParaBoxEntryStep(entryStep, direction);
+                bool holdForChapterTwoCaption = false;
+                if (chapterTwoWalkthrough && chapterTwoBox != null)
+                {
+                    if (before.TryGetValue(chapterTwoBox, out var boxStart)
+                        && (boxStart.room != chapterTwoBox.roomId
+                            || boxStart.pos != chapterTwoBox.pos))
+                        chapterTwoBoxMoves++;
+                    if (chapterTwoCargo != null
+                        && before.TryGetValue(chapterTwoCargo, out var cargoStart)
+                        && cargoStart.room != chapterTwoCargo.roomId)
+                        chapterTwoCargoBoundaryCrossings++;
+
+                    int nextStep = chapterTwoLessonStep;
+                    if (chapterTwoBoxMoves >= 2)
+                        nextStep = Mathf.Max(nextStep, 2);
+                    if (tutorialModel.player.roomId == chapterTwoBox.roomId
+                        && tutorialModel.EntityAt(tutorialModel.player.roomId,
+                            tutorialModel.player.pos + Vector2Int.down) == chapterTwoBox)
+                        nextStep = Mathf.Max(nextStep, 3);
+                    if (ParaBoxAgainstWall(tutorialModel, chapterTwoBox, direction))
+                        nextStep = Mathf.Max(nextStep, 4);
+                    if (tutorialModel.player.roomId == chapterTwoBox.interiorRoomId)
+                        nextStep = Mathf.Max(nextStep, 5);
+                    if (chapterTwoCargoBoundaryCrossings >= 1)
+                        nextStep = Mathf.Max(nextStep, 6);
+                    if (CargoOnMatchingColourGoal(tutorialModel, chapterTwoCargo)
+                        || tutorialModel.IsWon())
+                        nextStep = ChapterTwoStepCount;
+                    if (nextStep > chapterTwoLessonStep)
+                    {
+                        chapterTwoLessonStep = nextStep;
+                        ShowChapterTwoTutorialStep(chapterTwoLessonStep);
+                        holdForChapterTwoCaption = true;
+                    }
+                }
 
                 if (chapterFiveWalkthrough)
                 {
@@ -3853,61 +3898,22 @@ namespace Parabox
                 if (roomBefore != tutorialModel.player.roomId)
                     yield return MoveTutorialCameraToRoom(tutorialModel.player.roomId,
                         TutorialDuration(0.42f));
-                else if (!entryPrimer)
+                else
                     yield return WaitU(TutorialDuration(0.34f));
 
-                // Deliberately hold at wall contact, BEFORE the next identical input enters.
-                // The player can read the caption and see that the box has stopped moving.
-                if (entryPrimer && entryStep < 3)
-                    yield return WaitU(TutorialDuration(ParaBoxEntryMoveHold(entryStep)));
+                // Every new instruction gets a clean reading beat on the completed action. The
+                // caption's one-second fade therefore finishes before the next solver move starts.
+                if (holdForChapterTwoCaption)
+                    yield return WaitU(TutorialDuration(ChapterTwoStepHold));
             }
 
-            if (!entryPrimer && !tutorialModel.IsWon())
+            if (!tutorialModel.IsWon())
             {
                 Debug.LogError($"[Parabox] Tutorial {prefab.name} finished its route without winning.");
                 yield break;
             }
             MarkTutorialProgress();
-            yield return WaitU(TutorialDuration(entryPrimer ? 2f : 0.9f));
-        }
-
-        static bool NeedsParaBoxEntryPrimer(int levelIdx, MechanicCatalog.Id mechanic)
-            => levelIdx == 10 && mechanic == MechanicCatalog.Id.NestedBoard;
-
-        static bool TryLoadParaBoxEntryPrimer(out GameObject prefab, out string route)
-        {
-            prefab = Resources.Load<GameObject>("Parabox/Tutorials/Chapter_4");
-            ParaboxLevel info = prefab != null ? prefab.GetComponent<ParaboxLevel>() : null;
-            route = info != null
-                ? FindParaBoxEntryRoute(LevelParser.Parse(prefab), info.solution) : string.Empty;
-            return !string.IsNullOrEmpty(route);
-        }
-
-        // Derive the short prefix from the real rules, not from a hard-coded frame or move count.
-        // It must show this same movable box being pushed, stopped by a wall, and then entered.
-        static string FindParaBoxEntryRoute(LevelModel demo, string route)
-        {
-            if (demo == null || demo.player == null || string.IsNullOrEmpty(route))
-                return string.Empty;
-            PEntity pushedBox = null;
-            for (int i = 0; i < route.Length; i++)
-            {
-                int roomBefore = demo.player.roomId;
-                Vector2Int direction = TutorialDirection(route[i]);
-                PEntity box = demo.EntityAt(roomBefore, demo.player.pos + direction);
-                Vector2Int boxBefore = box != null ? box.pos : Vector2Int.zero;
-                bool againstWall = ParaBoxAgainstWall(demo, box, direction);
-                if (direction == Vector2Int.zero || !demo.TryMovePlayer(direction))
-                    return string.Empty;
-                if (box != null && box.interiorRoomId >= 0 && !box.anchored
-                    && box.roomId == roomBefore && box.pos != boxBefore)
-                    pushedBox = box;
-                if (demo.player.roomId != roomBefore)
-                    return box != null && box == pushedBox && againstWall
-                        && demo.player.roomId == box.interiorRoomId
-                        ? route.Substring(0, i + 1) : string.Empty;
-            }
-            return string.Empty;
+            yield return WaitU(TutorialDuration(0.9f));
         }
 
         static bool ParaBoxAgainstWall(LevelModel demo, PEntity box, Vector2Int direction)
@@ -3919,33 +3925,50 @@ namespace Parabox
             return room.InBounds(stop) && room.IsWall(stop);
         }
 
-        static int ParaBoxEntryStepAfterMove(LevelModel demo, Vector2Int direction, int roomBefore)
+        static bool CargoOnMatchingColourGoal(LevelModel demo, PEntity cargo)
         {
-            if (demo.player.roomId != roomBefore) return 3;
-            PEntity box = demo.EntityAt(demo.player.roomId, demo.player.pos + direction);
-            return ParaBoxAgainstWall(demo, box, direction) ? 2 : 1;
+            if (demo == null || cargo == null || cargo.sunk || cargo.colour <= 0
+                || !demo.rooms.TryGetValue(cargo.roomId, out PRoom room)) return false;
+            foreach (var goal in room.colourGoals)
+                if (goal.cell == cargo.pos && goal.colour == cargo.colour)
+                    return true;
+            return false;
         }
 
-        static float ParaBoxEntryMoveHold(int step) => step == 2 ? 1.8f : 0.6f;
-
-        void ShowParaBoxEntryStep(int step, Vector2Int direction)
+        void ShowChapterTwoTutorialStep(int step)
         {
             if (tutorialFx == null) return;
-            string arrow = direction == Vector2Int.left ? "LEFT"
-                : direction == Vector2Int.up ? "UP"
-                : direction == Vector2Int.down ? "DOWN" : "RIGHT";
-            tutorialFx.ShowCaptionPersistent(step == 1
-                ? $"1 / 3  •  PUSH BOX {arrow} TO THE WALL"
-                : step == 2
-                    ? $"2 / 3  •  PRESS {arrow} AGAIN TO ENTER"
-                    : "3 / 3  •  INSIDE! CYAN GAP = DOORWAY");
+            switch (Mathf.Clamp(step, 1, ChapterTwoStepCount))
+            {
+                case 1:
+                    tutorialFx.ShowCaptionPersistent("1 / 7  •  PUSH PARA BOX RIGHT TWICE");
+                    break;
+                case 2:
+                    tutorialFx.ShowCaptionPersistent("2 / 7  •  WALK ABOVE THE PARA BOX");
+                    break;
+                case 3:
+                    tutorialFx.ShowCaptionPersistent("3 / 7  •  PUSH PARA BOX DOWN ONTO ITS DOCK");
+                    break;
+                case 4:
+                    tutorialFx.ShowCaptionPersistent("4 / 7  •  PRESS DOWN AGAIN TO ENTER");
+                    break;
+                case 5:
+                    tutorialFx.ShowCaptionPersistent("5 / 7  •  FOLLOW THE ARROW: PUSH CORAL CARGO OUT");
+                    break;
+                case 6:
+                    tutorialFx.ShowCaptionPersistent("6 / 7  •  PARK CORAL CARGO ON THE CORAL TARGET");
+                    break;
+                default:
+                    tutorialFx.ShowCaptionPersistent("7 / 7  •  EXIT AND REACH THE PLAYER TARGET");
+                    break;
+            }
         }
 
-        float EstimateTutorialReplaySeconds(GameObject prefab, string route, bool entryPrimer = false)
+        float EstimateTutorialReplaySeconds(GameObject prefab, string route)
         {
-            // Includes the opening hold, every solver move, the solved-board hold and the final
-            // button entrance. Parsing a separate model keeps the visible tutorial untouched.
-            float authoredSeconds = entryPrimer ? 1.6f + 2f : 0.7f + 0.9f;
+            // Includes the opening hold, every solver move and the solved-board hold. Parsing a
+            // separate model keeps the visible tutorial untouched.
+            float authoredSeconds = 0.7f + 0.9f;
             LevelModel estimate = prefab != null ? LevelParser.Parse(prefab) : null;
             if (estimate == null || estimate.player == null)
                 return TutorialDuration(authoredSeconds + Mathf.Max(0, route.Length) * 0.42f) + 0.5f;
@@ -3955,17 +3978,9 @@ namespace Parabox
                 int roomBefore = estimate.player.roomId;
                 Vector2Int direction = TutorialDirection(command);
                 bool moved = direction != Vector2Int.zero && estimate.TryMovePlayer(direction);
-                if (entryPrimer)
-                {
-                    int step = ParaBoxEntryStepAfterMove(estimate, direction, roomBefore);
-                    authoredSeconds += moved && step == 3 ? 0.42f : ParaBoxEntryMoveHold(step);
-                }
-                else
-                    authoredSeconds += moved && estimate.player.roomId != roomBefore ? 0.42f : 0.34f;
+                authoredSeconds += moved && estimate.player.roomId != roomBefore ? 0.42f : 0.34f;
             }
-            // Only the complete lesson has an end-choice animation; the primer flows straight
-            // into the existing Chapter 2 board without adding a second countdown or button row.
-            return TutorialDuration(authoredSeconds) + (entryPrimer ? 0f : 0.5f);
+            return TutorialDuration(authoredSeconds) + 0.5f;
         }
 
         void StartTutorialCountdownFor(MechanicCatalog.Id mechanic)
@@ -3982,9 +3997,9 @@ namespace Parabox
             float fullPresentation = TutorialDuration(0.6f)
                 + EstimateTutorialReplaySeconds(prefab, route)
                 + TutorialChoiceGrace;
-            if (NeedsParaBoxEntryPrimer(levelIndex, mechanic)
-                && TryLoadParaBoxEntryPrimer(out GameObject entryPrefab, out string entryRoute))
-                fullPresentation += EstimateTutorialReplaySeconds(entryPrefab, entryRoute, true);
+            if (levelIndex == 10 && mechanic == MechanicCatalog.Id.NestedBoard)
+                fullPresentation += TutorialDuration(
+                    (ChapterTwoStepCount - 1) * ChapterTwoStepHold);
             StartTutorialSessionCountdown(fullPresentation);
         }
 
@@ -4044,6 +4059,8 @@ namespace Parabox
             tutorialTiles = new BoardTiles();
             BoardAssets tutorialAssets = BuildAssets();
             tutorialAssets.simplifyBoundaryContours = true;
+            tutorialAssets.hideSocketStatusLights = levelIndex == 10
+                && mechanic == MechanicCatalog.Id.NestedBoard;
             tutorialBoardRoot = BoardRenderer.Render(tutorialModel, tutorialAssets,
                 tutorialRoomRoots, tutorialViews, tutorialTiles);
             tutorialBoardRoot.name = "TutorialPracticePuzzle";

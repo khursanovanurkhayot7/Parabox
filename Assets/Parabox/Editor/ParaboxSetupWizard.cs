@@ -2700,12 +2700,15 @@ namespace Parabox.EditorTools
         {
             if (tutorial.assetName == "Chapter_2")
             {
-                if (roomsVisited < 3)
+                if (roomsVisited < 2)
                     throw new System.InvalidOperationException(
-                        "Chapter_2 tutorial must demonstrate the outer board and both nested rooms.");
-                if (cargoBoundaryCrossings < 2)
+                        "Chapter_2 tutorial must enter the room inside its Para Box.");
+                if (metaMoves < 3)
                     throw new System.InvalidOperationException(
-                        "Chapter_2 tutorial cargo must cross both nested room boundaries.");
+                        "Chapter_2 tutorial must move and dock its Para Box before entry.");
+                if (cargoBoundaryCrossings < 1)
+                    throw new System.InvalidOperationException(
+                        "Chapter_2 tutorial must deliver cargo out of its Para Box.");
             }
             if (tutorial.assetName == "Chapter_3")
             {
@@ -3395,36 +3398,28 @@ namespace Parabox.EditorTools
                     "#P>....#",
                     "########"
                 }}),
-                // A purpose-built Chapter II example, separate from Level 11. The two fixed room-
-                // doors keep the new rule readable: enter both spaces, extract one colour-locked
-                // cargo piece across both boundaries, turn it onto its outer goal, then finish on
-                // the separate player goal. It teaches recursion without an early docking puzzle.
+                // One complete Chapter II teaching level. It uses the chapter's real loop on one
+                // two-room board: reposition and dock the Para Box, enter it, bring its coloured
+                // cargo outside, satisfy the matching cargo goal, then reach the player goal.
+                // The seven runtime captions reveal these actions one at a time.
                 Tutorial("Chapter_2", MechanicCatalog.Id.NestedBoard, new[]
                 {
                     new[]
                     {
-                        "#######",
-                        "#.p...#",
-                        "#...Q.#",
-                        "#P....#",
-                        "#...j.#",
-                        "#######",
+                        "#########",
+                        "#.p.....#",
+                        "#P.1....#",
+                        "#....x.j#",
+                        "#....#..#",
+                        "#########",
                     },
                     new[]
                     {
                         "##.##",
                         "#...#",
-                        "...U#",
+                        "#.J>.",
                         "#...#",
                         "##.##",
-                    },
-                    new[]
-                    {
-                        "#####",
-                        "#...#",
-                        "..J..",
-                        "#...#",
-                        "#####",
                     },
                 }, 80),
                 // Chapter III uses a separate vertical mini-puzzle rather than revealing Level 21.

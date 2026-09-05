@@ -10,6 +10,7 @@ Shader "Parabox/Premium Cargo Socket"
         _ArtBounds ("Tile Atlas Bounds", Vector) = (0,0,1,1)
         _RecessRect ("Recess Centre and Half Size", Vector) = (0.5,0.52,0.304,0.314)
         _LampOnly ("Foreground Status Light and Goal Inlay", Float) = 0
+        _SideRails ("Show Side Status Rails", Range(0,1)) = 1
         [MaterialToggle] PixelSnap ("Pixel snap", Float) = 0
         [HideInInspector] _RendererColor ("RendererColor", Color) = (1,1,1,1)
         [HideInInspector] _Flip ("Flip", Vector) = (1,1,1,1)
@@ -35,7 +36,7 @@ Shader "Parabox/Premium Cargo Socket"
             #pragma multi_compile _ ETC1_EXTERNAL_ALPHA
             #include "UnitySprites.cginc"
 
-            float _Lamp, _FrameHueShift, _Filled, _LampOnly;
+            float _Lamp, _FrameHueShift, _Filled, _LampOnly, _SideRails;
             float4 _ArtBounds, _RecessRect;
 
             float3 ToHsv(float3 c)
@@ -103,7 +104,8 @@ Shader "Parabox/Premium Cargo Socket"
                     float railAA = max(fwidth(railDistance), 0.001);
                     float railCore = 1.0 - smoothstep(-railAA, railAA, railDistance);
                     float railHalo = 1.0 - smoothstep(0.0, 0.026 + railAA, railDistance);
-                    float rail = saturate(railCore * 0.92 + railHalo * 0.18) * _Lamp;
+                    float rail = saturate(railCore * 0.92 + railHalo * 0.18)
+                        * _Lamp * _SideRails;
 
                     // Everything else remains transparent, including the entire cargo face.
                     float inlay = saturate(core * 0.95 + halo * 0.16) * _Filled;

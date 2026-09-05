@@ -1439,7 +1439,7 @@ namespace Parabox.EditorTools
                     $"Level 11 resolved the wrong tutorial asset: {tutorialPath}");
             GameObject tutorial = TutorialPuzzleLibrary.Load(
                 index, MechanicCatalog.Id.NestedBoard);
-            ValidateFreshLaunchPuzzle(tutorial, index, "Chapter 2 tutorial", expectedRooms: 3);
+            ValidateFreshLaunchPuzzle(tutorial, index, "Chapter 2 tutorial", expectedRooms: 2);
 
             Debug.Log("[Parabox] PASS: fresh Level 11 and Chapter 2 tutorial parse independently, "
                 + "contain valid nested-room references, and both stored routes win.");

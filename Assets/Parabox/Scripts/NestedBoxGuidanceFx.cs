@@ -18,6 +18,7 @@ namespace Parabox
             public Transform root;
             public SpriteRenderer glow;
             public SpriteRenderer housing;
+            public SpriteRenderer glass;
             public SpriteRenderer lamp;
             public SpriteRenderer highlight;
             public float phase;
@@ -28,16 +29,25 @@ namespace Parabox
             Vector2Int.up, Vector2Int.right, Vector2Int.down, Vector2Int.left
         };
 
-        static readonly Color Housing = Hex("431923");
-        static readonly Color HousingEdge = Hex("8B2734");
-        static readonly Color LampLow = Hex("D72E3D");
-        static readonly Color LampHigh = Hex("FF6570");
-        static readonly Color Highlight = Hex("FFD2D5");
+        static readonly Color HousingShadow = new Color(0.015f, 0.025f, 0.050f, 0.78f);
+        static readonly Color Housing = Hex("101A2A");
+        static readonly Color HousingEdge = Hex("3A5068");
+        static readonly Color Recess = Hex("210B14");
+        static readonly Color GlassLow = Hex("941426");
+        static readonly Color GlassHigh = Hex("C82036");
+        static readonly Color LampLow = Hex("D9273C");
+        static readonly Color LampHigh = Hex("FF5868");
+        static readonly Color Highlight = Hex("FFD7DA");
+        static readonly Color EnvironmentGlint = new Color(0.24f, 0.78f, 1f, 0.34f);
 
-        const int HousingOrder = 105;
-        const int GlowOrder = 106;
-        const int LampOrder = 107;
-        const int HighlightOrder = 108;
+        const int GlowOrder = 104;
+        const int ShadowOrder = 105;
+        const int HousingOrder = 106;
+        const int BevelOrder = 107;
+        const int RecessOrder = 108;
+        const int GlassOrder = 109;
+        const int LampOrder = 110;
+        const int HighlightOrder = 111;
 
         LevelModel model;
         Dictionary<PEntity, EntityView> views;
@@ -167,39 +177,49 @@ namespace Parabox
             root.localPosition = SidePosition(inward);
 
             bool horizontalWall = inward.y != 0;
-            Vector2 housingSize = horizontalWall
-                ? new Vector2(0.145f, 0.082f)
-                : new Vector2(0.082f, 0.145f);
-            Vector2 edgeSize = horizontalWall
-                ? new Vector2(0.122f, 0.061f)
-                : new Vector2(0.061f, 0.122f);
-            Vector2 lampSize = horizontalWall
-                ? new Vector2(0.096f, 0.042f)
-                : new Vector2(0.042f, 0.096f);
-            Vector2 highlightSize = horizontalWall
-                ? new Vector2(0.052f, 0.010f)
-                : new Vector2(0.010f, 0.052f);
+            // Option 1: a slim recessed beacon. Its overall footprint remains matched to the
+            // original box-edge marker; depth comes from shallow nested layers rather than a
+            // thick frame, so it stays premium and readable at the tutorial's small scale.
+            Vector2 shadowSize = OrientedSize(horizontalWall, 0.156f, 0.084f);
+            Vector2 housingSize = OrientedSize(horizontalWall, 0.150f, 0.078f);
+            Vector2 bevelSize = OrientedSize(horizontalWall, 0.134f, 0.064f);
+            Vector2 recessSize = OrientedSize(horizontalWall, 0.119f, 0.052f);
+            Vector2 glassSize = OrientedSize(horizontalWall, 0.108f, 0.042f);
+            Vector2 lampSize = OrientedSize(horizontalWall, 0.084f, 0.030f);
+            Vector2 highlightSize = OrientedSize(horizontalWall, 0.050f, 0.005f);
+            Vector2 glowSize = OrientedSize(horizontalWall, 0.210f, 0.130f);
+            Vector2 glintSize = OrientedSize(horizontalWall, 0.066f, 0.0035f);
+            Vector2 shadowOffset = new Vector2(0.006f, -0.007f);
 
             var signal = new ClosedSideSignal { root = root, phase = phase };
+            if (glowSprite != null)
+                signal.glow = AddSprite(root, "ClosedSignal_Glow", glowSprite,
+                    new Color(LampHigh.r, LampHigh.g, LampHigh.b, 0.12f), GlowOrder,
+                    Vector2.zero, glowSize);
+
+            AddSprite(root, "ClosedSignal_Shadow", cellSprite, HousingShadow,
+                ShadowOrder, shadowOffset, shadowSize);
             signal.housing = AddSprite(root, "ClosedSignal_Housing", cellSprite, Housing,
                 HousingOrder, Vector2.zero, housingSize);
             AddSprite(root, "ClosedSignal_Rim", cellSprite, HousingEdge,
-                HousingOrder + 1, Vector2.zero, edgeSize);
-
-            if (glowSprite != null)
-                signal.glow = AddSprite(root, "ClosedSignal_Glow", glowSprite,
-                    new Color(LampHigh.r, LampHigh.g, LampHigh.b, 0.34f), GlowOrder,
-                    Vector2.zero, horizontalWall
-                        ? new Vector2(0.29f, 0.20f)
-                        : new Vector2(0.20f, 0.29f));
+                BevelOrder, Vector2.zero, bevelSize);
+            AddSprite(root, "ClosedSignal_Recess", cellSprite, Recess,
+                RecessOrder, Vector2.zero, recessSize);
+            signal.glass = AddSprite(root, "ClosedSignal_Glass", cellSprite, GlassLow,
+                GlassOrder, Vector2.zero, glassSize);
 
             signal.lamp = AddSprite(root, "ClosedSignal_Lamp", cellSprite, LampLow,
                 LampOrder, Vector2.zero, lampSize);
             Vector2 highlightOffset = horizontalWall
-                ? new Vector2(-0.014f, 0.010f)
-                : new Vector2(-0.010f, 0.014f);
+                ? new Vector2(-0.010f, 0.009f)
+                : new Vector2(-0.009f, 0.010f);
             signal.highlight = AddSprite(root, "ClosedSignal_Highlight", cellSprite, Highlight,
                 HighlightOrder, highlightOffset, highlightSize);
+            Vector2 glintOffset = horizontalWall
+                ? new Vector2(-0.018f, 0.033f)
+                : new Vector2(-0.033f, 0.018f);
+            AddSprite(root, "ClosedSignal_EnvironmentGlint", cellSprite, EnvironmentGlint,
+                HighlightOrder, glintOffset, glintSize);
 
             allSignals.Add(signal);
             return signal;
@@ -213,24 +233,26 @@ namespace Parabox
                 ClosedSideSignal signal = allSignals[i];
                 if (signal.root == null || !signal.root.gameObject.activeSelf) continue;
 
-                // A smooth beacon pulse stays premium and readable without the aggressive flash
-                // of an arcade warning. Unscaled time keeps the closed-wall cue alive in pauses.
-                float wave = Mathf.Sin(now * 3.4f + signal.phase) * 0.5f + 0.5f;
+                // Keep motion restrained: the layered glass supplies the 3D readability, while a
+                // slow low-amplitude pulse keeps the closed-wall state noticeable without flashing.
+                float wave = Mathf.Sin(now * 2.8f + signal.phase) * 0.5f + 0.5f;
                 float pulse = Mathf.SmoothStep(0f, 1f, wave);
-                signal.root.localScale = Vector3.one * Mathf.Lerp(0.96f, 1.08f, pulse);
+                signal.root.localScale = Vector3.one * Mathf.Lerp(0.99f, 1.025f, pulse);
 
+                if (signal.glass != null)
+                    signal.glass.color = Color.Lerp(GlassLow, GlassHigh, pulse);
                 if (signal.lamp != null)
                     signal.lamp.color = Color.Lerp(LampLow, LampHigh, pulse);
                 if (signal.highlight != null)
                 {
                     Color highlight = Highlight;
-                    highlight.a = Mathf.Lerp(0.50f, 0.96f, pulse);
+                    highlight.a = Mathf.Lerp(0.46f, 0.82f, pulse);
                     signal.highlight.color = highlight;
                 }
                 if (signal.glow != null)
                 {
                     Color glow = signal.glow.color;
-                    glow.a = Mathf.Lerp(0.16f, 0.48f, pulse);
+                    glow.a = Mathf.Lerp(0.08f, 0.22f, pulse);
                     signal.glow.color = glow;
                 }
             }
@@ -275,6 +297,9 @@ namespace Parabox
 
         static Vector3 SidePosition(Vector2Int inward)
             => new Vector3(-inward.x * 0.43f, -inward.y * 0.43f, 0f);
+
+        static Vector2 OrientedSize(bool horizontal, float longAxis, float shortAxis)
+            => horizontal ? new Vector2(longAxis, shortAxis) : new Vector2(shortAxis, longAxis);
 
         static SpriteRenderer AddSprite(Transform parent, string name, Sprite sprite, Color color,
                                         int sortingOrder, Vector2 position, Vector2 scale)

@@ -13,10 +13,15 @@ namespace Parabox
         static readonly int FillId = Shader.PropertyToID("_Filled");
         static readonly int BoundsId = Shader.PropertyToID("_ArtBounds");
         static readonly int LampOnlyId = Shader.PropertyToID("_LampOnly");
+        static readonly int SideRailsId = Shader.PropertyToID("_SideRails");
         static readonly int RecessId = Shader.PropertyToID("_RecessRect");
         // Centre and half-size in normalized opaque-tile coordinates. The light shader uses this
         // to keep its status detail aligned with the artwork's recessed opening.
         static readonly Vector4 RecessRect = new Vector4(0.5f, 0.52f, 0.304f, 0.314f);
+        static readonly Vector4 CoralArtBounds =
+            new Vector4(0.0574f, 0.0765f, 0.9410f, 0.9498f);
+        static readonly Vector4 EmptyArtBounds =
+            new Vector4(0.0375f, 0.0654f, 0.9625f, 0.9649f);
         const float ArtworkScale = 0.90f;
 
         LevelModel model;
@@ -24,7 +29,9 @@ namespace Parabox
         Vector2Int cell;
         bool button, heavy;
         float goalFill, press, hueShift;
+        bool showSideRails, showStatusLight;
         SpriteRenderer art, lamp;
+        Sprite teachingArt;
         Transform emblem;
         MaterialPropertyBlock properties;
         Vector4 artBounds;
@@ -69,6 +76,11 @@ namespace Parabox
             fx.cell = cell;
             fx.button = room.IsButton(cell);
             fx.heavy = room.IsPlate(cell);
+            // Tutorial boards already place explicit red/cyan entrance guidance beside recursive
+            // boxes. Suppress the socket's decorative side rails there so the two signals never
+            // overlap; the small bottom status lamp remains available as the socket indicator.
+            fx.showSideRails = !assets.simplifyBoundaryContours;
+            fx.showStatusLight = !assets.hideSocketStatusLights;
             Color.RGBToHSV(accent, out float hue, out _, out _);
             // The coral family uses the approved bitmap unchanged; the other cargo families
             // only shift the frame hue, retaining their established colour-matching rules.
@@ -76,14 +88,13 @@ namespace Parabox
             fx.properties = new MaterialPropertyBlock();
             // Texture alpha stays untouched. Exclude only transparent-padding fragments outside
             // the measured tile silhouette, like selecting an atlas rectangle at draw time.
-            fx.artBounds = colour == 1
-                ? new Vector4(0.0574f, 0.0765f, 0.9410f, 0.9498f)
-                : new Vector4(0.0375f, 0.0654f, 0.9625f, 0.9649f);
+            fx.artBounds = colour == 1 ? CoralArtBounds : EmptyArtBounds;
+            fx.teachingArt = colour == 1 ? coralArt : emptyArt;
 
             var artwork = new GameObject("PremiumSocketArt");
             artwork.transform.SetParent(root.transform, false);
             fx.art = artwork.AddComponent<SpriteRenderer>();
-            fx.art.sprite = colour == 1 ? coralArt : emptyArt;
+            fx.art.sprite = fx.teachingArt;
             fx.art.sharedMaterial = socketMaterial;
             fx.art.sortingOrder = 4;
             // Import settings normalize the opaque tile to one unit, excluding transparent
@@ -113,6 +124,17 @@ namespace Parabox
         {
             if (art == null || model == null) return;
             PEntity occupant = model.EntityAt(roomId, cell);
+            bool occupied = occupant != null && !occupant.sunk;
+            // Every socket uses a clean recess while occupied. This removes both kinds of visual
+            // duplication across the campaign: procedural guide marks and the coral guide baked
+            // into its teaching texture. The actual player/cargo/recursive box is never restyled.
+            Sprite visibleArt = occupied ? emptyArt : teachingArt;
+            if (visibleArt != null && art.sprite != visibleArt)
+            {
+                art.sprite = visibleArt;
+                if (lamp != null) lamp.sprite = visibleArt;
+                artBounds = visibleArt == coralArt ? CoralArtBounds : EmptyArtBounds;
+            }
             bool held = IsPressedBy(occupant, button, heavy);
             float target = button || heavy ? (held ? 1f : 0f) : goalFill;
             // A recursive box is also a room. Keep its three entrance lamps dim while the player
@@ -129,12 +151,13 @@ namespace Parabox
             properties.SetVector(BoundsId, artBounds);
             properties.SetVector(RecessId, RecessRect);
             properties.SetFloat(LampOnlyId, 0f);
+            properties.SetFloat(SideRailsId, showSideRails ? 1f : 0f);
             art.SetPropertyBlock(properties);
 
             // The empty socket's cargo emblem is a teaching cue, not a second piece. Once real
             // cargo arrives it must disappear completely so the occupant keeps one clean face.
             if (emblem != null)
-                emblem.gameObject.SetActive(goalFill <= 0.001f);
+                emblem.gameObject.SetActive(!occupied);
 
             // Keep only the physical status lamp above a seated piece. The former foreground
             // inlay traced a second square across the cargo face and made the occupied socket
@@ -142,7 +165,8 @@ namespace Parabox
             properties.SetFloat(LampOnlyId, 1f);
             properties.SetFloat(FillId, 0f);
             lamp.SetPropertyBlock(properties);
-            lamp.gameObject.SetActive(press > 0.001f || goalFill > 0.001f);
+            lamp.gameObject.SetActive(showStatusLight
+                && (press > 0.001f || goalFill > 0.001f));
         }
 
         bool PlayerIsInside(PEntity container)

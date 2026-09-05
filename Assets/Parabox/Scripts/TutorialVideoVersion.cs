@@ -4,8 +4,8 @@ namespace Parabox
     // Unity asset and cannot be missed by an already-open Editor's incremental importer.
     static class TutorialVideoVersion
     {
-        // V12 presents the bundled solver replay at 0.7x speed. Existing players receive each
-        // easier-to-follow chapter video once without losing campaign progress.
-        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V12.Seen.";
+        // V13 replaces Chapter II's disconnected examples with one seven-step delivery level.
+        // Existing players receive the clearer walkthrough once without losing campaign progress.
+        public const string MechanicSeenPrefix = "Parabox.MechanicBriefing.V13.Seen.";
     }
 }
